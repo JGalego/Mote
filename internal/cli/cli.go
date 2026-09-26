@@ -65,6 +65,7 @@ const usage = `mote - local, CPU-only X-to-Y AI tasks
 Usage:
   mote setup [--yes] [--config FILE] [--profile P] [--data-dir DIR] [--auto-download] [--no-download]
   mote run TASK [ARGS...] [-o OUTPUT] [--apply] [--model ID] [--profile P]
+  mote pipe "TASK ARGS | TASK ARGS | !COMMAND" [-o OUTPUT] [--model ID] [--profile P]
   mote tasks
   mote models [list | pull ID|CAP... | rm ID | why CAP | verify]
   mote bench [--full] [--model ID]
@@ -82,6 +83,8 @@ Examples:
   mote run speak "Build finished" -o done.wav
   mote run video clip.mp4
   mote run patch ./src "Rename the function load to read_config" --apply
+  mote pipe "transcribe meeting.m4a | chat 'Summarise in 3 bullets: {}'"
+  mote pipe "frames clip.mp4 3 | describe | !tee notes.txt"
 `
 
 // usageError marks bad invocations (exit code 2).
@@ -175,7 +178,7 @@ func (a *app) dispatch(ctx context.Context, args []string) error {
 		return a.update(ctx, rest)
 	}
 	switch cmd {
-	case "run", "models", "bench", "tune":
+	case "run", "pipe", "models", "bench", "tune":
 	default:
 		return usagef("unknown command %q; see `mote help`", cmd)
 	}
@@ -186,6 +189,8 @@ func (a *app) dispatch(ctx context.Context, args []string) error {
 	switch cmd {
 	case "run":
 		return a.run(ctx, rest)
+	case "pipe":
+		return a.pipe(ctx, rest)
 	case "models":
 		return a.models(ctx, rest)
 	case "bench":
@@ -383,47 +388,12 @@ func (a *app) run(ctx context.Context, args []string) error {
 	if !ok {
 		return usagef("unknown task %q; see `mote tasks`", pos[0])
 	}
-	profile := a.cfg.Profile
-	if p := vals["--profile"]; p != "" {
-		profile = p
+	profile, err := a.selectModels(vals)
+	if err != nil {
+		return err
 	}
-	if id := vals["--model"]; id != "" {
-		m, ok := a.registry().Model(id)
-		if !ok {
-			return usagef("unknown model %q; see `mote models`", id)
-		}
-		// --model overrides every capability this model provides.
-		models := map[string]string{}
-		for k, v := range a.cfg.Models {
-			models[k] = v
-		}
-		for _, c := range m.Caps {
-			models[c] = id
-		}
-		a.cfg.Models = models
-	}
-	out := vals["-o"]
-	if out == "" {
-		out = vals["--output"]
-	}
-	env := task.Env{
-		Resolve: func(ctx context.Context, c string) (*registry.Model, map[string]string, error) {
-			m, _, err := a.choose(c, profile)
-			if err != nil {
-				return nil, nil, err
-			}
-			if err := a.ensure(ctx, m, a.cfg.AutoDownload); err != nil {
-				return nil, nil, err
-			}
-			return m, a.store().Files(m), nil
-		},
-		Backend: a.backend,
-		Tool:    a.tool,
-		Stdin:   a.in,
-		Log:     a.err,
-		TempDir: filepath.Join(a.dataDir(), "tmp"),
-		Status:  a.status,
-	}
+	out := firstNonEmpty(vals["-o"], vals["--output"])
+	env := a.env(profile, nil)
 	// Highlight source code and JSON, but only on the way to a terminal:
 	// files and pipes keep the exact bytes the model produced.
 	var code *ui.CodeStream
@@ -444,6 +414,64 @@ func (a *app) run(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	return a.emit(t, res, out, code)
+}
+
+// selectModels applies --profile and --model, returning the profile to
+// resolve capabilities with.
+func (a *app) selectModels(vals map[string]string) (string, error) {
+	profile := a.cfg.Profile
+	if p := vals["--profile"]; p != "" {
+		profile = p
+	}
+	id := vals["--model"]
+	if id == "" {
+		return profile, nil
+	}
+	m, ok := a.registry().Model(id)
+	if !ok {
+		return "", usagef("unknown model %q; see `mote models`", id)
+	}
+	// --model overrides every capability this model provides.
+	models := map[string]string{}
+	for k, v := range a.cfg.Models {
+		models[k] = v
+	}
+	for _, c := range m.Caps {
+		models[c] = id
+	}
+	a.cfg.Models = models
+	return profile, nil
+}
+
+// env builds the task environment. Sessions, when given, is a cache shared
+// by the stages of a pipeline so models stay loaded between them; the caller
+// closes it and removes TempDir.
+func (a *app) env(profile string, sessions map[string]mrt.Session) task.Env {
+	return task.Env{
+		Resolve: func(ctx context.Context, c string) (*registry.Model, map[string]string, error) {
+			m, _, err := a.choose(c, profile)
+			if err != nil {
+				return nil, nil, err
+			}
+			if err := a.ensure(ctx, m, a.cfg.AutoDownload); err != nil {
+				return nil, nil, err
+			}
+			return m, a.store().Files(m), nil
+		},
+		Backend:  a.backend,
+		Tool:     a.tool,
+		Stdin:    a.in,
+		Log:      a.err,
+		TempDir:  filepath.Join(a.dataDir(), "tmp"),
+		Status:   a.status,
+		Sessions: sessions,
+	}
+}
+
+// emit writes a finished result: file paths, a written file, or the text,
+// highlighted when code was streaming it to a terminal.
+func (a *app) emit(t task.Task, res task.Result, out string, code *ui.CodeStream) error {
 	switch {
 	case len(res.Files) > 0:
 		for _, f := range res.Files {

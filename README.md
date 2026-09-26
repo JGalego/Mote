@@ -33,6 +33,7 @@ mote runs X-to-Y AI tasks (text, code, images, audio, video, files) on your CPU 
   - [video](#video---)
   - [convert](#convert---)
   - [patch](#patch---)
+  - [chained](#chained-)
   - [your own](#your-own-)
 - [How it works](#how-it-works)
 - [Models](#models)
@@ -68,8 +69,7 @@ $env:MOTE_SOURCE=1; irm https://raw.githubusercontent.com/JGalego/Mote/main/inst
 
 In a clone, `go install ./cmd/mote` does the same into `$(go env GOPATH)/bin`. `mote version` reports the commit it was built from.
 
-
-<img src="docs/demo/install.gif" width=70%/>
+<!--img src="docs/demo/install.gif" width=70%/-->
 
 ## Commands
 
@@ -77,6 +77,7 @@ In a clone, `go install ./cmd/mote` does the same into `$(go env GOPATH)/bin`. `
 | --- | --- |
 | `mote setup [--profile P] [--yes]` | Install the runtime and the models for a profile (`small`, `balanced`, `quality`) |
 | `mote run TASK [ARGS...]` | Run a task, e.g. `mote run chat "Explain what a mutex is"`; `-o FILE` writes the output, `--model ID` overrides the model, `--apply` writes `patch` changes |
+| `mote pipe "A \| B \| !cmd"` | Chain tasks in one process, each stage receiving the last one's value: `{}` or `-` places it, `!` runs a shell command |
 | `mote tasks` | List the tasks, their arguments and what each one needs |
 | `mote models [pull\|rm\|why\|verify]` | Show models, sizes and which are in use; fetch, remove, explain or re-verify them |
 | `mote bench [--full]` | Measure installed models locally: startup, tokens/s, peak RSS, small pass/fail checks |
@@ -159,6 +160,23 @@ In a clone, `go install ./cmd/mote` does the same into `$(go env GOPATH)/bin`. `
 `mote run patch DIR INSTRUCTION` — Propose changes to a directory as a diff; `--apply` writes them to disk.
 
 ![mote run patch](docs/demo/patch.gif)
+
+### chained 🔗
+
+`mote pipe` runs several tasks in one process, so models stay loaded between
+stages instead of being reloaded per command:
+
+```sh
+mote pipe "transcribe meeting.m4a | chat 'Summarise in 3 bullets: {}'"
+mote pipe "frames clip.mp4 3 | describe | !tee notes.txt"
+```
+
+Each stage receives the previous stage's value: `{}` inside an argument or a
+bare `-` says where it goes, and with neither it fills the first argument you
+left out. Several files fan out into one run per file. A stage starting with
+`!` is a shell command reading that value on stdin, so ordinary tools mix in.
+Plain shell pipes still work too (`mote run video clip.mp4 | mote run chat -`),
+at the cost of reloading a model per command.
 
 ### your own 🧩
 
