@@ -141,6 +141,11 @@ func (a *app) dispatch(ctx context.Context, args []string) error {
 	case "update":
 		return a.update(ctx, rest)
 	}
+	switch cmd {
+	case "run", "models", "bench", "tune":
+	default:
+		return usagef("unknown command %q; see `mote help`", cmd)
+	}
 	// Remaining commands need a valid configuration.
 	if a.cfgErr != nil {
 		return a.cfgErr
