@@ -7,27 +7,27 @@ Show
 Sleep 600ms
 Enter
 # profile
-Wait /choice \[1\]:/
+Wait+Screen /choice \[1\]:/
 Sleep 1.5s
 Enter
 Sleep 1s
 # editor
-Wait /choice \[1\]:/
+Wait+Screen /choice \[1\]:/
 Sleep 1.5s
 Enter
 Sleep 1s
 # data directory
-Wait /and runtime/
+Wait+Screen /and runtime/
 Sleep 1.5s
 Enter
 Sleep 1s
 # automatic downloads
-Wait /\[y\/N\]:/
+Wait+Screen /\[y\/N\]:/
 Sleep 1.5s
 Enter
 Sleep 1s
 # download the text model now
-Wait /\[Y\/n\]:/
+Wait+Screen /\[Y\/n\]:/
 Sleep 1.5s
 Enter
 Sleep 1s
