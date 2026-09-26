@@ -337,3 +337,35 @@ func TestParseFiles(t *testing.T) {
 		t.Errorf("%v %q", order, files)
 	}
 }
+
+func TestStreamFilter(t *testing.T) {
+	var got strings.Builder
+	f := &streamFilter{fences: true, emit: func(s string) { got.WriteString(s) }}
+	for _, tok := range []string{"\n``", "`py", "thon\ndef f", "():\n  ", "return 1\n```", "\n"} {
+		f.write(tok)
+	}
+	f.flush()
+	if got.String() != "def f():\n  return 1\n" {
+		t.Errorf("fences: %q", got.String())
+	}
+	got.Reset()
+	f = &streamFilter{after: "<asr_text>", emit: func(s string) { got.WriteString(s) }}
+	for _, tok := range []string{"language Eng", "lish<asr", "_text>Hello", " there."} {
+		f.write(tok)
+	}
+	f.flush()
+	if got.String() != "Hello there." {
+		t.Errorf("marker: %q", got.String())
+	}
+}
+
+func TestStreamingAllFinalSteps(t *testing.T) {
+	b := &fakeBackend{reply: func(r runtime.Request) string { return "```\nx = 1\n```" }}
+	e := env(b)
+	var streamed strings.Builder
+	e.Stream = func(s string) { streamed.WriteString(s) }
+	res, err := mustTask(t, "code").Run(context.Background(), e, []string{"x"}, Options{})
+	if err != nil || !res.Streamed || res.Text != "x = 1\n" {
+		t.Errorf("%+v %v", res, err)
+	}
+}

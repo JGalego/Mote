@@ -113,23 +113,27 @@ func opGenerate(r *run, s Step) (Value, error) {
 	if err != nil {
 		return Value{}, err
 	}
-	stream := r.env.Stream != nil && s.As == "out" && !s.Each && s.Fences == "" && !wantJSON && m.OutputAfter == ""
+	stream := r.env.Stream != nil && s.As == "out" && !s.Each
 	call := func(req runtime.Request) (string, error) {
 		done := r.status("thinking with " + m.ID)
+		var sf *streamFilter
 		if stream {
-			first := true
-			req.OnToken = func(tok string) {
-				if first {
-					first = false
+			sf = &streamFilter{after: m.OutputAfter, fences: s.Fences == "strip", emit: func(t string) {
+				if done != nil {
 					done(true)
-					done = func(bool) {}
-					tok = strings.TrimLeft(tok, " \n")
+					done = nil
 				}
-				r.env.Stream(tok)
-			}
+				r.env.Stream(t)
+			}}
+			req.OnToken = sf.write
 		}
 		res, err := sess.Generate(r.ctx, req)
-		done(err == nil)
+		if sf != nil {
+			sf.flush()
+		}
+		if done != nil {
+			done(err == nil)
+		}
 		if stream && err == nil {
 			r.streamed = true
 		}
@@ -170,6 +174,63 @@ func opGenerate(r *run, s Step) (Value, error) {
 		text = string(b)
 	}
 	return Value{Text: text}, nil
+}
+
+// streamFilter shapes streamed tokens for display: it waits for a model's
+// output marker (e.g. ASR "<asr_text>"), drops leading blank space and,
+// for code, hides Markdown fence lines. The final value is still computed
+// from the full reply, so this only affects what the terminal shows.
+type streamFilter struct {
+	emit    func(string)
+	after   string
+	fences  bool
+	acc     strings.Builder
+	passed  bool
+	started bool
+	line    strings.Builder
+}
+
+func (f *streamFilter) write(tok string) {
+	if f.after != "" && !f.passed {
+		f.acc.WriteString(tok)
+		i := strings.Index(f.acc.String(), f.after)
+		if i < 0 {
+			return
+		}
+		f.passed = true
+		tok = f.acc.String()[i+len(f.after):]
+	}
+	if !f.started {
+		tok = strings.TrimLeft(tok, " \n")
+		if tok == "" {
+			return
+		}
+		f.started = true
+	}
+	if !f.fences {
+		f.emit(tok)
+		return
+	}
+	f.line.WriteString(tok)
+	for {
+		buf := f.line.String()
+		nl := strings.IndexByte(buf, '\n')
+		if nl < 0 {
+			return
+		}
+		f.line.Reset()
+		f.line.WriteString(buf[nl+1:])
+		if !strings.HasPrefix(strings.TrimSpace(buf[:nl]), "```") {
+			f.emit(buf[:nl+1])
+		}
+	}
+}
+
+func (f *streamFilter) flush() {
+	if rest := f.line.String(); rest != "" && !strings.HasPrefix(strings.TrimSpace(rest), "```") {
+		f.emit(rest)
+	}
+	f.line.Reset()
 }
 
 // StripFences returns the body of the first fenced code block, or the text

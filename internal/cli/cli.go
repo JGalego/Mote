@@ -398,7 +398,9 @@ func (a *app) run(ctx context.Context, args []string) error {
 		TempDir: filepath.Join(a.dataDir(), "tmp"),
 		Status:  a.status,
 	}
-	if out == "" {
+	// Stream to interactive terminals only: pipes get the post-processed
+	// value (fences stripped, JSON normalised) in one piece.
+	if out == "" && a.uo.Live() {
 		env.Stream = func(tok string) { fmt.Fprint(a.out, tok) }
 	}
 	defer os.RemoveAll(env.TempDir)
