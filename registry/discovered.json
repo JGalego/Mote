@@ -1,0 +1,409 @@
+{
+  "models": [
+    {
+      "upstream": "Qwen/Qwen2.5-VL-3B-Instruct",
+      "params_b": 3.75,
+      "dataset": "MMMU/MMMU_Pro",
+      "task": "mmmu_pro_vision",
+      "value": 32.7,
+      "gguf_repo": "ggml-org/Qwen2.5-VL-3B-Instruct-GGUF"
+    },
+    {
+      "upstream": "HuggingFaceTB/SmolLM2-1.7B",
+      "params_b": 1.71,
+      "dataset": "TIGER-Lab/MMLU-Pro",
+      "task": "mmlu_pro",
+      "value": 18.31
+    },
+    {
+      "upstream": "HuggingFaceTB/SmolLM2-135M",
+      "params_b": 0.13,
+      "dataset": "TIGER-Lab/MMLU-Pro",
+      "task": "mmlu_pro",
+      "value": 10.85,
+      "gguf_repo": "ggml-org/SmolLM2-135M-GGUF"
+    },
+    {
+      "upstream": "HuggingFaceTB/SmolLM2-360M",
+      "params_b": 0.36,
+      "dataset": "TIGER-Lab/MMLU-Pro",
+      "task": "mmlu_pro",
+      "value": 11.38
+    },
+    {
+      "upstream": "LGAI-EXAONE/EXAONE-3.5-2.4B-Instruct",
+      "params_b": 2.41,
+      "dataset": "TIGER-Lab/MMLU-Pro",
+      "task": "mmlu_pro",
+      "value": 39.1
+    },
+    {
+      "upstream": "Qwen/Qwen2-0.5B",
+      "params_b": 0.49,
+      "dataset": "TIGER-Lab/MMLU-Pro",
+      "task": "mmlu_pro",
+      "value": 14.97
+    },
+    {
+      "upstream": "Qwen/Qwen2-1.5B",
+      "params_b": 1.54,
+      "dataset": "TIGER-Lab/MMLU-Pro",
+      "task": "mmlu_pro",
+      "value": 22.56
+    },
+    {
+      "upstream": "Qwen/Qwen2-1.5B-Instruct",
+      "params_b": 1.54,
+      "dataset": "TIGER-Lab/MMLU-Pro",
+      "task": "mmlu_pro",
+      "value": 22.62
+    },
+    {
+      "upstream": "Qwen/Qwen2.5-0.5B",
+      "params_b": 0.49,
+      "dataset": "TIGER-Lab/MMLU-Pro",
+      "task": "mmlu_pro",
+      "value": 14.92
+    },
+    {
+      "upstream": "Qwen/Qwen2.5-1.5B",
+      "params_b": 1.54,
+      "dataset": "TIGER-Lab/MMLU-Pro",
+      "task": "mmlu_pro",
+      "value": 32.1
+    },
+    {
+      "upstream": "Qwen/Qwen2.5-3B",
+      "params_b": 3.09,
+      "dataset": "TIGER-Lab/MMLU-Pro",
+      "task": "mmlu_pro",
+      "value": 43.73
+    },
+    {
+      "upstream": "ibm-granite/granite-3.0-2b-base",
+      "params_b": 2.53,
+      "dataset": "TIGER-Lab/MMLU-Pro",
+      "task": "mmlu_pro",
+      "value": 21.72
+    },
+    {
+      "upstream": "ibm-granite/granite-3.1-1b-a400m-base",
+      "params_b": 1.33,
+      "dataset": "TIGER-Lab/MMLU-Pro",
+      "task": "mmlu_pro",
+      "value": 12.34
+    },
+    {
+      "upstream": "ibm-granite/granite-3.1-2b-base",
+      "params_b": 2.53,
+      "dataset": "TIGER-Lab/MMLU-Pro",
+      "task": "mmlu_pro",
+      "value": 23.89
+    },
+    {
+      "upstream": "ibm-granite/granite-3.1-3b-a800m-base",
+      "params_b": 3.3,
+      "dataset": "TIGER-Lab/MMLU-Pro",
+      "task": "mmlu_pro",
+      "value": 20.39
+    },
+    {
+      "upstream": "ibm-granite/granite-4.1-3b",
+      "params_b": 3.4,
+      "dataset": "TIGER-Lab/MMLU-Pro",
+      "task": "mmlu_pro",
+      "value": 49.83,
+      "gguf_repo": "unsloth/granite-4.1-3b-GGUF"
+    },
+    {
+      "upstream": "meta-llama/Llama-3.2-1B",
+      "params_b": 1.24,
+      "dataset": "TIGER-Lab/MMLU-Pro",
+      "task": "mmlu_pro",
+      "value": 11.95
+    },
+    {
+      "upstream": "meta-llama/Llama-3.2-3B",
+      "params_b": 3.21,
+      "dataset": "TIGER-Lab/MMLU-Pro",
+      "task": "mmlu_pro",
+      "value": 22.17
+    },
+    {
+      "upstream": "microsoft/Phi-3-mini-128k-instruct",
+      "params_b": 3.82,
+      "dataset": "TIGER-Lab/MMLU-Pro",
+      "task": "mmlu_pro",
+      "value": 43.86
+    },
+    {
+      "upstream": "microsoft/Phi-3-mini-4k-instruct",
+      "params_b": 3.82,
+      "dataset": "TIGER-Lab/MMLU-Pro",
+      "task": "mmlu_pro",
+      "value": 45.66
+    },
+    {
+      "upstream": "microsoft/Phi-3.5-mini-instruct",
+      "params_b": 3.82,
+      "dataset": "TIGER-Lab/MMLU-Pro",
+      "task": "mmlu_pro",
+      "value": 47.87
+    },
+    {
+      "upstream": "microsoft/Phi-4-mini-instruct",
+      "params_b": 3.84,
+      "dataset": "TIGER-Lab/MMLU-Pro",
+      "task": "mmlu_pro",
+      "value": 52.8,
+      "gguf_repo": "unsloth/Phi-4-mini-instruct-GGUF"
+    },
+    {
+      "upstream": "CohereLabs/cohere-transcribe-03-2026",
+      "params_b": 2.07,
+      "dataset": "hf-audio/open-asr-leaderboard",
+      "task": "mean_wer",
+      "value": 5.42
+    },
+    {
+      "upstream": "Edge0/ARK-ASR-0.6B",
+      "params_b": 1.3,
+      "dataset": "hf-audio/open-asr-leaderboard",
+      "task": "mean_wer",
+      "value": 5.53
+    },
+    {
+      "upstream": "Edge0/ARK-ASR-3B",
+      "params_b": 4.06,
+      "dataset": "hf-audio/open-asr-leaderboard",
+      "task": "mean_wer",
+      "value": 4.76
+    },
+    {
+      "upstream": "Edge0/Audio8-ASR-0.1B",
+      "params_b": 0.32,
+      "dataset": "hf-audio/open-asr-leaderboard",
+      "task": "mean_wer",
+      "value": 7.03
+    },
+    {
+      "upstream": "OpenMOSS-Team/MOSS-Transcribe-Diarize",
+      "params_b": 0.91,
+      "dataset": "hf-audio/open-asr-leaderboard",
+      "task": "mean_wer",
+      "value": 5.17
+    },
+    {
+      "upstream": "OpenMOSS-Team/MOSS-Transcribe-preview-2B",
+      "params_b": 2.42,
+      "dataset": "hf-audio/open-asr-leaderboard",
+      "task": "mean_wer",
+      "value": 4.87
+    },
+    {
+      "upstream": "distil-whisper/distil-large-v3.5",
+      "params_b": 0.76,
+      "dataset": "hf-audio/open-asr-leaderboard",
+      "task": "mean_wer",
+      "value": 7.21
+    },
+    {
+      "upstream": "facebook/hubert-xlarge-ls960-ft",
+      "params_b": 0.96,
+      "dataset": "hf-audio/open-asr-leaderboard",
+      "task": "mean_wer",
+      "value": 22.5475
+    },
+    {
+      "upstream": "facebook/mms-1b-all",
+      "params_b": 0.96,
+      "dataset": "hf-audio/open-asr-leaderboard",
+      "task": "mean_wer",
+      "value": 22.53875
+    },
+    {
+      "upstream": "facebook/mms-1b-fl102",
+      "params_b": 0.96,
+      "dataset": "hf-audio/open-asr-leaderboard",
+      "task": "mean_wer",
+      "value": 39.79625
+    },
+    {
+      "upstream": "facebook/wav2vec2-base-960h",
+      "params_b": 0.09,
+      "dataset": "hf-audio/open-asr-leaderboard",
+      "task": "mean_wer",
+      "value": 29.4025
+    },
+    {
+      "upstream": "facebook/wav2vec2-conformer-rope-large-960h-ft",
+      "params_b": 0.59,
+      "dataset": "hf-audio/open-asr-leaderboard",
+      "task": "mean_wer",
+      "value": 23.28375
+    },
+    {
+      "upstream": "facebook/wav2vec2-large-robust-ft-libri-960h",
+      "params_b": 0.32,
+      "dataset": "hf-audio/open-asr-leaderboard",
+      "task": "mean_wer",
+      "value": 22.93125
+    },
+    {
+      "upstream": "kyutai/stt-2.6b-en",
+      "params_b": 2.62,
+      "dataset": "hf-audio/open-asr-leaderboard",
+      "task": "mean_wer",
+      "value": 6.4
+    },
+    {
+      "upstream": "mistralai/Voxtral-Mini-3B-2507",
+      "params_b": 4.68,
+      "dataset": "hf-audio/open-asr-leaderboard",
+      "task": "mean_wer",
+      "value": 7.05,
+      "gguf_repo": "ggml-org/Voxtral-Mini-3B-2507-GGUF"
+    },
+    {
+      "upstream": "moondream/parakeet-redux",
+      "params_b": 0.15,
+      "dataset": "hf-audio/open-asr-leaderboard",
+      "task": "mean_wer",
+      "value": 6.05
+    },
+    {
+      "upstream": "moondream/parakeet-ultra",
+      "params_b": 0.63,
+      "dataset": "hf-audio/open-asr-leaderboard",
+      "task": "mean_wer",
+      "value": 5.32
+    },
+    {
+      "upstream": "moonshine-ai/moonshine-base",
+      "params_b": 0.06,
+      "dataset": "hf-audio/open-asr-leaderboard",
+      "task": "mean_wer",
+      "value": 9.99
+    },
+    {
+      "upstream": "moonshine-ai/moonshine-streaming-medium",
+      "params_b": 0.27,
+      "dataset": "hf-audio/open-asr-leaderboard",
+      "task": "mean_wer",
+      "value": 6.66
+    },
+    {
+      "upstream": "moonshine-ai/moonshine-streaming-small",
+      "params_b": 0.14,
+      "dataset": "hf-audio/open-asr-leaderboard",
+      "task": "mean_wer",
+      "value": 7.84
+    },
+    {
+      "upstream": "moonshine-ai/moonshine-streaming-tiny",
+      "params_b": 0.04,
+      "dataset": "hf-audio/open-asr-leaderboard",
+      "task": "mean_wer",
+      "value": 12
+    },
+    {
+      "upstream": "moonshine-ai/moonshine-tiny",
+      "params_b": 0.03,
+      "dataset": "hf-audio/open-asr-leaderboard",
+      "task": "mean_wer",
+      "value": 12.65
+    },
+    {
+      "upstream": "nvidia/canary-1b-flash",
+      "params_b": 0.81,
+      "dataset": "hf-audio/open-asr-leaderboard",
+      "task": "mean_wer",
+      "value": 6.35
+    },
+    {
+      "upstream": "nvidia/canary-1b-v2",
+      "params_b": 0.98,
+      "dataset": "hf-audio/open-asr-leaderboard",
+      "task": "mean_wer",
+      "value": 7.15
+    },
+    {
+      "upstream": "nvidia/parakeet-ctc-0.6b",
+      "params_b": 0.61,
+      "dataset": "hf-audio/open-asr-leaderboard",
+      "task": "mean_wer",
+      "value": 7.69
+    },
+    {
+      "upstream": "nvidia/parakeet-rnnt-0.6b",
+      "params_b": 0.62,
+      "dataset": "hf-audio/open-asr-leaderboard",
+      "task": "mean_wer",
+      "value": 7.495
+    },
+    {
+      "upstream": "nvidia/parakeet-rnnt-1.1b",
+      "params_b": 1.07,
+      "dataset": "hf-audio/open-asr-leaderboard",
+      "task": "mean_wer",
+      "value": 7.12375
+    },
+    {
+      "upstream": "openai/whisper-base.en",
+      "params_b": 0.07,
+      "dataset": "hf-audio/open-asr-leaderboard",
+      "task": "mean_wer",
+      "value": 10.3175
+    },
+    {
+      "upstream": "openai/whisper-large",
+      "params_b": 1.54,
+      "dataset": "hf-audio/open-asr-leaderboard",
+      "task": "mean_wer",
+      "value": 7.9425
+    },
+    {
+      "upstream": "openai/whisper-large-v2",
+      "params_b": 1.54,
+      "dataset": "hf-audio/open-asr-leaderboard",
+      "task": "mean_wer",
+      "value": 7.835
+    },
+    {
+      "upstream": "openai/whisper-large-v3",
+      "params_b": 1.54,
+      "dataset": "hf-audio/open-asr-leaderboard",
+      "task": "mean_wer",
+      "value": 7.44
+    },
+    {
+      "upstream": "openai/whisper-medium.en",
+      "params_b": 0.76,
+      "dataset": "hf-audio/open-asr-leaderboard",
+      "task": "mean_wer",
+      "value": 8.09
+    },
+    {
+      "upstream": "openai/whisper-small.en",
+      "params_b": 0.24,
+      "dataset": "hf-audio/open-asr-leaderboard",
+      "task": "mean_wer",
+      "value": 8.59
+    },
+    {
+      "upstream": "openai/whisper-tiny.en",
+      "params_b": 0.04,
+      "dataset": "hf-audio/open-asr-leaderboard",
+      "task": "mean_wer",
+      "value": 12.80625
+    },
+    {
+      "upstream": "zai-org/GLM-ASR-Nano-2512",
+      "params_b": 2.26,
+      "dataset": "hf-audio/open-asr-leaderboard",
+      "task": "mean_wer",
+      "value": 7.03
+    }
+  ],
+  "note": "Small models with upstream results on gate benchmarks that are not candidates yet. For maintainer review; never used for selection."
+}

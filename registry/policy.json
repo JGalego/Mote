@@ -1,0 +1,56 @@
+{
+  "priorities": ["size", "cpu_latency", "ram", "quality", "startup", "disk"],
+  "usable_ram_fraction": 0.6,
+  "ram_overhead_mb": 512,
+  "profiles": {
+    "small": {
+      "description": "Smallest models that clear a basic quality bar. Default.",
+      "max_ram_mb": 2048,
+      "min_tokens_per_sec": 8
+    },
+    "balanced": {
+      "description": "Larger models where the smallest ones are measurably weak.",
+      "max_ram_mb": 4096,
+      "min_tokens_per_sec": 5
+    },
+    "quality": {
+      "description": "Best measured quality that still runs on a laptop CPU.",
+      "max_ram_mb": 8192,
+      "min_tokens_per_sec": 3
+    }
+  },
+  "gates": {
+    "text": {
+      "dataset": "TIGER-Lab/MMLU-Pro",
+      "task": "mmlu_pro",
+      "higher_is_better": true,
+      "threshold": {"small": 25, "balanced": 50, "quality": 65}
+    },
+    "code": {
+      "dataset": "TIGER-Lab/MMLU-Pro",
+      "task": "mmlu_pro",
+      "higher_is_better": true,
+      "threshold": {"small": 25, "balanced": 50, "quality": 65},
+      "proxy": true,
+      "note": "No code benchmark with small-model results is published through Hugging Face evalResults; MMLU-Pro is used as a proxy until one is."
+    },
+    "extract": {
+      "dataset": "llamaindex/ExtractBench",
+      "task": "mean",
+      "higher_is_better": true,
+      "threshold": {"small": 40, "balanced": 60, "quality": 60}
+    },
+    "vision": {
+      "dataset": "MMMU/MMMU_Pro",
+      "task": "mmmu_pro_vision",
+      "higher_is_better": true,
+      "threshold": {"small": 30, "balanced": 45, "quality": 50}
+    },
+    "asr": {
+      "dataset": "hf-audio/open-asr-leaderboard",
+      "task": "mean_wer",
+      "higher_is_better": false,
+      "threshold": {"small": 8, "balanced": 7, "quality": 6}
+    }
+  }
+}
