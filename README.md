@@ -1,4 +1,9 @@
-<h1 align="center">mote</h1>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/logo/mote-dark.svg">
+    <img alt="mote" src="docs/logo/mote-light.svg" width="360">
+  </picture>
+</p>
 
 <p align="center">Small models, local machines, useful work.</p>
 
