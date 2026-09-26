@@ -76,6 +76,41 @@ jobs:
           ./install/install.ps1
           $v = & (Join-Path $env:MOTE_PREFIX 'mote.exe') version
           if ($v -notmatch 'mote ci') { throw "unexpected version: $v" }
+      # Building from source needs a commit the module proxy can fetch, so
+      # only on push, and run it twice: re-running must just update in place.
+      - name: Install twice from source (sh)
+        if: runner.os != 'Windows' && github.event_name == 'push'
+        env:
+          MOTE_SOURCE: '1'
+          MOTE_NO_SETUP: '1'
+        run: |
+          export MOTE_VERSION="$GITHUB_SHA" MOTE_PREFIX="$RUNNER_TEMP/src"
+          sh install/install.sh
+          sh install/install.sh
+          v="$("$MOTE_PREFIX/mote" version)"
+          echo "$v"
+          # The build carries the commit (a pseudo-version), or the tag when
+          # this commit is a release; "dev" means the version was lost.
+          case "$v" in
+            *"$(echo "$GITHUB_SHA" | cut -c1-12)"* | "mote v"*) ;;
+            *) echo "source build reports no version: $v"; exit 1 ;;
+          esac
+      - name: Install twice from source (PowerShell)
+        if: runner.os == 'Windows' && github.event_name == 'push'
+        shell: pwsh
+        env:
+          MOTE_SOURCE: '1'
+          MOTE_NO_SETUP: '1'
+        run: |
+          $env:MOTE_VERSION = $env:GITHUB_SHA
+          $env:MOTE_PREFIX = Join-Path $env:RUNNER_TEMP 'src'
+          ./install/install.ps1
+          ./install/install.ps1
+          $v = & (Join-Path $env:MOTE_PREFIX 'mote.exe') version
+          Write-Host $v
+          if ($v -notmatch $env:GITHUB_SHA.Substring(0, 12) -and $v -notmatch 'mote v') {
+              throw "source build reports no version: $v"
+          }
       - name: Setup with the pinned runtime and check it
         if: runner.os != 'Windows'
         run: |

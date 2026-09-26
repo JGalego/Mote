@@ -52,6 +52,23 @@ curl -fsSL https://raw.githubusercontent.com/JGalego/Mote/main/install/install.s
 irm https://raw.githubusercontent.com/JGalego/Mote/main/install/install.ps1 | iex
 ```
 
+### Development 🧪
+
+Install the current source instead of a release. Both commands replace whatever `mote` is installed, so run them as often as you like to move to the tip of `main`; set `MOTE_VERSION` to build a branch, tag or commit instead.
+
+Building needs [Go 🦫](https://go.dev/dl/).
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/JGalego/Mote/main/install/install.sh | MOTE_SOURCE=1 sh
+```
+
+```powershell
+$env:MOTE_SOURCE=1; irm https://raw.githubusercontent.com/JGalego/Mote/main/install/install.ps1 | iex
+```
+
+In a clone, `go install ./cmd/mote` does the same into `$(go env GOPATH)/bin`. `mote version` reports the commit it was built from.
+
+
 <img src="docs/demo/install.gif" width=70%/>
 
 ## Commands
@@ -145,10 +162,8 @@ irm https://raw.githubusercontent.com/JGalego/Mote/main/install/install.ps1 | ie
 
 ### your own 🧩
 
-Tasks are data, not code: put a file shaped like
-[`tasks.json`](internal/task/tasks.json) in `tasks/*.json` under the config
-directory (`mote tasks` prints the path) and it is validated, listed as
-`custom` and run like the rest. An id that matches a built-in replaces it.
+Tasks are data, not code: put a file shaped like [`tasks.json`](internal/task/tasks.json) in `tasks/*.json` under the config directory (`mote tasks` prints the path) and it is validated, listed as `custom` and run like the rest. An id that matches a built-in replaces it.
+
 See [extending mote](docs/extending.md).
 
 ## How it works

@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"sort"
 	"strings"
 
@@ -25,6 +26,31 @@ import (
 
 // Version is set at build time with -ldflags "-X .../cli.Version=v1.2.3".
 var Version = "dev"
+
+// version describes this build. Released binaries carry the tag above;
+// one installed from source (`go install ...@main`) has none, so fall back
+// to the module version and commit the go tool records in the binary, which
+// is what tells two source builds apart.
+func version() string {
+	if Version != "dev" {
+		return Version
+	}
+	bi, ok := debug.ReadBuildInfo()
+	if !ok {
+		return Version
+	}
+	// go install ...@main records a pseudo-version, which already names the
+	// commit; a plain `go build` in a checkout records only the revision.
+	if v := bi.Main.Version; v != "" && v != "(devel)" {
+		return v
+	}
+	for _, set := range bi.Settings {
+		if set.Key == "vcs.revision" && len(set.Value) >= 7 {
+			return Version + "+" + set.Value[:7]
+		}
+	}
+	return Version
+}
 
 // Exit codes.
 const (
@@ -135,7 +161,7 @@ func (a *app) dispatch(ctx context.Context, args []string) error {
 		a.usage()
 		return nil
 	case "version", "--version":
-		fmt.Fprintf(a.out, "mote %s (%s/%s, registry %s)\n", Version, runtime.GOOS, runtime.GOARCH, a.registry().Version)
+		fmt.Fprintf(a.out, "mote %s (%s/%s, registry %s)\n", version(), runtime.GOOS, runtime.GOARCH, a.registry().Version)
 		return nil
 	case "setup":
 		return a.setup(ctx, rest)

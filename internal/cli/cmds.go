@@ -370,7 +370,7 @@ func (a *app) update(ctx context.Context, args []string) error {
 		return fmt.Errorf("registry URL must be https: %s", a.regURL)
 	}
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, a.regURL, nil)
-	req.Header.Set("User-Agent", "mote/"+Version)
+	req.Header.Set("User-Agent", "mote/"+version())
 	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
 	if err != nil {
 		return fmt.Errorf("fetch registry: %w (nothing changed)", err)

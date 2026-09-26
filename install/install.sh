@@ -7,7 +7,10 @@
 # `mote setup` explains and verifies each later download (llama.cpp, models).
 #
 # Environment:
-#   MOTE_VERSION   release tag to install (default: latest)
+#   MOTE_SOURCE    set to 1 to build the current source from GitHub instead
+#                  of downloading a release (needs Go; see MOTE_VERSION)
+#   MOTE_VERSION   release tag to install, or with MOTE_SOURCE the branch,
+#                  tag or commit to build (default: latest, main from source)
 #   MOTE_PREFIX    install directory (default: ~/.local/bin)
 #   MOTE_NO_SETUP  set to 1 to skip `mote setup`
 #   MOTE_BASE_URL  alternative release directory (https:// or file://), for mirrors and tests
@@ -21,6 +24,33 @@ PREFIX="${MOTE_PREFIX:-$HOME/.local/bin}"
 say() { printf 'mote-install: %s\n' "$*"; }
 die() { printf 'mote-install: error: %s\n' "$*" >&2; exit 1; }
 
+# install_binary puts one built or downloaded mote in place, replacing any
+# copy already there atomically so the script is safe to re-run.
+install_binary() {
+  mkdir -p "$PREFIX"
+  cp "$1" "$PREFIX/.mote.new"
+  chmod 755 "$PREFIX/.mote.new"
+  mv -f "$PREFIX/.mote.new" "$PREFIX/mote"
+  say "installed $PREFIX/mote ($("$PREFIX/mote" version))"
+  case ":$PATH:" in
+    *":$PREFIX:"*) ;;
+    *) say "add $PREFIX to your PATH, e.g.: echo 'export PATH=\"$PREFIX:\$PATH\"' >> ~/.profile" ;;
+  esac
+}
+
+# finish runs `mote setup` unless the caller asked us not to.
+finish() {
+  [ "${MOTE_NO_SETUP:-0}" = 1 ] && exit 0
+  # When piped into sh, stdin is the script; ask questions on the terminal.
+  if [ -t 0 ]; then
+    exec "$PREFIX/mote" setup "$@"
+  elif (: </dev/tty) 2>/dev/null; then
+    exec "$PREFIX/mote" setup "$@" </dev/tty
+  else
+    exec "$PREFIX/mote" setup --yes "$@"
+  fi
+}
+
 case "$(uname -s)" in
   Linux) os=linux ;;
   Darwin) os=darwin ;;
@@ -31,6 +61,20 @@ case "$(uname -m)" in
   aarch64 | arm64) arch=arm64 ;;
   *) die "unsupported CPU architecture $(uname -m) (need x86_64 or arm64)" ;;
 esac
+
+if [ "${MOTE_SOURCE:-0}" = 1 ]; then
+  command -v go >/dev/null 2>&1 || die "building from source needs Go: https://go.dev/dl/"
+  ref="$VERSION"
+  [ "$ref" = latest ] && ref=main
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' EXIT INT TERM
+  say "building github.com/$REPO/cmd/mote@$ref with $(go version | cut -d" " -f3)"
+  GOBIN="$tmp" go install "github.com/$REPO/cmd/mote@$ref" ||
+    die "build failed; check that $ref exists in https://github.com/$REPO"
+  [ -x "$tmp/mote" ] || die "build produced no mote binary"
+  install_binary "$tmp/mote"
+  finish "$@"
+fi
 
 if [ -n "${MOTE_BASE_URL:-}" ]; then
   base="$MOTE_BASE_URL"
@@ -75,24 +119,5 @@ got="$(sha256 "$tmp/$asset")"
 say "sha256 verified"
 
 tar -xzf "$tmp/$asset" -C "$tmp" mote || die "archive does not contain mote"
-mkdir -p "$PREFIX"
-# Replace atomically so re-running over an installed copy is safe.
-cp "$tmp/mote" "$PREFIX/.mote.new"
-chmod 755 "$PREFIX/.mote.new"
-mv -f "$PREFIX/.mote.new" "$PREFIX/mote"
-say "installed $PREFIX/mote ($("$PREFIX/mote" version))"
-
-case ":$PATH:" in
-  *":$PREFIX:"*) ;;
-  *) say "add $PREFIX to your PATH, e.g.: echo 'export PATH=\"$PREFIX:\$PATH\"' >> ~/.profile" ;;
-esac
-
-[ "${MOTE_NO_SETUP:-0}" = 1 ] && exit 0
-# When piped into sh, stdin is the script; ask questions on the terminal.
-if [ -t 0 ]; then
-  exec "$PREFIX/mote" setup "$@"
-elif (: </dev/tty) 2>/dev/null; then
-  exec "$PREFIX/mote" setup "$@" </dev/tty
-else
-  exec "$PREFIX/mote" setup --yes "$@"
-fi
+install_binary "$tmp/mote"
+finish "$@"

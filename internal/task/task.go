@@ -94,6 +94,19 @@ type Env struct {
 	// in a streamed reply ("python"), before the code itself is streamed.
 	// The CLI uses it to highlight what it prints.
 	Lang func(lang string)
+	// Sessions, when set, holds open model sessions across runs so the
+	// stages of a pipeline keep their models loaded. Whoever supplies it
+	// owns it and must call CloseSessions; a run with no cache of its own
+	// closes the sessions it opened.
+	Sessions map[string]runtime.Session
+}
+
+// CloseSessions shuts down the sessions in a cache shared between runs.
+func CloseSessions(sessions map[string]runtime.Session) {
+	for id, s := range sessions {
+		s.Close()
+		delete(sessions, id)
+	}
 }
 
 // Options are per-run switches from the command line.
@@ -309,8 +322,11 @@ type run struct {
 
 // Run executes t with positional args.
 func (t Task) Run(ctx context.Context, env Env, args []string, opt Options) (Result, error) {
-	r := &run{ctx: ctx, env: env, opt: opt, task: t, vars: map[string]Value{}, sessions: map[string]runtime.Session{}}
-	defer r.close()
+	r := &run{ctx: ctx, env: env, opt: opt, task: t, vars: map[string]Value{}, sessions: env.Sessions}
+	if r.sessions == nil {
+		r.sessions = map[string]runtime.Session{}
+		defer r.close()
+	}
 	if t.Output == "required" && opt.Output == "" {
 		return Result{}, fmt.Errorf("%w: task %s needs -o OUTPUT", ErrUsage, t.ID)
 	}
