@@ -349,7 +349,7 @@ func (a *app) run(ctx context.Context, args []string) error {
 	if len(pos) == 0 {
 		return usagef("which task? see `mote tasks`")
 	}
-	tasks, err := task.Load()
+	tasks, err := task.LoadFrom(a.tasksDir())
 	if err != nil {
 		return err
 	}
@@ -488,14 +488,27 @@ func (a *app) footer(calls []task.Call) {
 	fmt.Fprintln(a.err, a.ue.Dim(line+" · local CPU"))
 }
 
+// tasksDir is where user-defined tasks live: *.json files shaped like the
+// built-in tasks.json, loaded on top of it.
+func (a *app) tasksDir() string {
+	if d := os.Getenv("MOTE_TASKS_DIR"); d != "" {
+		return d
+	}
+	return filepath.Join(a.cfgDir, "tasks")
+}
+
 func (a *app) tasks() error {
-	tasks, err := task.Load()
+	tasks, err := task.LoadFrom(a.tasksDir())
 	if err != nil {
 		return err
 	}
 	for _, t := range tasks {
 		o := a.uo
-		fmt.Fprintf(a.out, "%s %s %s\n", o.Bold(pad(t.ID, 11)), o.Accent(pad(strings.Join(t.In, "+")+" -> "+t.Out, 22)), t.Summary)
+		summary := t.Summary
+		if t.Custom() {
+			summary += o.Dim(" · custom")
+		}
+		fmt.Fprintf(a.out, "%s %s %s\n", o.Bold(pad(t.ID, 11)), o.Accent(pad(strings.Join(t.In, "+")+" -> "+t.Out, 22)), summary)
 		fmt.Fprintf(a.out, "%-11s %s\n", "", o.Dim("usage: mote run "+t.ID+" "+t.Usage()))
 		var needs []string
 		for _, c := range t.Caps() {
@@ -520,6 +533,7 @@ func (a *app) tasks() error {
 		}
 		fmt.Fprintf(a.out, "%-11s %s %s\n", "", a.uo.Dim("needs:"), strings.Join(needs, "; "))
 	}
+	fmt.Fprintf(a.out, "%s\n", a.uo.Dim("your own tasks: "+filepath.Join(a.tasksDir(), "*.json")+" (see docs/extending.md)"))
 	return nil
 }
 

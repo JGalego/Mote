@@ -19,6 +19,13 @@ inputs and the value it produces (`as`). The last value must be `out`.
 Prompts use `{{name}}` for earlier values. `go test ./internal/task` validates
 every task (unknown ops, undefined values, unknown capabilities).
 
+**Your own task** needs no fork: put the same JSON in `*.json` files under
+`tasks/` in the config directory (`$MOTE_TASKS_DIR` overrides it, `mote tasks`
+prints the path). They are validated like the built-ins, listed as `custom`,
+and an id that matches a built-in replaces it, so a prompt can be adjusted in
+place. A file that does not parse is an error naming the file, not a task that
+quietly disappears.
+
 **A local tool or modality** is an op: a Go function in
 `internal/task/ops.go` registered in the `ops` map, with the executables it
 needs listed in `tools` so `mote tasks` and `mote doctor` can report them.

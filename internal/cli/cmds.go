@@ -17,6 +17,7 @@ import (
 	"github.com/jgalego/mote/internal/bench"
 	"github.com/jgalego/mote/internal/config"
 	mrt "github.com/jgalego/mote/internal/runtime"
+	"github.com/jgalego/mote/internal/task"
 	"github.com/jgalego/mote/registry"
 )
 
@@ -198,6 +199,21 @@ func (a *app) doctor() error {
 				line("ok", "model "+c, m.ID)
 			}
 		}
+	}
+	if tasks, err := task.LoadFrom(a.tasksDir()); err != nil {
+		line("FAIL", "tasks", err.Error())
+	} else {
+		custom := 0
+		for _, t := range tasks {
+			if t.Custom() {
+				custom++
+			}
+		}
+		detail := fmt.Sprintf("%d built-in", len(tasks)-custom)
+		if custom > 0 {
+			detail += fmt.Sprintf(" + %d custom from %s", custom, a.tasksDir())
+		}
+		line("ok", "tasks", detail)
 	}
 	for _, t := range []string{"ffmpeg", "ffprobe", "git"} {
 		if p, err := a.tool(t); err == nil {

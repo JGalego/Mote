@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -32,7 +33,13 @@ type Task struct {
 	Params  []Param  `json:"params"`
 	Output  string   `json:"output,omitempty"` // default output path, "required", or empty for stdout
 	Steps   []Step   `json:"steps"`
+
+	// Source is the file a user-defined task came from, empty for built-ins.
+	Source string `json:"-"`
 }
+
+// Custom reports whether t was defined by the user rather than built in.
+func (t Task) Custom() bool { return t.Source != "" }
 
 type Param struct {
 	Name     string  `json:"name"`
@@ -112,6 +119,56 @@ type Call struct {
 
 // Load returns the built-in tasks.
 func Load() ([]Task, error) { return Parse(embedded) }
+
+// LoadFrom returns the built-in tasks merged with the user's own, read from
+// the *.json files in dir (each shaped like tasks.json). A user task with the
+// id of a built-in replaces it, so a prompt can be adjusted without forking
+// mote; two user files defining the same id is an error, as is a file that
+// does not parse or validate. A missing dir simply means no custom tasks.
+func LoadFrom(dir string) ([]Task, error) {
+	tasks, err := Load()
+	if err != nil {
+		return nil, err
+	}
+	if dir == "" {
+		return tasks, nil
+	}
+	files, err := filepath.Glob(filepath.Join(dir, "*.json"))
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(files)
+	byID := map[string]int{}
+	for i, t := range tasks {
+		byID[t.ID] = i
+	}
+	from := map[string]string{} // id -> the user file that defined it
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			return nil, err
+		}
+		custom, err := Parse(b)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", f, err)
+		}
+		for _, t := range custom {
+			if prev, ok := from[t.ID]; ok {
+				return nil, fmt.Errorf("%s: task %q is already defined in %s", f, t.ID, prev)
+			}
+			from[t.ID] = f
+			t.Source = f
+			if i, ok := byID[t.ID]; ok {
+				tasks[i] = t
+				continue
+			}
+			byID[t.ID] = len(tasks)
+			tasks = append(tasks, t)
+		}
+	}
+	sort.Slice(tasks, func(i, j int) bool { return tasks[i].ID < tasks[j].ID })
+	return tasks, nil
+}
 
 // Parse decodes and validates task definitions.
 func Parse(b []byte) ([]Task, error) {

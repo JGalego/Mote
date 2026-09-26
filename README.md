@@ -33,6 +33,7 @@ mote runs X-to-Y AI tasks (text, code, images, audio, video, files) on your CPU 
   - [video](#video---)
   - [convert](#convert---)
   - [patch](#patch---)
+  - [your own](#your-own-)
 - [How it works](#how-it-works)
 - [Models](#models)
 - [License](#license)
@@ -141,6 +142,14 @@ irm https://raw.githubusercontent.com/JGalego/Mote/main/install/install.ps1 | ie
 `mote run patch DIR INSTRUCTION` — Propose changes to a directory as a diff; `--apply` writes them to disk.
 
 ![mote run patch](docs/demo/patch.gif)
+
+### your own 🧩
+
+Tasks are data, not code: put a file shaped like
+[`tasks.json`](internal/task/tasks.json) in `tasks/*.json` under the config
+directory (`mote tasks` prints the path) and it is validated, listed as
+`custom` and run like the rest. An id that matches a built-in replaces it.
+See [extending mote](docs/extending.md).
 
 ## How it works
 

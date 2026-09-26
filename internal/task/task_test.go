@@ -369,3 +369,102 @@ func TestStreamingAllFinalSteps(t *testing.T) {
 		t.Errorf("%+v %v", res, err)
 	}
 }
+
+const customTask = `{"tasks":[{"id":"shout","summary":"Answer loudly","in":["text"],"out":"text",
+  "params":[{"name":"prompt","kind":"text"}],
+  "steps":[{"op":"generate","cap":"text","prompt":"{{prompt}} IN CAPITALS","as":"out"}]}]}`
+
+func writeTasks(t *testing.T, dir, name, body string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLoadFromAddsUserTasks(t *testing.T) {
+	dir := t.TempDir()
+	writeTasks(t, dir, "shout.json", customTask)
+
+	tasks, err := LoadFrom(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	built, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != len(built)+1 {
+		t.Fatalf("got %d tasks, want %d", len(tasks), len(built)+1)
+	}
+	shout, ok := Find(tasks, "shout")
+	if !ok {
+		t.Fatal("custom task not loaded")
+	}
+	if !shout.Custom() || shout.Source != filepath.Join(dir, "shout.json") {
+		t.Errorf("source %q custom %v", shout.Source, shout.Custom())
+	}
+	if chat, _ := Find(tasks, "chat"); chat.Custom() {
+		t.Error("built-in marked as custom")
+	}
+	// Tasks stay sorted by id, wherever they came from.
+	for i := 1; i < len(tasks); i++ {
+		if tasks[i-1].ID > tasks[i].ID {
+			t.Fatalf("not sorted: %s before %s", tasks[i-1].ID, tasks[i].ID)
+		}
+	}
+}
+
+func TestLoadFromOverridesBuiltIn(t *testing.T) {
+	dir := t.TempDir()
+	writeTasks(t, dir, "mine.json", strings.Replace(customTask, `"id":"shout"`, `"id":"chat"`, 1))
+
+	tasks, err := LoadFrom(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	built, _ := Load()
+	if len(tasks) != len(built) {
+		t.Errorf("override added a task: %d vs %d", len(tasks), len(built))
+	}
+	chat, _ := Find(tasks, "chat")
+	if !chat.Custom() || chat.Summary != "Answer loudly" {
+		t.Errorf("built-in not replaced: %+v", chat)
+	}
+}
+
+func TestLoadFromReportsBadFiles(t *testing.T) {
+	dir := t.TempDir()
+	writeTasks(t, dir, "broken.json", `{"tasks":[{"id":"x"}]}`)
+	_, err := LoadFrom(dir)
+	if err == nil || !strings.Contains(err.Error(), "broken.json") {
+		t.Fatalf("error should name the file: %v", err)
+	}
+
+	dir = t.TempDir()
+	writeTasks(t, dir, "a.json", customTask)
+	writeTasks(t, dir, "b.json", customTask)
+	_, err = LoadFrom(dir)
+	if err == nil || !strings.Contains(err.Error(), "already defined") {
+		t.Fatalf("duplicate ids across files: %v", err)
+	}
+
+	dir = t.TempDir()
+	writeTasks(t, dir, "unknown-op.json", strings.Replace(customTask, `"op":"generate"`, `"op":"nosuchop"`, 1))
+	if _, err := LoadFrom(dir); err == nil {
+		t.Fatal("unknown op accepted")
+	}
+}
+
+func TestLoadFromMissingDirIsFine(t *testing.T) {
+	tasks, err := LoadFrom(filepath.Join(t.TempDir(), "nope"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	built, _ := Load()
+	if len(tasks) != len(built) {
+		t.Errorf("got %d tasks, want %d", len(tasks), len(built))
+	}
+	if tasks, err := LoadFrom(""); err != nil || len(tasks) != len(built) {
+		t.Errorf("empty dir: %d %v", len(tasks), err)
+	}
+}

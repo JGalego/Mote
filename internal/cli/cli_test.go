@@ -336,3 +336,33 @@ func TestRunHighlightsCodeOnlyForTerminals(t *testing.T) {
 		t.Errorf("colour written to file: %q", b)
 	}
 }
+
+func TestCustomTasks(t *testing.T) {
+	e := newEnv(t)
+	e.setup()
+	e.install("qwen3.5-0.8b")
+	dir := t.TempDir()
+	t.Setenv("MOTE_TASKS_DIR", dir)
+	os.WriteFile(filepath.Join(dir, "shout.json"), []byte(`{"tasks":[{"id":"shout",
+		"summary":"Answer loudly","in":["text"],"out":"text",
+		"params":[{"name":"prompt","kind":"text"}],
+		"steps":[{"op":"generate","cap":"text","prompt":"{{prompt}} IN CAPITALS","as":"out"}]}]}`), 0o644)
+
+	code, out, errs := e.mote("", "tasks")
+	if code != 0 || !strings.Contains(out, "shout") || !strings.Contains(out, "custom") {
+		t.Fatalf("tasks: %d %s %s", code, out, errs)
+	}
+	code, out, errs = e.mote("", "run", "shout", "hello")
+	if code != 0 || !strings.Contains(out, "hello IN CAPITALS") {
+		t.Fatalf("run custom: %d %q %s", code, out, errs)
+	}
+	if code, out, _ := e.mote("", "doctor"); !strings.Contains(out, "1 custom") {
+		t.Errorf("doctor does not report custom tasks (%d): %s", code, out)
+	}
+
+	// A broken file is named rather than silently ignored.
+	os.WriteFile(filepath.Join(dir, "broken.json"), []byte(`{"tasks":[{"id":"nope"}]}`), 0o644)
+	if code, _, errs := e.mote("", "run", "chat", "hi"); code == 0 || !strings.Contains(errs, "broken.json") {
+		t.Errorf("broken task file: %d %s", code, errs)
+	}
+}
