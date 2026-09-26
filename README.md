@@ -80,7 +80,7 @@ In a clone, `go install ./cmd/mote` does the same into `$(go env GOPATH)/bin`. `
 | `mote setup [--profile P] [--yes]` | Install the runtime and the models for a profile (`small`, `balanced`, `quality`) |
 | `mote run TASK [ARGS...]` | Run a task, e.g. `mote run chat "Explain what a mutex is"`; `-o FILE` writes the output, `--model ID` overrides the model, `--apply` writes `patch` changes |
 | `mote pipe "A \| B \| !cmd"` | Chain tasks in one process, each stage receiving the last one's value: `{}` or `-` places it, `!` runs a shell command |
-| `mote do "REQUEST"` | Pick the task that fits a request written in plain words and run it; `--dry-run` shows the choice without running |
+| `mote do "REQUEST"` | Pick the task that fits a request written in plain words and run it; `--router embed` chooses with the encoder, `--dry-run` shows the choice |
 | `mote listen [TASK]` | Wait for a wake word on the microphone, then run what you say next (never listens unless you start it) |
 | `mote tasks` | List the tasks, their arguments and what each one needs |
 | `mote models [pull\|rm\|why\|verify]` | Show models, sizes and which are in use; fetch, remove, explain or re-verify them |
@@ -193,6 +193,12 @@ mote do "what is on the sign in photo.jpg" --dry-run
 Words naming a file or directory that exists fill the task's file arguments;
 what is left becomes its text argument. `--dry-run` prints the `mote run`
 command it chose without running it.
+
+Two routers are available. The default asks the text model, which reasons
+about the request but costs a generation. `--router embed` (or
+`mote config set router embed`) instead compares the request with each task's
+description using a 36 MB encoder: one forward pass per text, no tokens
+generated, milliseconds on a CPU.
 
 ### spoken 🎤
 

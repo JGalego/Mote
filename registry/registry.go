@@ -30,6 +30,7 @@ var Capabilities = map[string]string{
 	"vision":  "image (+text) -> text",
 	"asr":     "audio -> text",
 	"tts":     "text -> audio",
+	"embed":   "text -> vector (routing, search)",
 }
 
 // Benchmark kinds. Only upstream measurements and explicit estimates may

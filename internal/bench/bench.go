@@ -38,6 +38,10 @@ type Case struct {
 	Schema json.RawMessage `json:"schema,omitempty"`
 	Expect []string        `json:"expect,omitempty"`
 	Regex  string          `json:"regex,omitempty"`
+	// Embedding cases have no reply to check: the model passes when Prompt
+	// lands closer to Similar than to Different.
+	Similar   string `json:"similar,omitempty"`
+	Different string `json:"different,omitempty"`
 }
 
 // Cases returns the built-in benchmark cases.
@@ -174,6 +178,21 @@ func runModel(ctx context.Context, opt Options, m *registry.Model, cases []Case,
 	var genTok, promptTok int
 	var genMS, promptMS, total float64
 	for _, c := range cases {
+		if c.Similar != "" {
+			start := time.Now()
+			ok, why, err := embedCase(ctx, sess, c)
+			total += float64(time.Since(start).Microseconds()) / 1000
+			e.Cases++
+			switch {
+			case err != nil:
+				e.Failures = append(e.Failures, fmt.Sprintf("%s: %v", c.ID, err))
+			case ok:
+				e.Passed++
+			default:
+				e.Failures = append(e.Failures, c.ID+": "+why)
+			}
+			continue
+		}
 		req := runtime.Request{Prompt: c.Prompt, JSONSchema: c.Schema, MaxTokens: 256}
 		if c.Image != "" {
 			p := filepath.Join(tmp, c.ID+".png")
@@ -229,6 +248,25 @@ func runModel(ctx context.Context, opt Options, m *registry.Model, cases []Case,
 		e.PromptTPS = float64(promptTok) / promptMS * 1000
 	}
 	return e, nil
+}
+
+// embedCase checks that an embedding model places Prompt nearer to Similar
+// than to Different, which is all a router needs of it. There are no tokens
+// to count, so only latency and memory are measured.
+func embedCase(ctx context.Context, sess runtime.Session, c Case) (bool, string, error) {
+	em, ok := sess.(runtime.Embedder)
+	if !ok {
+		return false, "", fmt.Errorf("model cannot produce embeddings")
+	}
+	v, err := em.Embed(ctx, []string{c.Prompt, c.Similar, c.Different})
+	if err != nil {
+		return false, "", err
+	}
+	near, far := runtime.Cosine(v[0], v[1]), runtime.Cosine(v[0], v[2])
+	if near > far {
+		return true, "", nil
+	}
+	return false, fmt.Sprintf("closer to %q (%.3f) than to %q (%.3f)", c.Different, far, c.Similar, near), nil
 }
 
 // Check scores a model reply against a case.

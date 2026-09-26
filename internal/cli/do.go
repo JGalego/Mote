@@ -13,8 +13,10 @@ import (
 )
 
 // `mote do "..."` takes a request in plain words, picks the task that fits
-// and runs it. The router asks the text model for one task id, constrained
-// by a JSON schema so a small model cannot invent one.
+// and runs it. Two routers can decide: "text" asks the text model for one
+// task id, constrained by a JSON schema so a small model cannot invent one,
+// and "embed" compares the request with each task's description using the
+// embed model, which is one encoder pass instead of a generated reply.
 
 // routeSystem keeps the model from explaining itself; the schema already
 // forces the shape, and a small model that starts prosing wastes tokens.
@@ -161,7 +163,7 @@ func (a *app) do(ctx context.Context, args []string) error {
 	}
 	request := strings.TrimSpace(strings.Join(pos, " "))
 	if request == "" {
-		return usagef(`usage: mote do "REQUEST" [--dry-run]`)
+		return usagef(`usage: mote do "REQUEST" [--router text|embed] [--dry-run]`)
 	}
 	tasks, err := task.LoadFrom(a.tasksDir())
 	if err != nil {
@@ -183,6 +185,8 @@ func (a *app) do(ctx context.Context, args []string) error {
 	switch router {
 	case "text":
 		id, err = a.routeText(ctx, request, choices, profile, sessions)
+	case "embed":
+		id, err = a.routeEmbed(ctx, request, choices, profile, sessions)
 	default:
 		return usagef("unknown router %q", router)
 	}
@@ -220,4 +224,69 @@ func quoteArgs(args []string) []string {
 		}
 	}
 	return out
+}
+
+// describeTask is what the embed router compares a request against. The
+// summary carries the meaning; the id and the words around it help when a
+// request names the task outright.
+func describeTask(t task.Task) string {
+	return fmt.Sprintf("%s: %s. Takes %s and produces %s.",
+		t.ID, t.Summary, strings.Join(t.In, " and "), t.Out)
+}
+
+// nearest returns the task whose description sits closest to the request.
+func nearest(request []float32, tasks [][]float32, ids []string) (string, float64) {
+	best, score := "", -2.0
+	for i, v := range tasks {
+		if s := mrt.Cosine(request, v); s > score {
+			best, score = ids[i], s
+		}
+	}
+	return best, score
+}
+
+// routeEmbed picks a task with the embed model: one encoder pass over the
+// request and one per task description, then the closest match. No tokens
+// are generated, so it costs milliseconds rather than a reply.
+func (a *app) routeEmbed(ctx context.Context, request string, tasks []task.Task, profile string, sessions map[string]mrt.Session) (string, error) {
+	env := a.env(profile, sessions)
+	m, files, err := env.Resolve(ctx, "embed")
+	if err != nil {
+		return "", err
+	}
+	b, err := env.Backend(m)
+	if err != nil {
+		return "", err
+	}
+	sess, ok := sessions[m.ID]
+	if !ok {
+		done := a.status("loading " + m.ID + " for embed")
+		sess, err = b.Open(ctx, m, files)
+		done(err == nil)
+		if err != nil {
+			return "", err
+		}
+		sessions[m.ID] = sess
+	}
+	embedder, ok := sess.(mrt.Embedder)
+	if !ok {
+		return "", fmt.Errorf("%s cannot produce embeddings", m.ID)
+	}
+	texts := make([]string, 0, len(tasks)+1)
+	ids := make([]string, 0, len(tasks))
+	texts = append(texts, request)
+	for _, t := range tasks {
+		texts = append(texts, describeTask(t))
+		ids = append(ids, t.ID)
+	}
+	vecs, err := embedder.Embed(ctx, texts)
+	if err != nil {
+		return "", err
+	}
+	id, score := nearest(vecs[0], vecs[1:], ids)
+	if id == "" {
+		return "", fmt.Errorf("no task was close to the request")
+	}
+	fmt.Fprintf(a.err, "%s\n", a.ue.Dim(fmt.Sprintf("embed router chose %s (cosine %.3f)", id, score)))
+	return id, nil
 }

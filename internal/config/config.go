@@ -239,8 +239,8 @@ func (c *Config) Set(key, value string) error {
 	case key == "wake_word":
 		c.WakeWord = value
 	case key == "router":
-		if value != "" && value != "text" {
-			return fmt.Errorf("router expects text")
+		if value != "" && value != "text" && value != "embed" {
+			return fmt.Errorf("router expects text or embed")
 		}
 		c.Router = value
 	case key == "workspace":

@@ -45,7 +45,9 @@ fewer bytes.
 
 **A capability** needs an entry in `registry.Capabilities`, a gate (or an
 explicit decision not to gate it), at least one candidate and a benchmark
-case in `internal/bench/cases.json`.
+case in `internal/bench/cases.json`. It also needs a user: a task, or a
+command listed in the `byCommand` map in `internal/task/task_test.go`, which
+is how `embed` is used (`mote do --router embed`, not a task).
 
 **A backend** implements `runtime.Backend` (`Open` a session that can
 `Generate`, and `Speak`) and is chosen in `cli.app.backend` from the model's

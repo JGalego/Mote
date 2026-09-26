@@ -83,6 +83,27 @@ func server(args []string) int {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, `{"status":"ok"}`) })
+	// Embeddings: a deterministic bag-of-words vector, so similarity
+	// between texts sharing words is real without loading a model.
+	mux.HandleFunc("/v1/embeddings", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Input []string `json:"input"`
+		}
+		json.NewDecoder(r.Body).Decode(&req)
+		data := make([]any, len(req.Input))
+		for i, text := range req.Input {
+			vec := make([]float64, 64)
+			for _, word := range strings.Fields(strings.ToLower(text)) {
+				h := 0
+				for _, c := range word {
+					h = (h*31 + int(c)) % len(vec)
+				}
+				vec[h]++
+			}
+			data[i] = map[string]any{"index": i, "embedding": vec, "object": "embedding"}
+		}
+		json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": data})
+	})
 	mux.HandleFunc("/v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Messages []struct {

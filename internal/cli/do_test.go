@@ -112,3 +112,63 @@ func TestDoRoutesAndRuns(t *testing.T) {
 		t.Errorf("unknown router: %d %s", code, errs)
 	}
 }
+
+func TestNearestPicksTheClosestDescription(t *testing.T) {
+	req := []float32{1, 0, 0}
+	ids := []string{"far", "near", "middling"}
+	vecs := [][]float32{{0, 1, 0}, {0.9, 0.1, 0}, {0.5, 0.5, 0}}
+	id, score := nearest(req, vecs, ids)
+	if id != "near" {
+		t.Errorf("chose %s (%.3f)", id, score)
+	}
+	if _, s := nearest(req, [][]float32{{0, 1, 0}}, []string{"far"}); s > 0.001 {
+		t.Errorf("orthogonal vectors scored %.3f", s)
+	}
+	// Mismatched or empty vectors must not panic or win.
+	if id, _ := nearest(req, [][]float32{{}, {1, 0, 0}}, []string{"empty", "same"}); id != "same" {
+		t.Errorf("chose %s over an identical vector", id)
+	}
+}
+
+func TestDescribeTaskMentionsTheTask(t *testing.T) {
+	tasks, _ := task.Load()
+	tr, _ := task.Find(tasks, "transcribe")
+	d := describeTask(tr)
+	for _, want := range []string{"transcribe", "audio", "text"} {
+		if !strings.Contains(strings.ToLower(d), want) {
+			t.Errorf("description %q omits %q", d, want)
+		}
+	}
+}
+
+func TestDoWithTheEmbedRouter(t *testing.T) {
+	e := newEnv(t)
+	e.setup()
+	e.install("qwen3.5-0.8b")
+	e.install("bge-small-en-1.5")
+
+	// The fake embeddings are bags of words, so a request sharing words
+	// with a task's description lands on that task.
+	code, out, errs := e.mote("", "do", "--router", "embed", "--dry-run",
+		"Answer a prompt about mutexes")
+	if code != 0 {
+		t.Fatalf("embed router: %d %s", code, errs)
+	}
+	if !strings.Contains(errs, "embed router chose") {
+		t.Errorf("router did not report its choice: %s", errs)
+	}
+	if !strings.Contains(errs, "mote run chat") {
+		t.Errorf("expected chat, got: %s %s", errs, out)
+	}
+
+	// The config key selects the router too.
+	if code, _, errs := e.mote("", "config", "set", "router", "embed"); code != 0 {
+		t.Fatalf("config set router: %s", errs)
+	}
+	if code, _, errs := e.mote("", "do", "--dry-run", "Answer a prompt about mutexes"); code != 0 || !strings.Contains(errs, "embed router chose") {
+		t.Errorf("config router not used: %d %s", code, errs)
+	}
+	if code, _, errs := e.mote("", "config", "set", "router", "nonsense"); code == 0 || !strings.Contains(errs, "text or embed") {
+		t.Errorf("bad router accepted: %d %s", code, errs)
+	}
+}

@@ -11,6 +11,9 @@
     {"id": "vision-color", "cap": "vision", "image": "red", "prompt": "What color is this image? Answer with one word.", "expect": ["red"]},
     {"id": "vision-color-blue", "cap": "vision", "full": true, "image": "blue", "prompt": "What color is this image? Answer with one word.", "expect": ["blue"]},
     {"id": "tts-hello", "cap": "tts", "prompt": "Hello from mote."},
-    {"id": "asr-fox", "cap": "asr", "speech": "The quick brown fox jumps over the lazy dog.", "expect": ["quick", "brown", "fox", "lazy", "dog"]}
+    {"id": "asr-fox", "cap": "asr", "speech": "The quick brown fox jumps over the lazy dog.", "expect": ["quick", "brown", "fox", "lazy", "dog"]},
+    {"id": "embed-routing", "cap": "embed", "prompt": "turn this recording of a meeting into text",
+     "similar": "transcribe: Transcribe speech from an audio or video file.",
+     "different": "convert: Convert or resize an image, audio or video file with ffmpeg."}
   ]
 }

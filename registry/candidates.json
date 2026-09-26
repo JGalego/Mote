@@ -92,6 +92,18 @@
       "context": 4096,
       "ram_overhead_mb": 3072,
       "notes": "llama-tts vocoder buffers dominate memory; ~4.5 GB peak RSS was observed with llama.cpp b11199 on x86_64, so the estimate uses a larger overhead."
+    },
+    {
+      "id": "bge-small-en-1.5",
+      "name": "BGE Small EN v1.5",
+      "upstream": "BAAI/bge-small-en-v1.5",
+      "repo": "CompendiumLabs/bge-small-en-v1.5-gguf",
+      "quant": "Q8_0",
+      "files": {"model": "bge-small-en-v1.5-q8_0.gguf"},
+      "caps": ["embed"],
+      "context": 512,
+      "args": ["--embedding", "--pooling", "cls"],
+      "notes": "Encoder model: one forward pass per text and no generation, so it routes requests to tasks in milliseconds on a CPU."
     }
   ]
 }

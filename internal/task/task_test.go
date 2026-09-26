@@ -79,8 +79,11 @@ func TestBuiltinTasksValid(t *testing.T) {
 			caps[c] = true
 		}
 	}
+	// Every capability must have a user. Most are used by a task; these
+	// are used by a command instead, which tasks.json cannot express.
+	byCommand := map[string]string{"embed": "mote do --router embed"}
 	for c := range registry.Capabilities {
-		if !caps[c] {
+		if !caps[c] && byCommand[c] == "" {
 			t.Errorf("no task uses capability %s", c)
 		}
 	}

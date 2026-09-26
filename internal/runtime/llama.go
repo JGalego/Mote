@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -53,6 +54,31 @@ type Stats struct {
 type Session interface {
 	Generate(ctx context.Context, req Request) (Result, error)
 	Close() Stats
+}
+
+// Embedder is implemented by sessions whose model turns text into vectors
+// instead of generating tokens. Callers type-assert for it, so backends that
+// have no embedding models need not implement it.
+type Embedder interface {
+	Embed(ctx context.Context, texts []string) ([][]float32, error)
+}
+
+// Cosine is the similarity between two embeddings: 1 means the same
+// direction, 0 unrelated. It is how callers compare what Embed returns.
+func Cosine(a, b []float32) float64 {
+	if len(a) != len(b) || len(a) == 0 {
+		return 0
+	}
+	var dot, na, nb float64
+	for i := range a {
+		dot += float64(a[i]) * float64(b[i])
+		na += float64(a[i]) * float64(a[i])
+		nb += float64(b[i]) * float64(b[i])
+	}
+	if na == 0 || nb == 0 {
+		return 0
+	}
+	return dot / (math.Sqrt(na) * math.Sqrt(nb))
 }
 
 // Backend runs models of one runtime family. New runtimes implement this
@@ -272,6 +298,50 @@ func (s *server) Generate(ctx context.Context, req Request) (Result, error) {
 }
 
 // readStream consumes a server-sent-events chat completion.
+// Embed asks llama-server for one vector per text. The model must have been
+// started with --embedding, which comes from its registry args.
+func (s *server) Embed(ctx context.Context, texts []string) ([][]float32, error) {
+	if len(texts) == 0 {
+		return nil, nil
+	}
+	payload, _ := json.Marshal(map[string]any{"input": texts})
+	hreq, err := http.NewRequestWithContext(ctx, http.MethodPost, s.base+"/v1/embeddings", bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	hreq.Header.Set("Content-Type", "application/json")
+	resp, err := s.client.Do(hreq)
+	if err != nil {
+		return nil, fmt.Errorf("llama-server: %w\n%s", err, tail(s.logPath, 10))
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		return nil, fmt.Errorf("llama-server: %s: %s", resp.Status, strings.TrimSpace(string(raw)))
+	}
+	var out struct {
+		Data []struct {
+			Index     int       `json:"index"`
+			Embedding []float32 `json:"embedding"`
+		} `json:"data"`
+	}
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, fmt.Errorf("llama-server: unexpected embeddings response: %.200s", raw)
+	}
+	if len(out.Data) != len(texts) {
+		return nil, fmt.Errorf("llama-server returned %d embeddings for %d texts", len(out.Data), len(texts))
+	}
+	vecs := make([][]float32, len(texts))
+	for _, d := range out.Data {
+		if d.Index < 0 || d.Index >= len(vecs) {
+			return nil, fmt.Errorf("llama-server returned embedding index %d", d.Index)
+		}
+		vecs[d.Index] = d.Embedding
+	}
+	return vecs, nil
+}
+
 func (s *server) readStream(r io.Reader, onToken func(string)) (Result, error) {
 	var res Result
 	var text strings.Builder
