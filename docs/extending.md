@@ -16,6 +16,9 @@ install/              install.sh (Linux/macOS), install.ps1 (Windows)
 **A task** is data. Add an entry to `internal/task/tasks.json`: positional
 `params` (`text`, `file`, `dir`), then `steps`, each naming an `op`, its
 inputs and the value it produces (`as`). The last value must be `out`.
+Optional `examples` are the phrasings someone would use; `mote do` matches a
+request against each one separately, so a task is found by what it is for
+rather than by its name.
 Prompts use `{{name}}` for earlier values. `go test ./internal/task` validates
 every task (unknown ops, undefined values, unknown capabilities).
 

@@ -40,6 +40,7 @@ type Candidate struct {
 	Context     int               `json:"context"`
 	Args        []string          `json:"args,omitempty"`
 	OutputAfter string            `json:"output_after,omitempty"`
+	QueryPrefix string            `json:"query_prefix,omitempty"`
 	Notes       string            `json:"notes,omitempty"`
 	// RAMOverheadMB overrides the policy's estimate overhead for runtimes
 	// whose memory use is not dominated by the weights.
@@ -171,7 +172,7 @@ func buildModel(ctx context.Context, c Candidate, pol Policy, src Source) (Model
 		ID: c.ID, Name: c.Name, Backend: "llama.cpp", Upstream: c.Upstream,
 		Repo: c.Repo, Revision: rev, License: up.License, Quant: c.Quant,
 		ParamsB: math.Round(up.ParamsB*100) / 100, Caps: c.Caps, Context: c.Context,
-		Args: c.Args, OutputAfter: c.OutputAfter, Notes: c.Notes, Benchmarks: []Benchmark{},
+		Args: c.Args, OutputAfter: c.OutputAfter, QueryPrefix: c.QueryPrefix, Notes: c.Notes, Benchmarks: []Benchmark{},
 	}
 	for _, role := range []string{"model", "mmproj"} {
 		name, ok := c.Files[role]

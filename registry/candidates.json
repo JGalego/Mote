@@ -103,6 +103,7 @@
       "caps": ["embed"],
       "context": 512,
       "args": ["--embedding", "--pooling", "cls"],
+      "query_prefix": "Represent this sentence for searching relevant passages: ",
       "notes": "Encoder model: one forward pass per text and no generation, so it routes requests to tasks in milliseconds on a CPU."
     }
   ]

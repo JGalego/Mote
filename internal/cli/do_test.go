@@ -147,10 +147,10 @@ func TestDoWithTheEmbedRouter(t *testing.T) {
 	e.install("qwen3.5-0.8b")
 	e.install("bge-small-en-1.5")
 
-	// The fake embeddings are bags of words, so a request sharing words
-	// with a task's description lands on that task.
+	// The fake embeddings are bags of words, so a request that repeats one
+	// of chat's own examples lands on chat.
 	code, out, errs := e.mote("", "do", "--router", "embed", "--dry-run",
-		"Answer a prompt about mutexes")
+		"explain what a mutex is")
 	if code != 0 {
 		t.Fatalf("embed router: %d %s", code, errs)
 	}
@@ -165,10 +165,51 @@ func TestDoWithTheEmbedRouter(t *testing.T) {
 	if code, _, errs := e.mote("", "config", "set", "router", "embed"); code != 0 {
 		t.Fatalf("config set router: %s", errs)
 	}
-	if code, _, errs := e.mote("", "do", "--dry-run", "Answer a prompt about mutexes"); code != 0 || !strings.Contains(errs, "embed router chose") {
+	if code, _, errs := e.mote("", "do", "--dry-run", "explain what a mutex is"); code != 0 || !strings.Contains(errs, "embed router chose") {
 		t.Errorf("config router not used: %d %s", code, errs)
 	}
 	if code, _, errs := e.mote("", "config", "set", "router", "nonsense"); code == 0 || !strings.Contains(errs, "text or embed") {
 		t.Errorf("bad router accepted: %d %s", code, errs)
+	}
+}
+
+func TestPassagesKeepExamplesSeparate(t *testing.T) {
+	tasks, _ := task.Load()
+	chat, _ := task.Find(tasks, "chat")
+	if len(chat.Examples) == 0 {
+		t.Fatal("chat has no examples to route on")
+	}
+	texts, owners := passages([]task.Task{chat})
+	if len(texts) != len(chat.Examples)+1 {
+		t.Fatalf("got %d passages for a task with %d examples", len(texts), len(chat.Examples))
+	}
+	if len(owners) != len(texts) {
+		t.Fatalf("%d owners for %d passages", len(owners), len(texts))
+	}
+	for i, o := range owners {
+		if o != "chat" {
+			t.Errorf("passage %d belongs to %q", i, o)
+		}
+	}
+	// An example must stand alone, not be folded into the description.
+	for _, e := range chat.Examples {
+		found := false
+		for _, txt := range texts {
+			if txt == e {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("example %q is not its own passage", e)
+		}
+	}
+}
+
+func TestCatalogueShowsExamplesToTheTextRouter(t *testing.T) {
+	tasks, _ := task.Load()
+	c := catalogue(routable(tasks))
+	chat, _ := task.Find(tasks, "chat")
+	if !strings.Contains(c, chat.Examples[0]) {
+		t.Errorf("catalogue omits chat's examples:\n%s", c)
 	}
 }

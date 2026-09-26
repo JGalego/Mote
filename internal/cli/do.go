@@ -42,8 +42,12 @@ func routable(tasks []task.Task) []task.Task {
 func catalogue(tasks []task.Task) string {
 	var b strings.Builder
 	for _, t := range tasks {
-		fmt.Fprintf(&b, "%s: %s (takes %s, produces %s)\n",
+		fmt.Fprintf(&b, "%s: %s (takes %s, produces %s)",
 			t.ID, t.Summary, strings.Join(t.In, "+"), t.Out)
+		if len(t.Examples) > 0 {
+			fmt.Fprintf(&b, ", e.g. %q", strings.Join(t.Examples, "; "))
+		}
+		b.WriteByte('\n')
 	}
 	return b.String()
 }
@@ -226,12 +230,27 @@ func quoteArgs(args []string) []string {
 	return out
 }
 
-// describeTask is what the embed router compares a request against. The
-// summary carries the meaning; the id and the words around it help when a
-// request names the task outright.
+// describeTask is a task's own passage for the embed router.
 func describeTask(t task.Task) string {
 	return fmt.Sprintf("%s: %s. Takes %s and produces %s.",
 		t.ID, t.Summary, strings.Join(t.In, " and "), t.Out)
+}
+
+// passages returns what a request is compared against and the task each one
+// belongs to. Every example is a passage of its own rather than being
+// appended to the description: pooling averages a passage, so a long one
+// blurs towards nothing in particular, while a request matching a single
+// example scores against that example alone.
+func passages(tasks []task.Task) (texts, owners []string) {
+	for _, t := range tasks {
+		texts = append(texts, describeTask(t))
+		owners = append(owners, t.ID)
+		for _, e := range t.Examples {
+			texts = append(texts, e)
+			owners = append(owners, t.ID)
+		}
+	}
+	return texts, owners
 }
 
 // nearest returns the task whose description sits closest to the request.
@@ -272,13 +291,11 @@ func (a *app) routeEmbed(ctx context.Context, request string, tasks []task.Task,
 	if !ok {
 		return "", fmt.Errorf("%s cannot produce embeddings", m.ID)
 	}
-	texts := make([]string, 0, len(tasks)+1)
-	ids := make([]string, 0, len(tasks))
-	texts = append(texts, request)
-	for _, t := range tasks {
-		texts = append(texts, describeTask(t))
-		ids = append(ids, t.ID)
-	}
+	docs, ids := passages(tasks)
+	// Retrieval encoders are asymmetric: the request is a query and the
+	// task passages are documents, so BGE needs its instruction on the
+	// query or a question scores no better against the right task.
+	texts := append([]string{m.QueryPrefix + request}, docs...)
 	vecs, err := embedder.Embed(ctx, texts)
 	if err != nil {
 		return "", err

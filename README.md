@@ -197,8 +197,11 @@ command it chose without running it.
 Two routers are available. The default asks the text model, which reasons
 about the request but costs a generation. `--router embed` (or
 `mote config set router embed`) instead compares the request with each task's
-description using a 36 MB encoder: one forward pass per text, no tokens
-generated, milliseconds on a CPU.
+description and examples using a 36 MB encoder: one forward pass per text,
+no tokens generated, milliseconds on a CPU.
+
+Both read the `examples` in [`tasks.json`](internal/task/tasks.json), so a
+task of your own is routable as soon as you give it a few phrasings.
 
 ### spoken 🎤
 

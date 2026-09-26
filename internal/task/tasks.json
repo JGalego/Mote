@@ -3,6 +3,7 @@
     {
       "id": "chat",
       "summary": "Answer a prompt",
+      "examples": ["explain what a mutex is", "answer a question in plain words", "what is the capital of France", "who wrote this book"],
       "in": ["text"], "out": "text",
       "params": [{"name": "prompt", "kind": "text"}],
       "steps": [
@@ -12,6 +13,7 @@
     {
       "id": "code",
       "summary": "Write code from a description",
+      "examples": ["write a python function that sorts a list", "generate a shell script"],
       "in": ["text"], "out": "code",
       "params": [{"name": "prompt", "kind": "text"}],
       "steps": [
@@ -23,6 +25,7 @@
     {
       "id": "refactor",
       "summary": "Rewrite a source file following an instruction",
+      "examples": ["rename a function in this source file", "rewrite this file to use a dict"],
       "in": ["code", "text"], "out": "code",
       "params": [{"name": "file", "kind": "file"}, {"name": "instruction", "kind": "text"}],
       "steps": [
@@ -35,6 +38,7 @@
     {
       "id": "doc",
       "summary": "Write Markdown documentation for a source file",
+      "examples": ["write documentation for this source file", "document what this module does"],
       "in": ["code"], "out": "text",
       "params": [{"name": "file", "kind": "file"}],
       "steps": [
@@ -47,6 +51,7 @@
     {
       "id": "extract",
       "summary": "Extract structured JSON from a document",
+      "examples": ["pull the invoice fields out of this document", "turn this text into JSON"],
       "in": ["text"], "out": "data",
       "params": [{"name": "file", "kind": "file"}, {"name": "schema", "kind": "file", "optional": true}],
       "steps": [
@@ -60,6 +65,7 @@
     {
       "id": "describe",
       "summary": "Describe an image or answer a question about it",
+      "examples": ["what is in this picture", "read the sign in this photo"],
       "in": ["image", "text"], "out": "text",
       "params": [{"name": "image", "kind": "file"}, {"name": "question", "kind": "text", "default": "Describe this image in two sentences."}],
       "steps": [
@@ -69,6 +75,7 @@
     {
       "id": "transcribe",
       "summary": "Transcribe speech from an audio or video file",
+      "examples": ["turn this recording into text", "what was said in this audio"],
       "in": ["audio"], "out": "text",
       "params": [{"name": "audio", "kind": "file"}],
       "steps": [
@@ -79,6 +86,7 @@
     {
       "id": "speak",
       "summary": "Synthesize speech to a WAV file",
+      "examples": ["read this sentence out loud", "say this as a wav file"],
       "in": ["text"], "out": "audio",
       "params": [{"name": "text", "kind": "text"}],
       "output": "speech.wav",
@@ -89,6 +97,7 @@
     {
       "id": "frames",
       "summary": "Extract evenly spaced frames from a video",
+      "examples": ["take still images out of this video", "grab screenshots from this clip"],
       "in": ["video"], "out": "images",
       "params": [{"name": "video", "kind": "file"}, {"name": "count", "kind": "text", "default": "8"}],
       "output": "frames",
@@ -99,6 +108,7 @@
     {
       "id": "video",
       "summary": "Summarize a video from sampled frames and its speech",
+      "examples": ["summarise what happens in this video", "what is this clip about"],
       "in": ["video"], "out": "text",
       "params": [{"name": "video", "kind": "file"}],
       "steps": [
@@ -114,6 +124,7 @@
     {
       "id": "convert",
       "summary": "Convert or resize an image, audio or video file with ffmpeg",
+      "examples": ["make this image smaller", "resize or re-encode this media file"],
       "in": ["image"], "out": "image",
       "params": [{"name": "file", "kind": "file"}, {"name": "width", "kind": "text", "default": ""}],
       "output": "required",
@@ -124,6 +135,7 @@
     {
       "id": "patch",
       "summary": "Propose changes to a directory as a diff; --apply writes them",
+      "examples": ["change every file in this directory", "apply an edit across the project"],
       "in": ["dir", "text"], "out": "diff",
       "params": [{"name": "dir", "kind": "dir"}, {"name": "instruction", "kind": "text"}],
       "steps": [

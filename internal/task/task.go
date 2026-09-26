@@ -26,13 +26,17 @@ import (
 var embedded []byte
 
 type Task struct {
-	ID      string   `json:"id"`
-	Summary string   `json:"summary"`
-	In      []string `json:"in"`
-	Out     string   `json:"out"`
-	Params  []Param  `json:"params"`
-	Output  string   `json:"output,omitempty"` // default output path, "required", or empty for stdout
-	Steps   []Step   `json:"steps"`
+	ID      string `json:"id"`
+	Summary string `json:"summary"`
+	// Examples are things someone might ask for. They are what `mote do`
+	// matches a request against, so a task is found by what it is for
+	// rather than by its name.
+	Examples []string `json:"examples,omitempty"`
+	In       []string `json:"in"`
+	Out      string   `json:"out"`
+	Params   []Param  `json:"params"`
+	Output   string   `json:"output,omitempty"` // default output path, "required", or empty for stdout
+	Steps    []Step   `json:"steps"`
 
 	// Source is the file a user-defined task came from, empty for built-ins.
 	Source string `json:"-"`

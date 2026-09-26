@@ -85,6 +85,10 @@ type Model struct {
 	Context     int         `json:"context"`
 	Args        []string    `json:"args,omitempty"`
 	OutputAfter string      `json:"output_after,omitempty"`
+	// QueryPrefix is prepended to a short query before embedding it.
+	// Retrieval encoders are asymmetric: BGE scores a bare question against
+	// a description poorly without its instruction prefix.
+	QueryPrefix string 		`json:"query_prefix,omitempty"`
 	Files       []File      `json:"files"`
 	RAMEstimate int         `json:"ram_mb_estimate"`
 	MinRAMMB    int         `json:"min_ram_mb"`
