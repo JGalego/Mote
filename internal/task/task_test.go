@@ -262,7 +262,8 @@ func TestPatch(t *testing.T) {
 	if _, err := mustTask(t, "patch").Run(context.Background(), env(b), []string{dir, "x"}, Options{Apply: true}); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := os.ReadFile(filepath.Join(dir, "hello.txt")); string(got) != "hello, world\n" {
+	// git on Windows may write CRLF line endings (core.autocrlf).
+	if got, _ := os.ReadFile(filepath.Join(dir, "hello.txt")); strings.ReplaceAll(string(got), "\r\n", "\n") != "hello, world\n" {
 		t.Errorf("not applied: %q", got)
 	}
 	// Now the same diff no longer applies.
