@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "properties": {
+    "invoice_number": {"type": "string"},
+    "seller": {"type": "string"},
+    "customer": {"type": "string"},
+    "due_date": {"type": "string"},
+    "total": {"type": "number"},
+    "currency": {"type": "string"}
+  },
+  "required": ["invoice_number", "seller", "customer", "due_date", "total", "currency"]
+}

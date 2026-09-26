@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "profile": "small",
+  "editor": "nvim",
+  "auto_download": true,
+  "reuse_tools": true,
+  "threads": 0
+}

@@ -45,7 +45,7 @@ few questions: speed/quality/disk profile, editor (if you have several),
 whether to reuse an existing llama.cpp, data directory, and whether models may
 be downloaded automatically. It installs the pinned llama.cpp CPU build
 (checksum-verified) and offers to fetch the text model, showing size and
-license first. For automation: `mote setup --config mote.json` or
+license first. For automation: `mote setup --config examples/setup.json` or
 `mote setup --yes`.
 
 ## First run
@@ -53,7 +53,7 @@ license first. For automation: `mote setup --config mote.json` or
 ```sh
 mote run chat "Explain what a mutex is in two sentences"
 mote run code "Python function that parses ISO 8601 dates" -o dates.py
-mote run extract invoice.txt schema.json        # document -> JSON
+mote run extract examples/invoice.txt examples/invoice.schema.json
 mote run describe photo.jpg "What is on the sign?"
 mote run transcribe meeting.m4a -o meeting.txt  # ffmpeg converts non-WAV input
 mote run speak "Build finished" -o done.wav

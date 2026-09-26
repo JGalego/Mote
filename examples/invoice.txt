@@ -1,0 +1,10 @@
+INVOICE 2026-0147
+Northwind Supplies Ltd, 14 Harbour Road, Leith
+Bill to: Ana Silva
+Date: 2026-09-01   Due: 2026-10-01
+
+2 x USB-C dock          89.00
+1 x 27" monitor        249.00
+Shipping                12.50
+
+Total due: 439.50 EUR
