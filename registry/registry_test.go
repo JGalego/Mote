@@ -184,6 +184,10 @@ func TestSelectUsesLocalMeasurements(t *testing.T) {
 	if ch.Model == "small" {
 		t.Error("model below measured throughput floor was selected")
 	}
+	env = Env{Measured: map[string]Measured{"small": {Cases: 4, Passed: 1}}}
+	if ch, _ := r.Select("text", "small", env); ch.Model == "small" {
+		t.Error("model failing local checks was selected")
+	}
 	env = Env{RAMMB: 4096, Measured: map[string]Measured{"big": {PeakRSSMB: 1800, TokensPerSec: 4}}}
 	ch, _ = r.Select("text", "quality", env)
 	if ch.Model != "big" || !strings.Contains(ch.Reason, "measured RAM 1800") {

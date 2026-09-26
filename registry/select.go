@@ -19,6 +19,8 @@ type Env struct {
 type Measured struct {
 	PeakRSSMB    int     `json:"peak_rss_mb"`
 	TokensPerSec float64 `json:"tokens_per_sec"`
+	Cases        int     `json:"cases"`
+	Passed       int     `json:"passed"`
 }
 
 // ErrNoModel is returned when no registry model can serve a capability.
@@ -83,6 +85,10 @@ func (r *Registry) Select(capability, profile string, env Env) (Choice, error) {
 		c.within = prof.MaxRAMMB == 0 || c.ram <= prof.MaxRAMMB
 		if ms, ok := env.Measured[m.ID]; ok && ms.TokensPerSec > 0 && prof.MinTokensPerSec > 0 && ms.TokensPerSec < prof.MinTokensPerSec {
 			rejected = append(rejected, fmt.Sprintf("%s measured %.1f tok/s < %.1f", m.ID, ms.TokensPerSec, prof.MinTokensPerSec))
+			continue
+		}
+		if ms, ok := env.Measured[m.ID]; ok && ms.Cases > 0 && ms.Passed*2 < ms.Cases {
+			rejected = append(rejected, fmt.Sprintf("%s passed %d/%d local checks", m.ID, ms.Passed, ms.Cases))
 			continue
 		}
 		if gated {
