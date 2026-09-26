@@ -1,7 +1,7 @@
 {
   "priorities": ["size", "cpu_latency", "ram", "quality", "startup", "disk"],
   "usable_ram_fraction": 0.6,
-  "ram_overhead_mb": 512,
+  "ram_overhead_mb": 1024,
   "profiles": {
     "small": {
       "description": "Smallest models that clear a basic quality bar. Default.",

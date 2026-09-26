@@ -89,7 +89,9 @@
       "quant": "Q4_K_M",
       "files": {"model": "Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf", "mmproj": "mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf"},
       "caps": ["tts"],
-      "context": 4096
+      "context": 4096,
+      "ram_overhead_mb": 3072,
+      "notes": "llama-tts vocoder buffers dominate memory; ~4.5 GB peak RSS was observed with llama.cpp b11199 on x86_64, so the estimate uses a larger overhead."
     }
   ]
 }

@@ -156,6 +156,24 @@ func TestSelectRespectsRAM(t *testing.T) {
 	}
 }
 
+func TestSelectProfileCeilingIsSoft(t *testing.T) {
+	r := fixture()
+	var only []Model
+	for _, m := range r.Models {
+		if m.ID == "big" {
+			only = append(only, m)
+		}
+	}
+	r.Models = only
+	ch, err := r.Select("text", "small", Env{RAMMB: 16384})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ch.Model != "big" || ch.Meets || !strings.Contains(ch.Reason, "exceeds the small profile ceiling") {
+		t.Errorf("got %+v", ch)
+	}
+}
+
 func TestSelectUsesLocalMeasurements(t *testing.T) {
 	r := fixture()
 	env := Env{Measured: map[string]Measured{"small": {TokensPerSec: 3}}}

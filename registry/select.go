@@ -49,23 +49,23 @@ func (r *Registry) Select(capability, profile string, env Env) (Choice, error) {
 	if _, ok := Capabilities[capability]; !ok {
 		return Choice{}, fmt.Errorf("unknown capability %q", capability)
 	}
-	budget := prof.MaxRAMMB
+	// The machine's usable RAM is a hard limit; the profile ceiling is a
+	// preference that only yields when nothing fits under it.
+	budget := 0
 	if env.RAMMB > 0 {
-		usable := int(float64(env.RAMMB) * r.Policy.UsableRAMFraction)
-		if budget == 0 || usable < budget {
-			budget = usable
-		}
+		budget = int(float64(env.RAMMB) * r.Policy.UsableRAMFraction)
 	}
 	gate, gated := r.Policy.Gates[capability]
 	threshold := gate.Min[profile]
 
 	type cand struct {
-		m     *Model
-		ram   int
-		meas  bool
-		score float64
-		has   bool
-		pass  bool
+		m      *Model
+		ram    int
+		meas   bool
+		score  float64
+		has    bool
+		pass   bool
+		within bool
 	}
 	var fits []cand
 	var rejected []string
@@ -77,9 +77,10 @@ func (r *Registry) Select(capability, profile string, env Env) (Choice, error) {
 		c := cand{m: m}
 		c.ram, c.meas = m.RAMNeed(env)
 		if budget > 0 && c.ram > budget {
-			rejected = append(rejected, fmt.Sprintf("%s needs %d MiB > budget %d MiB", m.ID, c.ram, budget))
+			rejected = append(rejected, fmt.Sprintf("%s needs %d MiB > %d MiB usable", m.ID, c.ram, budget))
 			continue
 		}
+		c.within = prof.MaxRAMMB == 0 || c.ram <= prof.MaxRAMMB
 		if ms, ok := env.Measured[m.ID]; ok && ms.TokensPerSec > 0 && prof.MinTokensPerSec > 0 && ms.TokensPerSec < prof.MinTokensPerSec {
 			rejected = append(rejected, fmt.Sprintf("%s measured %.1f tok/s < %.1f", m.ID, ms.TokensPerSec, prof.MinTokensPerSec))
 			continue
@@ -104,6 +105,9 @@ func (r *Registry) Select(capability, profile string, env Env) (Choice, error) {
 
 	sort.SliceStable(fits, func(i, j int) bool {
 		a, b := fits[i], fits[j]
+		if a.within != b.within {
+			return a.within
+		}
 		if a.pass != b.pass {
 			return a.pass
 		}
@@ -129,9 +133,12 @@ func (r *Registry) Select(capability, profile string, env Env) (Choice, error) {
 	if best.meas {
 		ramSrc = "measured"
 	}
-	fit := fmt.Sprintf("%s RAM %d MiB within budget %d MiB", ramSrc, best.ram, budget)
-	if budget == 0 {
-		fit = fmt.Sprintf("%s RAM %d MiB", ramSrc, best.ram)
+	fit := fmt.Sprintf("%s RAM %d MiB", ramSrc, best.ram)
+	if budget > 0 {
+		fit += fmt.Sprintf(" of %d MiB usable", budget)
+	}
+	if !best.within {
+		fit += fmt.Sprintf("; exceeds the %s profile ceiling of %d MiB because nothing smaller qualifies", profile, prof.MaxRAMMB)
 	}
 	var reason string
 	switch {
@@ -149,7 +156,7 @@ func (r *Registry) Select(capability, profile string, env Env) (Choice, error) {
 	default:
 		reason = fmt.Sprintf("no fitting model has an upstream %s %s measurement; picked the smallest; %s", gate.Dataset, gate.Task, fit)
 	}
-	return Choice{Model: best.m.ID, Reason: reason, Meets: best.pass}, nil
+	return Choice{Model: best.m.ID, Reason: reason, Meets: best.pass && best.within}, nil
 }
 
 // ComputeDefaults selects a model for every capability and profile without

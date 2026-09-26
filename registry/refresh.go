@@ -41,6 +41,9 @@ type Candidate struct {
 	Args        []string          `json:"args,omitempty"`
 	OutputAfter string            `json:"output_after,omitempty"`
 	Notes       string            `json:"notes,omitempty"`
+	// RAMOverheadMB overrides the policy's estimate overhead for runtimes
+	// whose memory use is not dominated by the weights.
+	RAMOverheadMB int `json:"ram_overhead_mb,omitempty"`
 }
 
 // Source provides upstream facts. HF implements it over HTTPS; tests use a
@@ -185,7 +188,11 @@ func buildModel(ctx context.Context, c Candidate, pol Policy, src Source) (Model
 		})
 	}
 	mib := int((m.Bytes() + (1<<20 - 1)) >> 20)
-	m.RAMEstimate = mib + pol.RAMOverheadMB
+	overhead := pol.RAMOverheadMB
+	if c.RAMOverheadMB > 0 {
+		overhead = c.RAMOverheadMB
+	}
+	m.RAMEstimate = mib + overhead
 	m.MinRAMMB = int(math.Ceil(float64(m.RAMEstimate)/pol.UsableRAMFraction/512)) * 512
 
 	// Record only the metrics the policy gates on, one entry per metric.
