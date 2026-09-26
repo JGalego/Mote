@@ -1,10 +1,16 @@
 Output docs/demo/speak.gif
 Source docs/demo/common.tape
+Hide
 Type 'mote run speak "The build finished without errors." -o done.wav'
-Sleep 500ms
+Show
+Sleep 600ms
 Enter
 Wait
-Type "ffprobe -v error -show_entries format=duration -of default=nw=1 done.wav"
+Sleep 1s
+Hide
+Type 'ffprobe -v error -show_entries format=duration -of default=nw=1 done.wav'
+Show
+Sleep 600ms
 Enter
 Wait
 Sleep 4s

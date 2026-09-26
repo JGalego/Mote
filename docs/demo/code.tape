@@ -1,7 +1,9 @@
 Output docs/demo/code.gif
 Source docs/demo/common.tape
-Type 'mote run code "Python function that parses an ISO 8601 date and returns a datetime"'
-Sleep 500ms
+Hide
+Type 'mote run code "Python function that checks whether a string is a palindrome"'
+Show
+Sleep 600ms
 Enter
 Wait
 Sleep 4s

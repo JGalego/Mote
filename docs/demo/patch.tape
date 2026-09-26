@@ -1,13 +1,23 @@
 Output docs/demo/patch.gif
 Source docs/demo/common.tape
-Type "cat shop/cart.py"
+Hide
+Type 'cat shop/cart.py'
+Show
+Sleep 600ms
 Enter
 Wait
+Sleep 1s
+Hide
 Type 'mote run patch shop "Add a function total(items) that sums price * qty" --apply'
-Sleep 500ms
+Show
+Sleep 600ms
 Enter
 Wait
-Type "git -C shop diff --stat"
+Sleep 1s
+Hide
+Type 'git -C shop diff --stat'
+Show
+Sleep 600ms
 Enter
 Wait
 Sleep 4s

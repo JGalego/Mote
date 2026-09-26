@@ -11,4 +11,5 @@ HOME=/tmp/mote-demo PATH=/tmp/mote-demo/.local/bin:$PATH sh docs/demo/prep.sh
 for t in chat code refactor doc extract describe transcribe speak frames video convert patch; do
   vhs docs/demo/$t.tape
 done
+sh docs/demo/crop.sh docs/demo/*.gif          # trim unused space below the text
 ```

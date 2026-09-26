@@ -1,7 +1,9 @@
 Output docs/demo/extract.gif
 Source docs/demo/common.tape
+Hide
 Type 'mote run extract invoice.txt invoice.schema.json'
-Sleep 500ms
+Show
+Sleep 600ms
 Enter
 Wait
 Sleep 4s

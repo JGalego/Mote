@@ -1,7 +1,9 @@
 Output docs/demo/doc.gif
 Source docs/demo/common.tape
+Hide
 Type 'mote run doc slugify.py'
-Sleep 500ms
+Show
+Sleep 600ms
 Enter
 Wait
 Sleep 4s

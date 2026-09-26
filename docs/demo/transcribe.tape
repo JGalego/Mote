@@ -1,7 +1,9 @@
 Output docs/demo/transcribe.gif
 Source docs/demo/common.tape
+Hide
 Type 'mote run transcribe meeting.wav'
-Sleep 500ms
+Show
+Sleep 600ms
 Enter
 Wait
 Sleep 4s

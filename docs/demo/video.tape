@@ -1,7 +1,9 @@
 Output docs/demo/video.gif
 Source docs/demo/common.tape
+Hide
 Type 'mote run video clip.mp4'
-Sleep 500ms
+Show
+Sleep 600ms
 Enter
 Wait
 Sleep 4s
