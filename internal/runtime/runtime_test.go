@@ -16,6 +16,7 @@ import (
 	goruntime "runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jgalego/mote/internal/fakellama"
 	"github.com/jgalego/mote/registry"
@@ -319,5 +320,28 @@ func TestInstallRuntime(t *testing.T) {
 	srv.Close()
 	if _, err := s.InstallRuntime(context.Background(), Fetcher{AllowHTTP: true}, rt, a); err != nil {
 		t.Errorf("reinstall: %v", err)
+	}
+}
+
+func TestDownloadStallTimeout(t *testing.T) {
+	block := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "10")
+		w.Write([]byte("12345"))
+		w.(http.Flusher).Flush()
+		select {
+		case <-block:
+		case <-r.Context().Done():
+		}
+	}))
+	defer srv.Close()
+	defer close(block)
+	dest := filepath.Join(t.TempDir(), "x")
+	err := Fetcher{AllowHTTP: true, StallTimeout: 200 * time.Millisecond}.Download(context.Background(), srv.URL, dest, hash([]byte("1234567890")), 10, "x")
+	if err == nil {
+		t.Fatal("stalled download did not fail")
+	}
+	if st, _ := os.Stat(dest + ".part"); st == nil || st.Size() != 5 {
+		t.Error("partial file not kept for resume")
 	}
 }

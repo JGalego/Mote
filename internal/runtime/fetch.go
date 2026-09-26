@@ -16,6 +16,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Fetcher downloads files over HTTPS and verifies their SHA-256. Partial
@@ -25,6 +26,9 @@ type Fetcher struct {
 	Progress Progress // optional
 	// AllowHTTP permits plain HTTP to loopback addresses (tests only).
 	AllowHTTP bool
+	// StallTimeout aborts a download that receives no data for this long
+	// (default one minute).
+	StallTimeout time.Duration
 }
 
 // Progress receives download progress; the CLI renders it as a bar.
@@ -69,6 +73,17 @@ func (f Fetcher) Download(ctx context.Context, rawURL, dest, sum string, size in
 		os.Remove(part)
 	}
 
+	// Abort if no bytes arrive for StallTimeout; the partial file is kept so
+	// the next attempt resumes.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stall := f.StallTimeout
+	if stall == 0 {
+		stall = 60 * time.Second
+	}
+	watchdog := time.AfterFunc(stall, cancel)
+	defer watchdog.Stop()
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return err
@@ -96,7 +111,7 @@ func (f Fetcher) Download(ctx context.Context, rawURL, dest, sum string, size in
 	if err != nil {
 		return err
 	}
-	pw := &progress{done: have}
+	pw := &progress{done: have, alive: func() { watchdog.Reset(stall) }}
 	if f.Progress != nil {
 		pw.t = f.Progress.Start(label, have, size)
 	}
@@ -144,12 +159,14 @@ func VerifyFile(p, sum string, size int64) error {
 }
 
 type progress struct {
-	t    Tracker
-	done int64
+	t     Tracker
+	done  int64
+	alive func()
 }
 
 func (p *progress) Write(b []byte) (int, error) {
 	p.done += int64(len(b))
+	p.alive()
 	if p.t != nil {
 		p.t.Set(p.done)
 	}
