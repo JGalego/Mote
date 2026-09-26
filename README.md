@@ -163,20 +163,16 @@ In a clone, `go install ./cmd/mote` does the same into `$(go env GOPATH)/bin`. `
 
 ### chained 🔗
 
-`mote pipe` runs several tasks in one process, so models stay loaded between
-stages instead of being reloaded per command:
+`mote pipe` runs several tasks in one process, so models stay loaded between stages instead of being reloaded per command:
 
 ```sh
 mote pipe "transcribe meeting.m4a | chat 'Summarise in 3 bullets: {}'"
 mote pipe "frames clip.mp4 3 | describe | !tee notes.txt"
 ```
 
-Each stage receives the previous stage's value: `{}` inside an argument or a
-bare `-` says where it goes, and with neither it fills the first argument you
-left out. Several files fan out into one run per file. A stage starting with
-`!` is a shell command reading that value on stdin, so ordinary tools mix in.
-Plain shell pipes still work too (`mote run video clip.mp4 | mote run chat -`),
-at the cost of reloading a model per command.
+Each stage receives the previous stage's value: `{}` inside an argument or a bare `-` says where it goes, and with neither it fills the first argument you left out. Several files fan out into one run per file. A stage starting with `!` is a shell command reading that value on stdin, so ordinary tools mix in.
+
+Plain shell pipes still work too (`mote run video clip.mp4 | mote run chat -`), at the cost of reloading a model per command.
 
 ### your own 🧩
 

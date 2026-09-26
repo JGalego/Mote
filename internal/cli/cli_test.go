@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/jgalego/mote/internal/fakellama"
+	"github.com/jgalego/mote/internal/ui"
 	"github.com/jgalego/mote/registry"
 )
 
@@ -285,18 +286,21 @@ func TestUpdate(t *testing.T) {
 }
 
 // moteTTY runs mote with stdout on a real file, which ui treats as
-// colourable when CLICOLOR_FORCE is set (a bytes.Buffer never is).
-func (e *env) moteTTY(args ...string) (int, string) {
+// colourable when CLICOLOR_FORCE is set (a bytes.Buffer never is). Windows
+// needs a real console handle for that, so the caller is told whether colour
+// was actually on.
+func (e *env) moteTTY(args ...string) (code int, out string, coloured bool) {
 	p := filepath.Join(e.t.TempDir(), "stdout")
 	f, err := os.Create(p)
 	if err != nil {
 		e.t.Fatal(err)
 	}
+	coloured = ui.New(f).Color()
 	var errb bytes.Buffer
-	code := Main(args, strings.NewReader(""), f, &errb)
+	code = Main(args, strings.NewReader(""), f, &errb)
 	f.Close()
 	b, _ := os.ReadFile(p)
-	return code, string(b)
+	return code, string(b), coloured
 }
 
 func TestRunHighlightsCodeOnlyForTerminals(t *testing.T) {
@@ -315,18 +319,6 @@ func TestRunHighlightsCodeOnlyForTerminals(t *testing.T) {
 		t.Errorf("piped output is coloured: %q", plain)
 	}
 
-	t.Setenv("CLICOLOR_FORCE", "1")
-	code, coloured := e.moteTTY("run", "extract", doc)
-	if code != 0 {
-		t.Fatalf("extract with colour: %d", code)
-	}
-	if !strings.Contains(coloured, "\x1b[") {
-		t.Errorf("terminal output is not highlighted: %q", coloured)
-	}
-	if got := regexp.MustCompile(`\x1b\[[0-9;]*m`).ReplaceAllString(coloured, ""); got != plain {
-		t.Errorf("highlighting changed the text:\n got %q\nwant %q", got, plain)
-	}
-
 	// A file keeps the exact bytes: highlighting must not leak into -o.
 	out := filepath.Join(dir, "out.json")
 	if code, _, errs := e.mote("", "run", "extract", doc, "-o", out); code != 0 {
@@ -334,6 +326,23 @@ func TestRunHighlightsCodeOnlyForTerminals(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(out); strings.Contains(string(b), "\x1b[") {
 		t.Errorf("colour written to file: %q", b)
+	}
+
+	t.Setenv("CLICOLOR_FORCE", "1")
+	code, coloured, hasColour := e.moteTTY("run", "extract", doc)
+	if code != 0 {
+		t.Fatalf("extract with colour: %d", code)
+	}
+	if !hasColour {
+		// Windows colours console handles only; internal/ui covers the
+		// highlighting itself on every platform.
+		t.Skip("this platform does not colour a plain file handle")
+	}
+	if !strings.Contains(coloured, "\x1b[") {
+		t.Errorf("terminal output is not highlighted: %q", coloured)
+	}
+	if got := regexp.MustCompile(`\x1b\[[0-9;]*m`).ReplaceAllString(coloured, ""); got != plain {
+		t.Errorf("highlighting changed the text:\n got %q\nwant %q", got, plain)
 	}
 }
 
