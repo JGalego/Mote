@@ -356,7 +356,7 @@ func (a *app) update(ctx context.Context, args []string) error {
 		return fmt.Errorf("downloaded registry rejected, keeping %s: %w", a.registry().Version, err)
 	}
 	cur := a.registry()
-	if next.Version <= cur.Version {
+	if !registry.Newer(next.Version, cur.Version) {
 		fmt.Fprintf(a.out, "registry %s is current\n", cur.Version)
 		return nil
 	}

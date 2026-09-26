@@ -220,7 +220,7 @@ func (a *app) registry() *registry.Registry {
 	}
 	a.reg = registry.Default()
 	if b, err := os.ReadFile(a.userRegistryPath()); err == nil {
-		if r, err := registry.Parse(b); err == nil && r.Version >= a.reg.Version {
+		if r, err := registry.Parse(b); err == nil && !registry.Newer(a.reg.Version, r.Version) {
 			a.reg = r
 		} else if err != nil {
 			fmt.Fprintf(a.err, "warning: ignoring invalid %s: %v\n", a.userRegistryPath(), err)

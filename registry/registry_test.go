@@ -374,3 +374,21 @@ func TestDiscover(t *testing.T) {
 		t.Errorf("discovered %+v", got)
 	}
 }
+
+func TestNewer(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want bool
+	}{
+		{"2026.09.26.10", "2026.09.26.9", true},
+		{"2026.09.26.1", "2026.09.26", true},
+		{"2026.09.26", "2026.09.26", false},
+		{"2026.09.25", "2026.09.26", false},
+		{"2027.01.01", "2026.12.31.4", true},
+	}
+	for _, c := range cases {
+		if got := Newer(c.a, c.b); got != c.want {
+			t.Errorf("Newer(%s, %s) = %v", c.a, c.b, got)
+		}
+	}
+}

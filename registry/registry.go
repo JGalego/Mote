@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -161,6 +162,32 @@ func Parse(b []byte) (*Registry, error) {
 		return nil, err
 	}
 	return &r, nil
+}
+
+// Newer reports whether version a is newer than b. Versions are dotted
+// numbers (2026.09.26, 2026.09.26.1); non-numeric parts compare as text.
+func Newer(a, b string) bool {
+	pa, pb := strings.Split(a, "."), strings.Split(b, ".")
+	for i := 0; i < len(pa) || i < len(pb); i++ {
+		if i >= len(pa) {
+			return false
+		}
+		if i >= len(pb) {
+			return true
+		}
+		x, errx := strconv.Atoi(pa[i])
+		y, erry := strconv.Atoi(pb[i])
+		if errx != nil || erry != nil {
+			if pa[i] != pb[i] {
+				return pa[i] > pb[i]
+			}
+			continue
+		}
+		if x != y {
+			return x > y
+		}
+	}
+	return false
 }
 
 // Model returns the model with the given id.
