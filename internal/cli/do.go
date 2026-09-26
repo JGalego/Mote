@@ -161,7 +161,7 @@ func bindRequest(t task.Task, request string) ([]string, error) {
 func (a *app) do(ctx context.Context, args []string) error {
 	vals, pos, err := flags(args,
 		[]string{"-o", "--output", "--model", "--profile", "--router"},
-		[]string{"--apply", "--dry-run"})
+		[]string{"--apply", "--dry-run", "--continue", "--recall"})
 	if err != nil {
 		return err
 	}
@@ -211,10 +211,15 @@ func (a *app) do(ctx context.Context, args []string) error {
 		return nil
 	}
 	out := firstNonEmpty(vals["-o"], vals["--output"])
-	res, err := t.Run(ctx, a.env(profile, sessions), taskArgs, task.Options{Output: out, Apply: vals["--apply"] == "true"})
+	env := a.env(profile, sessions)
+	if env.Memory, err = a.memoryFor(ctx, request, vals, profile, sessions); err != nil {
+		return err
+	}
+	res, err := t.Run(ctx, env, taskArgs, task.Options{Output: out, Apply: vals["--apply"] == "true"})
 	if err != nil {
 		return err
 	}
+	a.record(t, request, res)
 	return a.emit(t, res, out, nil)
 }
 

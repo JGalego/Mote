@@ -9,6 +9,7 @@ internal/config       user config, history, rollback
 internal/runtime      downloads, archive extraction, llama.cpp backend
 internal/task         tasks.json pipelines and the ops they use
 internal/bench        local benchmark cases, results, tuning proposals
+internal/memory       facts, history and search over past exchanges
 internal/cli          commands and the setup wizard
 install/              install.sh (Linux/macOS), install.ps1 (Windows)
 ```

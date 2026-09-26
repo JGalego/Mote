@@ -120,15 +120,6 @@ func parsePipeline(expr string) ([]stage, error) {
 	return stages, nil
 }
 
-// fileish reports whether a task's output is files rather than text.
-func fileish(out string) bool {
-	switch out {
-	case "audio", "image", "images", "video":
-		return true
-	}
-	return false
-}
-
 // bind places the value coming down the pipe into a stage's arguments. It
 // returns one argument list per run: more than one when several files arrive
 // at a stage that takes a single file, which is then run for each of them.
@@ -245,6 +236,12 @@ func (a *app) pipe(ctx context.Context, args []string) error {
 	sessions := map[string]mrt.Session{}
 	defer task.CloseSessions(sessions)
 	defer os.RemoveAll(a.env(profile, nil).TempDir)
+	// Facts apply to every stage; --continue and --recall belong to a
+	// single request, which a pipeline is not.
+	remembered, err := a.memoryFor(ctx, "", nil, profile, sessions)
+	if err != nil {
+		return err
+	}
 
 	last := len(stages) - 1
 	var val task.Value
@@ -263,6 +260,7 @@ func (a *app) pipe(ctx context.Context, args []string) error {
 			return err
 		}
 		env := a.env(profile, sessions)
+		env.Memory = remembered
 		var code *ui.CodeStream
 		if i == last {
 			if out == "" && (t.Out == "code" || t.Out == "data") {
@@ -297,6 +295,7 @@ func (a *app) pipe(ctx context.Context, args []string) error {
 		val = task.Value{Text: strings.Join(texts, "\n"), Files: files}
 		res.Value = val
 		if i == last {
+			a.record(t, strings.Join(pos, " "), res)
 			return a.emit(t, res, out, code)
 		}
 	}

@@ -68,6 +68,7 @@ Usage:
   mote pipe "TASK ARGS | TASK ARGS | !COMMAND" [-o OUTPUT] [--model ID] [--profile P]
   mote do "REQUEST" [-o OUTPUT] [--apply] [--dry-run] [--model ID] [--profile P]
   mote listen [TASK] [--wake PHRASE] [--device D] [--chunk SECONDS] [--once]
+  mote remember "FACT" | mote forget N|--all|--history | mote memory [search "Q"]
   mote tasks
   mote models [list | pull ID|CAP... | rm ID | why CAP | verify]
   mote bench [--full] [--model ID]
@@ -89,6 +90,8 @@ Examples:
   mote pipe "frames clip.mp4 3 | describe | !tee notes.txt"
   mote listen --wake "hey mote"
   mote do "summarise meeting.m4a in three bullets"
+  mote remember "I write Go, and prefer short answers"
+  mote run chat "and in Python?" --continue
 `
 
 // usageError marks bad invocations (exit code 2).
@@ -182,7 +185,7 @@ func (a *app) dispatch(ctx context.Context, args []string) error {
 		return a.update(ctx, rest)
 	}
 	switch cmd {
-	case "run", "pipe", "listen", "do", "models", "bench", "tune":
+	case "run", "pipe", "listen", "do", "memory", "remember", "forget", "models", "bench", "tune":
 	default:
 		return usagef("unknown command %q; see `mote help`", cmd)
 	}
@@ -199,6 +202,12 @@ func (a *app) dispatch(ctx context.Context, args []string) error {
 		return a.listen(ctx, rest)
 	case "do":
 		return a.do(ctx, rest)
+	case "remember":
+		return a.remember(rest)
+	case "forget":
+		return a.forget(rest)
+	case "memory":
+		return a.memoryCmd(ctx, rest)
 	case "models":
 		return a.models(ctx, rest)
 	case "bench":
@@ -381,7 +390,8 @@ func hostOf(u string) string {
 }
 
 func (a *app) run(ctx context.Context, args []string) error {
-	vals, pos, err := flags(args, []string{"-o", "--output", "--model", "--profile"}, []string{"--apply"})
+	vals, pos, err := flags(args, []string{"-o", "--output", "--model", "--profile"},
+		[]string{"--apply", "--continue", "--recall"})
 	if err != nil {
 		return err
 	}
@@ -401,7 +411,13 @@ func (a *app) run(ctx context.Context, args []string) error {
 		return err
 	}
 	out := firstNonEmpty(vals["-o"], vals["--output"])
-	env := a.env(profile, nil)
+	sessions := map[string]mrt.Session{}
+	defer task.CloseSessions(sessions)
+	env := a.env(profile, sessions)
+	request := strings.Join(pos[1:], " ")
+	if env.Memory, err = a.memoryFor(ctx, request, vals, profile, sessions); err != nil {
+		return err
+	}
 	// Highlight source code and JSON, but only on the way to a terminal:
 	// files and pipes keep the exact bytes the model produced.
 	var code *ui.CodeStream
@@ -422,6 +438,7 @@ func (a *app) run(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	a.record(t, request, res)
 	return a.emit(t, res, out, code)
 }
 

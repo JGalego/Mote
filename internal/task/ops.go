@@ -83,6 +83,9 @@ func opRead(r *run, s Step) (Value, error) {
 
 func opGenerate(r *run, s Step) (Value, error) {
 	req := runtime.Request{System: r.expand(s.System), Prompt: r.expand(s.Prompt), Temperature: 0.2, MaxTokens: 2048}
+	if r.env.Memory != "" {
+		req.System = strings.TrimSpace(r.env.Memory + "\n\n" + req.System)
+	}
 	var images []string
 	if s.Images != "" {
 		images = r.vars[s.Images].Files

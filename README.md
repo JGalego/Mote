@@ -37,6 +37,7 @@ mote runs X-to-Y AI tasks (text, code, images, audio, video, files) on your CPU 
   - [chosen](#chosen-)
   - [spoken](#spoken-)
   - [your own](#your-own-)
+- [Memory](#memory)
 - [How it works](#how-it-works)
 - [Models](#models)
 - [License](#license)
@@ -81,6 +82,8 @@ In a clone, `go install ./cmd/mote` does the same into `$(go env GOPATH)/bin`. `
 | `mote run TASK [ARGS...]` | Run a task, e.g. `mote run chat "Explain what a mutex is"`; `-o FILE` writes the output, `--model ID` overrides the model, `--apply` writes `patch` changes |
 | `mote pipe "A \| B \| !cmd"` | Chain tasks in one process, each stage receiving the last one's value: `{}` or `-` places it, `!` runs a shell command |
 | `mote do "REQUEST"` | Pick the task that fits a request written in plain words and run it; `--router embed` chooses with the encoder, `--dry-run` shows the choice |
+| `mote remember "FACT"` | Keep a fact in front of every model step; `mote memory` lists them, `mote forget N\|--all` removes them |
+| `mote memory [search "Q"]` | Show what mote remembers, or find a past exchange by meaning |
 | `mote listen [TASK]` | Wait for a wake word on the microphone, then run what you say next (never listens unless you start it) |
 | `mote tasks` | List the tasks, their arguments and what each one needs |
 | `mote models [pull\|rm\|why\|verify]` | Show models, sizes and which are in use; fetch, remove, explain or re-verify them |
@@ -225,6 +228,26 @@ chunks, so only the first one waits for it.
 Tasks are data, not code: put a file shaped like [`tasks.json`](internal/task/tasks.json) in `tasks/*.json` under the config directory (`mote tasks` prints the path) and it is validated, listed as `custom` and run like the rest. An id that matches a built-in replaces it.
 
 See [extending mote](docs/extending.md).
+
+## Memory
+
+Mote forgets everything between runs unless you ask it not to, and what it
+keeps are plain files you can read, edit and delete.
+
+```sh
+mote remember "I write Go, and prefer short answers"   # a fact, kept in front of every model step
+mote config set memory true                            # start keeping a history of exchanges
+mote run chat "and in Python?" --continue              # carry on from the last exchanges
+mote run chat "remind me about locks" --recall         # bring back the closest past exchanges
+mote memory search "mutex"                             # find one yourself
+mote forget 2 | mote forget --all | mote forget --history
+```
+
+Facts live in `facts.txt` in the config directory; the history is
+`history.jsonl` in the data directory, written only while `memory` is true,
+and never sent anywhere. `--recall` and `mote memory search` compare meaning
+with the same encoder the router uses, so they find an exchange that used
+different words.
 
 ## How it works
 

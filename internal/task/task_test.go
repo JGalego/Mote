@@ -471,3 +471,39 @@ func TestLoadFromMissingDirIsFine(t *testing.T) {
 		t.Errorf("empty dir: %d %v", len(tasks), err)
 	}
 }
+
+func TestMemoryGoesInFrontOfTheSystemPrompt(t *testing.T) {
+	b := &fakeBackend{reply: func(runtime.Request) string { return "ok" }}
+	e := env(b)
+	e.Memory = "Remember these facts about this user and their work:\n- I write Go"
+	if _, err := mustTask(t, "chat").Run(context.Background(), e, []string{"hello"}, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(b.prompts) != 1 {
+		t.Fatalf("%d generations", len(b.prompts))
+	}
+	if !strings.Contains(b.prompts[0].System, "I write Go") {
+		t.Errorf("memory missing from the system prompt: %q", b.prompts[0].System)
+	}
+
+	// A task with its own system prompt keeps it, after the memory.
+	b2 := &fakeBackend{reply: func(runtime.Request) string { return "ok" }}
+	e2 := env(b2)
+	e2.Memory = "REMEMBERED"
+	if _, err := mustTask(t, "code").Run(context.Background(), e2, []string{"a function"}, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	sys := b2.prompts[0].System
+	if !strings.HasPrefix(sys, "REMEMBERED") || !strings.Contains(sys, "You write correct, minimal code") {
+		t.Errorf("memory did not lead the task's own system prompt: %q", sys)
+	}
+
+	// Without memory the system prompt is untouched.
+	b3 := &fakeBackend{reply: func(runtime.Request) string { return "ok" }}
+	if _, err := mustTask(t, "code").Run(context.Background(), env(b3), []string{"a function"}, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(b3.prompts[0].System, "REMEMBERED") || strings.HasPrefix(b3.prompts[0].System, "\n") {
+		t.Errorf("unexpected system prompt: %q", b3.prompts[0].System)
+	}
+}

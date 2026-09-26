@@ -29,6 +29,7 @@ type Config struct {
 	Editor       string            `json:"editor,omitempty"`
 	WakeWord     string            `json:"wake_word,omitempty"`
 	Router       string            `json:"router,omitempty"`
+	Memory       bool              `json:"memory,omitempty"`
 	Workspace    string            `json:"workspace,omitempty"`
 	DataDir      string            `json:"data_dir,omitempty"`
 	AutoDownload bool              `json:"auto_download"`
@@ -220,7 +221,7 @@ func Rollback(dir string, n int) (Config, error) {
 }
 
 // Keys lists settable keys for `mote config set`.
-var Keys = []string{"profile", "editor", "workspace", "data_dir", "auto_download", "reuse_tools", "llama_dir", "threads", "wake_word", "router", "models.<capability>", "tools.<name>"}
+var Keys = []string{"profile", "editor", "workspace", "data_dir", "auto_download", "reuse_tools", "llama_dir", "threads", "wake_word", "router", "memory", "models.<capability>", "tools.<name>"}
 
 // Set changes one key. An empty value clears optional keys.
 func (c *Config) Set(key, value string) error {
@@ -238,6 +239,12 @@ func (c *Config) Set(key, value string) error {
 		c.Editor = value
 	case key == "wake_word":
 		c.WakeWord = value
+	case key == "memory":
+		b, err := parseBool()
+		if err != nil {
+			return err
+		}
+		c.Memory = b
 	case key == "router":
 		if value != "" && value != "text" && value != "embed" {
 			return fmt.Errorf("router expects text or embed")

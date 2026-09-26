@@ -231,10 +231,15 @@ func (a *app) listen(ctx context.Context, args []string) error {
 		},
 		act: func(ctx context.Context, request string) error {
 			fmt.Fprintf(a.err, "%s %s\n", a.ue.Arrow(), a.ue.Bold(request))
-			res, err := t.Run(ctx, a.env(profile, sessions), []string{request}, task.Options{})
+			env := a.env(profile, sessions)
+			if env.Memory, err = a.memoryFor(ctx, request, nil, profile, sessions); err != nil {
+				return err
+			}
+			res, err := t.Run(ctx, env, []string{request}, task.Options{})
 			if err != nil {
 				return err
 			}
+			a.record(t, request, res)
 			return a.emit(t, res, "", nil)
 		},
 	}

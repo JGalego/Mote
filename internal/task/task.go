@@ -98,6 +98,10 @@ type Env struct {
 	// in a streamed reply ("python"), before the code itself is streamed.
 	// The CLI uses it to highlight what it prints.
 	Lang func(lang string)
+	// Memory, when set, is put in front of the system prompt of every
+	// model step: facts the user asked mote to remember, and exchanges
+	// recalled from its history.
+	Memory string
 	// Sessions, when set, holds open model sessions across runs so the
 	// stages of a pipeline keep their models loaded. Whoever supplies it
 	// owns it and must call CloseSessions; a run with no cache of its own
