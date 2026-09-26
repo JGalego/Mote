@@ -305,7 +305,7 @@ func (l *Llama) Speak(ctx context.Context, m *registry.Model, files map[string]s
 	if _, err := os.Stat(l.bin("llama-tts")); err != nil {
 		return Stats{}, fmt.Errorf("llama-tts not found in %s", l.Dir)
 	}
-	args := append(l.commonArgs(m, files), "-p", text, "--output", out)
+	args := append(l.commonArgs(m, files), "--ctx-size", strconv.Itoa(m.Context), "-p", text, "--output", out)
 	args = append(args, m.Args...)
 	cmd := exec.CommandContext(ctx, l.bin("llama-tts"), args...)
 	logf, logPath := l.logFile("llama-tts")

@@ -19,7 +19,7 @@ import (
 const (
 	maxRead     = 1 << 20  // largest text input read into a prompt
 	maxFileSize = 64 << 10 // per file when collecting a directory
-	maxTree     = 48 << 10 // total when collecting a directory
+	maxTree     = 16 << 10 // total when collecting a directory (fits an 8k context)
 )
 
 type op struct {
@@ -38,7 +38,7 @@ var ops = map[string]op{
 	"frames":   {fn: opFrames, tools: []string{"ffmpeg", "ffprobe"}},
 	"convert":  {fn: opConvert, tools: []string{"ffmpeg"}},
 	"collect":  {fn: opCollect},
-	"diff":     {fn: opDiff, tools: []string{"git"}},
+	"rewrite":  {fn: opRewrite},
 }
 
 func (r *run) input(s Step) (Value, error) {
@@ -82,7 +82,7 @@ func opRead(r *run, s Step) (Value, error) {
 }
 
 func opGenerate(r *run, s Step) (Value, error) {
-	req := runtime.Request{System: r.expand(s.System), Prompt: r.expand(s.Prompt), Temperature: 0.2}
+	req := runtime.Request{System: r.expand(s.System), Prompt: r.expand(s.Prompt), Temperature: 0.2, MaxTokens: 2048}
 	var images []string
 	if s.Images != "" {
 		images = r.vars[s.Images].Files
@@ -396,49 +396,82 @@ func opCollect(r *run, s Step) (Value, error) {
 	return Value{Text: b.String()}, nil
 }
 
-// ExtractDiff pulls a unified diff out of model output.
-func ExtractDiff(text string) string {
-	if strings.Contains(text, "```") {
-		text = StripFences(text)
+// ParseFiles splits model output into "=== path ===" blocks. Code fences
+// around a block's content are removed.
+func ParseFiles(text string) (map[string]string, []string) {
+	files := map[string]string{}
+	var order []string
+	var cur string
+	var buf []string
+	flush := func() {
+		if cur == "" {
+			return
+		}
+		body := strings.Join(buf, "\n")
+		if strings.HasPrefix(strings.TrimSpace(body), "```") {
+			body = StripFences(body)
+		}
+		body = strings.TrimRight(body, "\n") + "\n"
+		if _, seen := files[cur]; !seen {
+			order = append(order, cur)
+		}
+		files[cur] = body
 	}
-	lines := strings.Split(text, "\n")
-	for i, l := range lines {
-		if strings.HasPrefix(l, "diff --git ") || strings.HasPrefix(l, "--- ") {
-			return strings.TrimRight(strings.Join(lines[i:], "\n"), "\n") + "\n"
+	for _, line := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
+		t := strings.TrimSpace(line)
+		if strings.HasPrefix(t, "=== ") && strings.HasSuffix(t, " ===") && len(t) > 8 {
+			flush()
+			cur, buf = strings.TrimSpace(t[4:len(t)-4]), nil
+			continue
+		}
+		if cur != "" {
+			buf = append(buf, line)
 		}
 	}
-	return ""
+	flush()
+	return files, order
 }
 
-// opDiff validates a model-proposed diff with `git apply --check` and applies
-// it only when the user passed --apply.
-func opDiff(r *run, s Step) (Value, error) {
-	diff := ExtractDiff(r.vars[s.From].Text)
-	if diff == "" {
-		return Value{}, fmt.Errorf("model reply contained no unified diff:\n%s", r.vars[s.From].Text)
+// opRewrite turns whole-file rewrites from the model into a unified diff and
+// writes the files only when the user passed --apply.
+func opRewrite(r *run, s Step) (Value, error) {
+	root := r.vars[s.Dir].Text
+	files, order := ParseFiles(r.vars[s.From].Text)
+	if len(order) == 0 {
+		return Value{}, fmt.Errorf("model reply contained no \"=== path ===\" file blocks:\n%.600s", r.vars[s.From].Text)
 	}
-	git, err := r.tool("git")
-	if err != nil {
-		return Value{}, err
+	var diff strings.Builder
+	var changed []string
+	content := map[string]string{}
+	for _, rel := range order {
+		clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(rel)))
+		if filepath.IsAbs(rel) || clean == ".." || strings.HasPrefix(clean, "../") || strings.HasPrefix(clean, ".git/") {
+			return Value{}, fmt.Errorf("model tried to write outside the directory: %s", rel)
+		}
+		before := ""
+		if b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(clean))); err == nil {
+			before = strings.ReplaceAll(string(b), "\r\n", "\n")
+		}
+		if d := Unified(clean, before, files[rel]); d != "" {
+			diff.WriteString(d)
+			changed = append(changed, clean)
+			content[clean] = files[rel]
+		}
 	}
-	dir := r.vars[s.Dir].Text
-	tmp, err := r.tempDir()
-	if err != nil {
-		return Value{}, err
-	}
-	patch := filepath.Join(tmp, "change.patch")
-	if err := os.WriteFile(patch, []byte(diff), 0o644); err != nil {
-		return Value{}, err
-	}
-	abs, _ := filepath.Abs(patch)
-	if out, err := runTool(git, "-C", dir, "apply", "--check", "--recount", abs); err != nil {
-		return Value{}, fmt.Errorf("proposed diff does not apply cleanly:\n%s\n%s", diff, lastLines(out, 5))
+	if len(changed) == 0 {
+		return Value{}, errors.New("model proposed no changes")
 	}
 	if r.opt.Apply {
-		if _, err := runTool(git, "-C", dir, "apply", "--recount", abs); err != nil {
-			return Value{}, err
+		for _, rel := range changed {
+			p := filepath.Join(root, filepath.FromSlash(rel))
+			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+				return Value{}, err
+			}
+			if err := os.WriteFile(p, []byte(content[rel]), 0o644); err != nil {
+				return Value{}, err
+			}
 		}
-		r.logf("applied to %s", dir)
+		r.logf("applied changes to %s", strings.Join(changed, ", "))
 	}
-	return Value{Text: diff}, nil
+	return Value{Text: diff.String()}, nil
 }

@@ -123,15 +123,15 @@
     },
     {
       "id": "patch",
-      "summary": "Propose a unified diff for a directory; --apply applies it with git",
+      "summary": "Propose changes to a directory as a diff; --apply writes them",
       "in": ["dir", "text"], "out": "diff",
       "params": [{"name": "dir", "kind": "dir"}, {"name": "instruction", "kind": "text"}],
       "steps": [
         {"op": "collect", "from": "dir", "as": "tree"},
         {"op": "generate", "cap": "code",
-         "system": "You change code by replying with a single unified diff (git format, paths relative to the project root, a/ and b/ prefixes). Reply with the diff only.",
-         "prompt": "Instruction: {{instruction}}\n\nProject files:\n{{tree}}\n\nReply with a unified diff.", "as": "raw"},
-        {"op": "diff", "from": "raw", "dir": "dir", "as": "out"}
+         "system": "You edit projects. For every file you change, reply with a line '=== path ===' (the path exactly as given) followed by the complete new content of that file. Do not include unchanged files or explanations.",
+         "prompt": "Project files:\n{{tree}}\nInstruction: {{instruction}}\n\nFor every file you change, reply with a line === path === followed by the complete new content of that file.", "as": "raw"},
+        {"op": "rewrite", "from": "raw", "dir": "dir", "as": "out"}
       ]
     }
   ]

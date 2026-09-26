@@ -84,6 +84,9 @@ func TestBuiltinTasksValid(t *testing.T) {
 			t.Errorf("no task uses capability %s", c)
 		}
 	}
+	if got := mustTask(t, "patch").Tools(); len(got) != 0 {
+		t.Errorf("patch should not need tools: %v", got)
+	}
 	if got := mustTask(t, "video").Tools(); strings.Join(got, ",") != "ffmpeg,ffprobe" {
 		t.Errorf("video tools %v", got)
 	}
@@ -236,13 +239,10 @@ func TestSessionReuse(t *testing.T) {
 }
 
 func TestPatch(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not installed")
-	}
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("hello\n"), 0o644)
 	os.WriteFile(filepath.Join(dir, "blob.bin"), []byte{0, 1}, 0o644)
-	diff := "```diff\n--- a/hello.txt\n+++ b/hello.txt\n@@ -1 +1 @@\n-hello\n+hello, world\n```"
+	diff := "Here you go:\n=== hello.txt ===\n```\nhello, world\n```\n"
 	b := &fakeBackend{reply: func(r runtime.Request) string {
 		if !strings.Contains(r.Prompt, "=== hello.txt ===") || strings.Contains(r.Prompt, "blob.bin") {
 			return "bad context"
@@ -262,13 +262,16 @@ func TestPatch(t *testing.T) {
 	if _, err := mustTask(t, "patch").Run(context.Background(), env(b), []string{dir, "x"}, Options{Apply: true}); err != nil {
 		t.Fatal(err)
 	}
-	// git on Windows may write CRLF line endings (core.autocrlf).
-	if got, _ := os.ReadFile(filepath.Join(dir, "hello.txt")); strings.ReplaceAll(string(got), "\r\n", "\n") != "hello, world\n" {
+	if got, _ := os.ReadFile(filepath.Join(dir, "hello.txt")); string(got) != "hello, world\n" {
 		t.Errorf("not applied: %q", got)
 	}
-	// Now the same diff no longer applies.
-	if _, err := mustTask(t, "patch").Run(context.Background(), env(b), []string{dir, "x"}, Options{}); err == nil || !strings.Contains(err.Error(), "does not apply") {
-		t.Errorf("stale diff: %v", err)
+	// Re-running the same change is detected as a no-op.
+	if _, err := mustTask(t, "patch").Run(context.Background(), env(b), []string{dir, "x"}, Options{}); err == nil || !strings.Contains(err.Error(), "no changes") {
+		t.Errorf("no-op change: %v", err)
+	}
+	b.reply = func(runtime.Request) string { return "=== ../outside.txt ===\nx\n" }
+	if _, err := mustTask(t, "patch").Run(context.Background(), env(b), []string{dir, "x"}, Options{Apply: true}); err == nil || !strings.Contains(err.Error(), "outside") {
+		t.Errorf("escape accepted: %v", err)
 	}
 }
 
@@ -310,5 +313,27 @@ func TestMediaTasks(t *testing.T) {
 	}
 	if _, err := os.Stat(out); err != nil {
 		t.Error("converted image missing")
+	}
+}
+
+func TestUnified(t *testing.T) {
+	before := "a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n"
+	after := "a\nB\nc\nd\ne\nf\ng\nh\ni\nj\nk\n"
+	want := "--- a/x\n+++ b/x\n@@ -1,5 +1,5 @@\n a\n-b\n+B\n c\n d\n e\n@@ -8,3 +8,4 @@\n h\n i\n j\n+k\n"
+	if got := Unified("x", before, after); got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+	if Unified("x", "same\n", "same\n") != "" {
+		t.Error("equal texts produced a diff")
+	}
+	if got := Unified("n", "", "new\n"); got != "--- a/n\n+++ b/n\n@@ -0,0 +1,1 @@\n+new\n" {
+		t.Errorf("new file diff %q", got)
+	}
+}
+
+func TestParseFiles(t *testing.T) {
+	files, order := ParseFiles("intro\n=== a.go ===\n```go\npackage a\n```\n=== b/c.txt ===\nline\n")
+	if len(order) != 2 || files["a.go"] != "package a\n" || files["b/c.txt"] != "line\n" {
+		t.Errorf("%v %q", order, files)
 	}
 }

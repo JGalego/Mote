@@ -110,8 +110,8 @@ func server(args []string) int {
 		if len(kinds) > 0 {
 			reply += " [" + strings.Join(kinds, ",") + "]"
 		}
-		if strings.Contains(strings.Join(text, " "), "unified diff") {
-			reply = "```diff\n--- a/hello.txt\n+++ b/hello.txt\n@@ -1 +1 @@\n-hello\n+hello, world\n```"
+		if strings.Contains(strings.Join(text, " "), "Project files:") {
+			reply = "=== hello.txt ===\nhello, world\n"
 		}
 		if len(req.ResponseFormat) > 0 {
 			reply = `{"ok": true}`

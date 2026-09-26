@@ -215,7 +215,7 @@ func (a *app) setup(ctx context.Context, args []string) error {
 	}
 	for _, t := range []string{"ffmpeg", "git"} {
 		if _, err := a.tool(t); err != nil {
-			fmt.Fprintf(a.out, "Optional: %s not found; audio/video tasks need ffmpeg and `patch` needs git (%s).\n", t, installHint(t))
+			fmt.Fprintf(a.out, "Optional: %s not found; audio/video tasks need ffmpeg; git lets `patch` skip ignored files (%s).\n", t, installHint(t))
 		}
 	}
 	fmt.Fprintln(a.out, "Ready. Try: mote run chat \"hello\"   (mote tasks lists everything)")
