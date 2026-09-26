@@ -1,4 +1,5 @@
 Output docs/demo/convert.gif
+Set Height 900
 Source docs/demo/common.tape
 Hide
 Type 'mote run convert sign.png 320 -o sign-small.jpg'

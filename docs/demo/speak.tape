@@ -1,4 +1,5 @@
 Output docs/demo/speak.gif
+Set Height 900
 Source docs/demo/common.tape
 Hide
 Type 'mote run speak "The build finished without errors." -o done.wav'

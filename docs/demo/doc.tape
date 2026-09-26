@@ -1,4 +1,5 @@
 Output docs/demo/doc.gif
+Set Height 900
 Source docs/demo/common.tape
 Hide
 Type 'mote run doc slugify.py'
