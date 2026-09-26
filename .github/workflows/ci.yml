@@ -38,3 +38,58 @@ jobs:
           for t in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
             GOOS=${t%/*} GOARCH=${t#*/} CGO_ENABLED=0 go build -o /dev/null ./cmd/...
           done
+
+  installer:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Build release archives
+        shell: bash
+        run: scripts/dist.sh ci
+      - name: Lint install.sh
+        if: runner.os == 'Linux'
+        run: shellcheck install/install.sh scripts/dist.sh
+      - name: Install twice from local archives (sh)
+        if: runner.os != 'Windows'
+        run: |
+          export MOTE_BASE_URL="file://$PWD/dist" MOTE_PREFIX="$RUNNER_TEMP/bin" MOTE_NO_SETUP=1
+          sh install/install.sh
+          sh install/install.sh
+          "$MOTE_PREFIX/mote" version | grep -q "mote ci"
+          for f in dist/*.tar.gz; do echo x >> "$f"; done
+          if sh install/install.sh; then echo "tampered archive accepted"; exit 1; fi
+      - name: Install twice from local archives (PowerShell)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:MOTE_BASE_URL = Join-Path $PWD 'dist'
+          $env:MOTE_PREFIX = Join-Path $env:RUNNER_TEMP 'mote'
+          $env:MOTE_NO_SETUP = '1'
+          ./install/install.ps1
+          ./install/install.ps1
+          $v = & (Join-Path $env:MOTE_PREFIX 'mote.exe') version
+          if ($v -notmatch 'mote ci') { throw "unexpected version: $v" }
+      - name: Setup with the pinned runtime and check it
+        if: runner.os != 'Windows'
+        run: |
+          export MOTE_HOME="$RUNNER_TEMP/home" MOTE_CONFIG_DIR="$RUNNER_TEMP/cfg"
+          "$RUNNER_TEMP/bin/mote" setup --yes --no-download
+          "$RUNNER_TEMP/bin/mote" doctor
+      - name: Setup with the pinned runtime and check it (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:MOTE_HOME = Join-Path $env:RUNNER_TEMP 'home'
+          $env:MOTE_CONFIG_DIR = Join-Path $env:RUNNER_TEMP 'cfg'
+          $mote = Join-Path $env:RUNNER_TEMP 'mote\mote.exe'
+          & $mote setup --yes --no-download
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $mote doctor
+          exit $LASTEXITCODE
