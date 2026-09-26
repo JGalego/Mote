@@ -34,6 +34,7 @@ mote runs X-to-Y AI tasks (text, code, images, audio, video, files) on your CPU 
   - [convert](#convert---)
   - [patch](#patch---)
   - [chained](#chained-)
+  - [spoken](#spoken-)
   - [your own](#your-own-)
 - [How it works](#how-it-works)
 - [Models](#models)
@@ -78,6 +79,7 @@ In a clone, `go install ./cmd/mote` does the same into `$(go env GOPATH)/bin`. `
 | `mote setup [--profile P] [--yes]` | Install the runtime and the models for a profile (`small`, `balanced`, `quality`) |
 | `mote run TASK [ARGS...]` | Run a task, e.g. `mote run chat "Explain what a mutex is"`; `-o FILE` writes the output, `--model ID` overrides the model, `--apply` writes `patch` changes |
 | `mote pipe "A \| B \| !cmd"` | Chain tasks in one process, each stage receiving the last one's value: `{}` or `-` places it, `!` runs a shell command |
+| `mote listen [TASK]` | Wait for a wake word on the microphone, then run what you say next (never listens unless you start it) |
 | `mote tasks` | List the tasks, their arguments and what each one needs |
 | `mote models [pull\|rm\|why\|verify]` | Show models, sizes and which are in use; fetch, remove, explain or re-verify them |
 | `mote bench [--full]` | Measure installed models locally: startup, tokens/s, peak RSS, small pass/fail checks |
@@ -173,6 +175,23 @@ mote pipe "frames clip.mp4 3 | describe | !tee notes.txt"
 Each stage receives the previous stage's value: `{}` inside an argument or a bare `-` says where it goes, and with neither it fills the first argument you left out. Several files fan out into one run per file. A stage starting with `!` is a shell command reading that value on stdin, so ordinary tools mix in.
 
 Plain shell pipes still work too (`mote run video clip.mp4 | mote run chat -`), at the cost of reloading a model per command.
+
+### spoken 🎤
+
+Nothing records until you ask it to. `mote listen` captures short chunks from
+the microphone with ffmpeg, transcribes each with the `asr` model you already
+have, and when it hears the wake word runs the rest of the sentence:
+
+```sh
+mote listen                       # "hey mote, explain what a mutex is"
+mote listen code --wake "ok mote" # send what you say to another task
+```
+
+The phrase comes from `--wake`, else `mote config set wake_word "..."`, else
+`hey mote`. `--chunk` sets how many seconds each recording lasts, `--device`
+picks the input (required on Windows, where dshow has no default), and
+`--once` stops after the first request. The asr model stays loaded between
+chunks, so only the first one waits for it.
 
 ### your own 🧩
 

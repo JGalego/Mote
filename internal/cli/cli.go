@@ -66,6 +66,7 @@ Usage:
   mote setup [--yes] [--config FILE] [--profile P] [--data-dir DIR] [--auto-download] [--no-download]
   mote run TASK [ARGS...] [-o OUTPUT] [--apply] [--model ID] [--profile P]
   mote pipe "TASK ARGS | TASK ARGS | !COMMAND" [-o OUTPUT] [--model ID] [--profile P]
+  mote listen [TASK] [--wake PHRASE] [--device D] [--chunk SECONDS] [--once]
   mote tasks
   mote models [list | pull ID|CAP... | rm ID | why CAP | verify]
   mote bench [--full] [--model ID]
@@ -85,6 +86,7 @@ Examples:
   mote run patch ./src "Rename the function load to read_config" --apply
   mote pipe "transcribe meeting.m4a | chat 'Summarise in 3 bullets: {}'"
   mote pipe "frames clip.mp4 3 | describe | !tee notes.txt"
+  mote listen --wake "hey mote"
 `
 
 // usageError marks bad invocations (exit code 2).
@@ -178,7 +180,7 @@ func (a *app) dispatch(ctx context.Context, args []string) error {
 		return a.update(ctx, rest)
 	}
 	switch cmd {
-	case "run", "pipe", "models", "bench", "tune":
+	case "run", "pipe", "listen", "models", "bench", "tune":
 	default:
 		return usagef("unknown command %q; see `mote help`", cmd)
 	}
@@ -191,6 +193,8 @@ func (a *app) dispatch(ctx context.Context, args []string) error {
 		return a.run(ctx, rest)
 	case "pipe":
 		return a.pipe(ctx, rest)
+	case "listen":
+		return a.listen(ctx, rest)
 	case "models":
 		return a.models(ctx, rest)
 	case "bench":
