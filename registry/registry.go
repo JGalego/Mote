@@ -72,23 +72,23 @@ type Asset struct {
 }
 
 type Model struct {
-	ID          string      `json:"id"`
-	Name        string      `json:"name"`
-	Backend     string      `json:"backend"`
-	Upstream    string      `json:"upstream"`
-	Repo        string      `json:"repo"`
-	Revision    string      `json:"revision"`
-	License     string      `json:"license"`
-	Quant       string      `json:"quant"`
-	ParamsB     float64     `json:"params_b"`
-	Caps        []string    `json:"caps"`
-	Context     int         `json:"context"`
-	Args        []string    `json:"args,omitempty"`
-	OutputAfter string      `json:"output_after,omitempty"`
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Backend     string   `json:"backend"`
+	Upstream    string   `json:"upstream"`
+	Repo        string   `json:"repo"`
+	Revision    string   `json:"revision"`
+	License     string   `json:"license"`
+	Quant       string   `json:"quant"`
+	ParamsB     float64  `json:"params_b"`
+	Caps        []string `json:"caps"`
+	Context     int      `json:"context"`
+	Args        []string `json:"args,omitempty"`
+	OutputAfter string   `json:"output_after,omitempty"`
 	// QueryPrefix is prepended to a short query before embedding it.
 	// Retrieval encoders are asymmetric: BGE scores a bare question against
 	// a description poorly without its instruction prefix.
-	QueryPrefix string 		`json:"query_prefix,omitempty"`
+	QueryPrefix string      `json:"query_prefix,omitempty"`
 	Files       []File      `json:"files"`
 	RAMEstimate int         `json:"ram_mb_estimate"`
 	MinRAMMB    int         `json:"min_ram_mb"`
