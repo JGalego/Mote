@@ -1,6 +1,6 @@
 Output docs/demo/install.gif
 Source docs/demo/common.tape
-Set Height 720
+Set Height 820
 Type "curl -fsSL https://raw.githubusercontent.com/JGalego/Mote/main/install/install.sh | sh"
 Sleep 500ms
 Enter
