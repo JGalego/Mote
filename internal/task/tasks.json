@@ -1,0 +1,138 @@
+{
+  "tasks": [
+    {
+      "id": "chat",
+      "summary": "Answer a prompt",
+      "in": ["text"], "out": "text",
+      "params": [{"name": "prompt", "kind": "text"}],
+      "steps": [
+        {"op": "generate", "cap": "text", "prompt": "{{prompt}}", "as": "out"}
+      ]
+    },
+    {
+      "id": "code",
+      "summary": "Write code from a description",
+      "in": ["text"], "out": "code",
+      "params": [{"name": "prompt", "kind": "text"}],
+      "steps": [
+        {"op": "generate", "cap": "code", "fences": "strip",
+         "system": "You write correct, minimal code. Reply with the code only, without explanations.",
+         "prompt": "{{prompt}}", "as": "out"}
+      ]
+    },
+    {
+      "id": "refactor",
+      "summary": "Rewrite a source file following an instruction",
+      "in": ["code", "text"], "out": "code",
+      "params": [{"name": "file", "kind": "file"}, {"name": "instruction", "kind": "text"}],
+      "steps": [
+        {"op": "read", "from": "file", "as": "source"},
+        {"op": "generate", "cap": "code", "fences": "strip",
+         "system": "You edit source files. Reply with the complete updated file only, without explanations.",
+         "prompt": "Instruction: {{instruction}}\n\nFile {{file}}:\n{{source}}", "as": "out"}
+      ]
+    },
+    {
+      "id": "doc",
+      "summary": "Write Markdown documentation for a source file",
+      "in": ["code"], "out": "text",
+      "params": [{"name": "file", "kind": "file"}],
+      "steps": [
+        {"op": "read", "from": "file", "as": "source"},
+        {"op": "generate", "cap": "text",
+         "system": "You write concise technical documentation in Markdown.",
+         "prompt": "Document the public interface of {{file}}: purpose, functions and usage. Be brief.\n\n{{source}}", "as": "out"}
+      ]
+    },
+    {
+      "id": "extract",
+      "summary": "Extract structured JSON from a document",
+      "in": ["text"], "out": "data",
+      "params": [{"name": "file", "kind": "file"}, {"name": "schema", "kind": "file", "optional": true}],
+      "steps": [
+        {"op": "read", "from": "file", "as": "doc"},
+        {"op": "read", "from": "schema", "as": "schema_text", "optional": true},
+        {"op": "generate", "cap": "extract", "json_schema": "schema_text",
+         "system": "You extract facts from documents into JSON. Use only information present in the document.",
+         "prompt": "Extract the key fields from this document as JSON.\n\n{{doc}}", "as": "out"}
+      ]
+    },
+    {
+      "id": "describe",
+      "summary": "Describe an image or answer a question about it",
+      "in": ["image", "text"], "out": "text",
+      "params": [{"name": "image", "kind": "file"}, {"name": "question", "kind": "text", "default": "Describe this image in two sentences."}],
+      "steps": [
+        {"op": "generate", "cap": "vision", "images": "image", "prompt": "{{question}}", "as": "out"}
+      ]
+    },
+    {
+      "id": "transcribe",
+      "summary": "Transcribe speech from an audio or video file",
+      "in": ["audio"], "out": "text",
+      "params": [{"name": "audio", "kind": "file"}],
+      "steps": [
+        {"op": "audio", "from": "audio", "as": "wav"},
+        {"op": "generate", "cap": "asr", "audio": "wav", "as": "out"}
+      ]
+    },
+    {
+      "id": "speak",
+      "summary": "Synthesize speech to a WAV file",
+      "in": ["text"], "out": "audio",
+      "params": [{"name": "text", "kind": "text"}],
+      "output": "speech.wav",
+      "steps": [
+        {"op": "speak", "cap": "tts", "prompt": "{{text}}", "as": "out"}
+      ]
+    },
+    {
+      "id": "frames",
+      "summary": "Extract evenly spaced frames from a video",
+      "in": ["video"], "out": "images",
+      "params": [{"name": "video", "kind": "file"}, {"name": "count", "kind": "text", "default": "8"}],
+      "output": "frames",
+      "steps": [
+        {"op": "frames", "from": "video", "count": "count", "as": "out"}
+      ]
+    },
+    {
+      "id": "video",
+      "summary": "Summarize a video from sampled frames and its speech",
+      "in": ["video"], "out": "text",
+      "params": [{"name": "video", "kind": "file"}],
+      "steps": [
+        {"op": "frames", "from": "video", "count": "4", "as": "frames"},
+        {"op": "generate", "cap": "vision", "images": "frames", "each": true,
+         "prompt": "Describe this video frame in one sentence.", "as": "captions"},
+        {"op": "audio", "from": "video", "as": "wav", "optional": true},
+        {"op": "generate", "cap": "asr", "audio": "wav", "as": "transcript", "optional": true},
+        {"op": "generate", "cap": "text",
+         "prompt": "Summarize this video in a short paragraph.\n\nFrame descriptions, in order:\n{{captions}}\n\nSpeech transcript:\n{{transcript}}", "as": "out"}
+      ]
+    },
+    {
+      "id": "convert",
+      "summary": "Convert or resize an image, audio or video file with ffmpeg",
+      "in": ["image"], "out": "image",
+      "params": [{"name": "file", "kind": "file"}, {"name": "width", "kind": "text", "default": ""}],
+      "output": "required",
+      "steps": [
+        {"op": "convert", "from": "file", "width": "width", "as": "out"}
+      ]
+    },
+    {
+      "id": "patch",
+      "summary": "Propose a unified diff for a directory; --apply applies it with git",
+      "in": ["dir", "text"], "out": "diff",
+      "params": [{"name": "dir", "kind": "dir"}, {"name": "instruction", "kind": "text"}],
+      "steps": [
+        {"op": "collect", "from": "dir", "as": "tree"},
+        {"op": "generate", "cap": "code",
+         "system": "You change code by replying with a single unified diff (git format, paths relative to the project root, a/ and b/ prefixes). Reply with the diff only.",
+         "prompt": "Instruction: {{instruction}}\n\nProject files:\n{{tree}}\n\nReply with a unified diff.", "as": "raw"},
+        {"op": "diff", "from": "raw", "dir": "dir", "as": "out"}
+      ]
+    }
+  ]
+}
