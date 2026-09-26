@@ -1,0 +1,570 @@
+// Package cli implements the mote command line.
+package cli
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"os/signal"
+	"path/filepath"
+	"runtime"
+	"sort"
+	"strings"
+
+	"github.com/jgalego/mote/internal/bench"
+	"github.com/jgalego/mote/internal/config"
+	"github.com/jgalego/mote/internal/platform"
+	mrt "github.com/jgalego/mote/internal/runtime"
+	"github.com/jgalego/mote/internal/task"
+	"github.com/jgalego/mote/registry"
+)
+
+// Version is set at build time with -ldflags "-X .../cli.Version=v1.2.3".
+var Version = "dev"
+
+// Exit codes.
+const (
+	ExitOK      = 0
+	ExitError   = 1
+	ExitUsage   = 2
+	ExitMissing = 3 // not set up, or a model/runtime/tool is missing
+)
+
+const usage = `mote - local, CPU-only X-to-Y AI tasks
+
+Usage:
+  mote setup [--yes] [--config FILE] [--profile P] [--data-dir DIR] [--auto-download] [--no-download]
+  mote run TASK [ARGS...] [-o OUTPUT] [--apply] [--model ID] [--profile P]
+  mote tasks
+  mote models [list | pull ID|CAP... | rm ID | why CAP | verify]
+  mote bench [--full] [--model ID]
+  mote tune [--apply]
+  mote doctor
+  mote config [show | path | set KEY VALUE | history | rollback [N] | edit]
+  mote update [--check]
+  mote version
+
+Examples:
+  mote run chat "Explain what a mutex is in two sentences"
+  mote run code "Python function that parses ISO 8601 dates" -o dates.py
+  mote run describe photo.jpg "What is written on the sign?"
+  mote run transcribe meeting.m4a -o meeting.txt
+  mote run speak "Build finished" -o done.wav
+  mote run video clip.mp4
+  mote run patch ./src "Rename the function load to read_config" --apply
+`
+
+// usageError marks bad invocations (exit code 2).
+type usageError struct{ msg string }
+
+func (e usageError) Error() string { return e.msg }
+
+func usagef(format string, a ...any) error { return usageError{fmt.Sprintf(format, a...)} }
+
+// missingError marks missing setup or dependencies (exit code 3).
+type missingError struct{ msg string }
+
+func (e missingError) Error() string { return e.msg }
+
+func missingf(format string, a ...any) error { return missingError{fmt.Sprintf(format, a...)} }
+
+type app struct {
+	in       io.Reader
+	out, err io.Writer
+	cfgDir   string
+	cfg      config.Config
+	cfgErr   error
+	reg      *registry.Registry
+	info     *platform.Info
+	fetcher  mrt.Fetcher
+	regURL   string
+	tty      bool
+}
+
+// Main runs the CLI and returns the process exit code.
+func Main(args []string, in io.Reader, out, errw io.Writer) int {
+	a := &app{in: in, out: out, err: errw, cfgDir: config.Dir(),
+		regURL: "https://raw.githubusercontent.com/jgalego/mote/main/registry/models.json"}
+	if u := os.Getenv("MOTE_REGISTRY_URL"); u != "" {
+		a.regURL = u
+	}
+	if f, ok := in.(*os.File); ok {
+		if st, err := f.Stat(); err == nil && st.Mode()&os.ModeCharDevice != 0 {
+			a.tty = true
+		}
+	}
+	a.fetcher = mrt.Fetcher{Progress: errw}
+	a.cfg, a.cfgErr = config.Load(a.cfgDir)
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	err := a.dispatch(ctx, args)
+	if err == nil {
+		return ExitOK
+	}
+	fmt.Fprintln(errw, "mote:", err)
+	var ue usageError
+	var me missingError
+	switch {
+	case errors.As(err, &ue), errors.Is(err, task.ErrUsage):
+		return ExitUsage
+	case errors.As(err, &me), errors.Is(err, config.ErrNotConfigured), errors.Is(err, mrt.ErrNoRuntime):
+		return ExitMissing
+	}
+	return ExitError
+}
+
+func (a *app) dispatch(ctx context.Context, args []string) error {
+	if len(args) == 0 {
+		fmt.Fprint(a.out, usage)
+		return nil
+	}
+	cmd, rest := args[0], args[1:]
+	switch cmd {
+	case "help", "-h", "--help":
+		fmt.Fprint(a.out, usage)
+		return nil
+	case "version", "--version":
+		fmt.Fprintf(a.out, "mote %s (%s/%s, registry %s)\n", Version, runtime.GOOS, runtime.GOARCH, a.registry().Version)
+		return nil
+	case "setup":
+		return a.setup(ctx, rest)
+	case "config":
+		return a.config(rest)
+	case "doctor":
+		return a.doctor()
+	case "tasks":
+		return a.tasks()
+	case "update":
+		return a.update(ctx, rest)
+	}
+	// Remaining commands need a valid configuration.
+	if a.cfgErr != nil {
+		return a.cfgErr
+	}
+	switch cmd {
+	case "run":
+		return a.run(ctx, rest)
+	case "models":
+		return a.models(ctx, rest)
+	case "bench":
+		return a.bench(ctx, rest)
+	case "tune":
+		return a.tune(rest)
+	}
+	return usagef("unknown command %q; see `mote help`", cmd)
+}
+
+// flags separates known flags from positional arguments. Flags may appear
+// anywhere; "--" ends flag parsing.
+func flags(args []string, withValue, boolean []string) (map[string]string, []string, error) {
+	vals := map[string]string{}
+	var pos []string
+	is := func(list []string, s string) bool {
+		for _, x := range list {
+			if x == s {
+				return true
+			}
+		}
+		return false
+	}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			pos = append(pos, args[i+1:]...)
+			break
+		}
+		name, val, hasVal := strings.Cut(arg, "=")
+		switch {
+		case is(withValue, name):
+			if !hasVal {
+				if i+1 >= len(args) {
+					return nil, nil, usagef("%s needs a value", name)
+				}
+				i++
+				val = args[i]
+			}
+			vals[name] = val
+		case is(boolean, name) && !hasVal:
+			vals[name] = "true"
+		case strings.HasPrefix(arg, "-") && arg != "-" && len(arg) > 1:
+			return nil, nil, usagef("unknown flag %s", arg)
+		default:
+			pos = append(pos, arg)
+		}
+	}
+	return vals, pos, nil
+}
+
+func (a *app) platform() platform.Info {
+	if a.info == nil {
+		i := platform.Detect()
+		a.info = &i
+	}
+	return *a.info
+}
+
+// registry returns the installed registry if it is valid and not older than
+// the embedded one, else the embedded registry.
+func (a *app) registry() *registry.Registry {
+	if a.reg != nil {
+		return a.reg
+	}
+	a.reg = registry.Default()
+	if b, err := os.ReadFile(a.userRegistryPath()); err == nil {
+		if r, err := registry.Parse(b); err == nil && r.Version >= a.reg.Version {
+			a.reg = r
+		} else if err != nil {
+			fmt.Fprintf(a.err, "warning: ignoring invalid %s: %v\n", a.userRegistryPath(), err)
+		}
+	}
+	return a.reg
+}
+
+func (a *app) dataDir() string {
+	if a.cfgErr == nil {
+		return a.cfg.Data()
+	}
+	return config.DefaultDataDir()
+}
+
+func (a *app) userRegistryPath() string {
+	return filepath.Join(a.dataDir(), "registry", "models.json")
+}
+
+func (a *app) store() mrt.Store { return mrt.Store{Dir: a.dataDir()} }
+
+func (a *app) ramMB() int { return a.platform().RAMMB }
+
+// choose returns the model the configuration uses for a capability.
+func (a *app) choose(capability, profile string) (*registry.Model, registry.Choice, error) {
+	reg := a.registry()
+	if id, ok := a.cfg.Models[capability]; ok {
+		m, found := reg.Model(id)
+		if !found {
+			return nil, registry.Choice{}, fmt.Errorf("config pins %s to unknown model %q; run `mote config set models.%s \"\"`", capability, id, capability)
+		}
+		if !m.Has(capability) {
+			return nil, registry.Choice{}, fmt.Errorf("config pins %s to %s, which lacks that capability", capability, id)
+		}
+		return m, registry.Choice{Model: id, Reason: "pinned in config", Meets: true}, nil
+	}
+	ch, err := reg.Select(capability, profile, registry.Env{RAMMB: a.ramMB()})
+	if err != nil {
+		return nil, ch, missingf("%v", err)
+	}
+	m, _ := reg.Model(ch.Model)
+	return m, ch, nil
+}
+
+func (a *app) backend(m *registry.Model) (mrt.Backend, error) {
+	if m.Backend != "llama.cpp" {
+		return nil, fmt.Errorf("%w: %s", mrt.ErrUnsupported, m.Backend)
+	}
+	dir, err := mrt.FindLlama(a.cfg.LlamaDir, a.store(), a.registry().Runtime)
+	if err != nil {
+		return nil, err
+	}
+	return &mrt.Llama{Dir: dir, Threads: a.cfg.Threads, LogDir: filepath.Join(a.dataDir(), "logs")}, nil
+}
+
+// ensure makes sure a model's files are present, downloading them only when
+// the user allowed automatic downloads.
+func (a *app) ensure(ctx context.Context, m *registry.Model, allow bool) error {
+	missing := a.store().Missing(m)
+	if len(missing) == 0 {
+		return nil
+	}
+	var size int64
+	for _, f := range missing {
+		size += f.Size
+	}
+	if !allow {
+		return missingf("model %s (%s) is not downloaded; run `mote models pull %s`", m.ID, mb(size), m.ID)
+	}
+	fmt.Fprintf(a.err, "downloading %s (%s, %s) from %s\n", m.ID, mb(size), m.License, hostOf(missing[0].URL))
+	return a.store().Pull(ctx, a.fetcher, m)
+}
+
+func (a *app) tool(name string) (string, error) {
+	if p, ok := a.cfg.Tools[name]; ok {
+		return p, nil
+	}
+	if a.cfgErr == nil && !a.cfg.ReuseTools {
+		return "", missingf("%s is needed but reuse_tools is off; set tools.%s to its path", name, name)
+	}
+	if p, err := exec.LookPath(name); err == nil {
+		return p, nil
+	}
+	return "", missingf("%s is needed for this task but was not found on PATH; %s", name, installHint(name))
+}
+
+func installHint(tool string) string {
+	pkg := tool
+	if tool == "ffprobe" {
+		pkg = "ffmpeg"
+	}
+	switch runtime.GOOS {
+	case "darwin":
+		return "install it with `brew install " + pkg + "`"
+	case "windows":
+		return "install it with `winget install " + map[string]string{"ffmpeg": "Gyan.FFmpeg", "git": "Git.Git"}[pkg] + "`"
+	}
+	return "install it with your package manager, e.g. `sudo apt install " + pkg + "`"
+}
+
+func mb(n int64) string {
+	if n >= 1<<30 {
+		return fmt.Sprintf("%.1f GB", float64(n)/(1<<30))
+	}
+	return fmt.Sprintf("%d MB", n>>20)
+}
+
+func hostOf(u string) string {
+	u = strings.TrimPrefix(u, "https://")
+	h, _, _ := strings.Cut(u, "/")
+	return h
+}
+
+func (a *app) run(ctx context.Context, args []string) error {
+	vals, pos, err := flags(args, []string{"-o", "--output", "--model", "--profile"}, []string{"--apply"})
+	if err != nil {
+		return err
+	}
+	if len(pos) == 0 {
+		return usagef("which task? see `mote tasks`")
+	}
+	tasks, err := task.Load()
+	if err != nil {
+		return err
+	}
+	t, ok := task.Find(tasks, pos[0])
+	if !ok {
+		return usagef("unknown task %q; see `mote tasks`", pos[0])
+	}
+	profile := a.cfg.Profile
+	if p := vals["--profile"]; p != "" {
+		profile = p
+	}
+	if id := vals["--model"]; id != "" {
+		m, ok := a.registry().Model(id)
+		if !ok {
+			return usagef("unknown model %q; see `mote models`", id)
+		}
+		// --model overrides every capability this model provides.
+		models := map[string]string{}
+		for k, v := range a.cfg.Models {
+			models[k] = v
+		}
+		for _, c := range m.Caps {
+			models[c] = id
+		}
+		a.cfg.Models = models
+	}
+	out := vals["-o"]
+	if out == "" {
+		out = vals["--output"]
+	}
+	env := task.Env{
+		Resolve: func(ctx context.Context, c string) (*registry.Model, map[string]string, error) {
+			m, _, err := a.choose(c, profile)
+			if err != nil {
+				return nil, nil, err
+			}
+			if err := a.ensure(ctx, m, a.cfg.AutoDownload); err != nil {
+				return nil, nil, err
+			}
+			return m, a.store().Files(m), nil
+		},
+		Backend: a.backend,
+		Tool:    a.tool,
+		Stdin:   a.in,
+		Log:     a.err,
+		TempDir: filepath.Join(a.dataDir(), "tmp"),
+	}
+	defer os.RemoveAll(env.TempDir)
+	res, err := t.Run(ctx, env, pos[1:], task.Options{Output: out, Apply: vals["--apply"] == "true"})
+	if err != nil {
+		return err
+	}
+	switch {
+	case len(res.Files) > 0:
+		for _, f := range res.Files {
+			fmt.Fprintln(a.out, f)
+		}
+	case out != "":
+		if err := os.WriteFile(out, []byte(strings.TrimRight(res.Text, "\n")+"\n"), 0o644); err != nil {
+			return err
+		}
+		fmt.Fprintln(a.err, "wrote", out)
+	default:
+		fmt.Fprintln(a.out, strings.TrimRight(res.Text, "\n"))
+	}
+	return nil
+}
+
+func (a *app) tasks() error {
+	tasks, err := task.Load()
+	if err != nil {
+		return err
+	}
+	for _, t := range tasks {
+		fmt.Fprintf(a.out, "%-11s %-22s %s\n", t.ID, strings.Join(t.In, "+")+" -> "+t.Out, t.Summary)
+		fmt.Fprintf(a.out, "%-11s usage: mote run %s %s\n", "", t.ID, t.Usage())
+		var needs []string
+		for _, c := range t.Caps() {
+			status := "not set up"
+			if a.cfgErr == nil {
+				if m, _, err := a.choose(c, a.cfg.Profile); err != nil {
+					status = "no model fits"
+				} else if a.store().Installed(m) {
+					status = m.ID
+				} else {
+					status = m.ID + ", not downloaded"
+				}
+			}
+			needs = append(needs, c+": "+status)
+		}
+		for _, tl := range t.Tools() {
+			if _, err := a.tool(tl); err == nil {
+				needs = append(needs, tl+": ok")
+			} else {
+				needs = append(needs, tl+": missing")
+			}
+		}
+		fmt.Fprintf(a.out, "%-11s needs: %s\n", "", strings.Join(needs, "; "))
+	}
+	return nil
+}
+
+func (a *app) models(ctx context.Context, args []string) error {
+	sub := "list"
+	if len(args) > 0 {
+		sub, args = args[0], args[1:]
+	}
+	reg := a.registry()
+	switch sub {
+	case "list", "ls":
+		used := map[string][]string{}
+		var caps []string
+		for c := range registry.Capabilities {
+			caps = append(caps, c)
+		}
+		sort.Strings(caps)
+		for _, c := range caps {
+			if m, _, err := a.choose(c, a.cfg.Profile); err == nil {
+				used[m.ID] = append(used[m.ID], c)
+			}
+		}
+		fmt.Fprintf(a.out, "%-16s %-8s %-7s %-9s %-9s %-26s %s\n", "MODEL", "QUANT", "PARAMS", "DOWNLOAD", "RAM(EST)", "CAPABILITIES", "STATUS")
+		for i := range reg.Models {
+			m := &reg.Models[i]
+			status := "-"
+			if a.store().Installed(m) {
+				status = "installed"
+			}
+			if u := used[m.ID]; len(u) > 0 {
+				status += ", default for " + strings.Join(u, ",")
+			}
+			fmt.Fprintf(a.out, "%-16s %-8s %-7s %-9s %-9s %-26s %s\n", m.ID, m.Quant, fmt.Sprintf("%.1fB", m.ParamsB),
+				mb(m.Bytes()), fmt.Sprintf("%d MB", m.RAMEstimate), strings.Join(m.Caps, ","), status)
+		}
+		fmt.Fprintf(a.out, "\nregistry %s, profile %s, runtime llama.cpp %s\n", reg.Version, a.cfg.Profile, reg.Runtime.Version)
+		return nil
+	case "pull":
+		if len(args) == 0 {
+			return usagef("usage: mote models pull ID|CAPABILITY...")
+		}
+		for _, name := range args {
+			m, ok := reg.Model(name)
+			if !ok {
+				if _, isCap := registry.Capabilities[name]; !isCap {
+					return usagef("unknown model or capability %q", name)
+				}
+				var err error
+				if m, _, err = a.choose(name, a.cfg.Profile); err != nil {
+					return err
+				}
+			}
+			if a.store().Installed(m) {
+				fmt.Fprintf(a.out, "%s already installed\n", m.ID)
+				continue
+			}
+			if err := a.ensure(ctx, m, true); err != nil {
+				return err
+			}
+			fmt.Fprintf(a.out, "%s installed (sha256 verified)\n", m.ID)
+		}
+		return nil
+	case "rm", "remove":
+		if len(args) != 1 {
+			return usagef("usage: mote models rm ID")
+		}
+		m, ok := reg.Model(args[0])
+		if !ok {
+			return usagef("unknown model %q", args[0])
+		}
+		return a.store().Remove(m)
+	case "verify":
+		bad := 0
+		for i := range reg.Models {
+			m := &reg.Models[i]
+			if !a.store().Installed(m) {
+				continue
+			}
+			if err := a.store().Verify(m); err != nil {
+				bad++
+				fmt.Fprintf(a.out, "%s: %v\n", m.ID, err)
+			} else {
+				fmt.Fprintf(a.out, "%s: ok\n", m.ID)
+			}
+		}
+		if bad > 0 {
+			return fmt.Errorf("%d models failed verification; re-download with `mote models rm ID && mote models pull ID`", bad)
+		}
+		return nil
+	case "why":
+		if len(args) != 1 {
+			return usagef("usage: mote models why CAPABILITY")
+		}
+		c := args[0]
+		if _, ok := registry.Capabilities[c]; !ok {
+			return usagef("unknown capability %q (have %s)", c, strings.Join(capNames(), ", "))
+		}
+		m, ch, err := a.choose(c, a.cfg.Profile)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(a.out, "%s -> %s (profile %s, %d MB RAM detected)\n%s\n", c, m.ID, a.cfg.Profile, a.ramMB(), ch.Reason)
+		if g, ok := reg.Policy.Gates[c]; ok && g.Note != "" {
+			fmt.Fprintln(a.out, "note:", g.Note)
+		}
+		for _, b := range m.Benchmarks {
+			v := ""
+			if b.Verified {
+				v = ", verified"
+			}
+			fmt.Fprintf(a.out, "  %s %s %s = %g (%s, %s%s) %s\n", b.Kind, b.Dataset, b.Task, b.Value, b.Source, b.Date, v, b.URL)
+		}
+		if res, err := bench.Load(a.dataDir()); err == nil {
+			if e, ok := res.Entries[m.ID]; ok {
+				fmt.Fprintf(a.out, "  local %s: %.1f tok/s, %d MB peak, startup %.0f ms, %d/%d checks (%s)\n",
+					e.Mode, e.TokensPerSec, e.PeakRSSMB, e.StartupMS, e.Passed, e.Cases, e.Time.Format("2006-01-02"))
+			}
+		}
+		return nil
+	}
+	return usagef("unknown models subcommand %q", sub)
+}
+
+func capNames() []string {
+	var out []string
+	for c := range registry.Capabilities {
+		out = append(out, c)
+	}
+	sort.Strings(out)
+	return out
+}
