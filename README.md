@@ -48,6 +48,10 @@ be downloaded automatically. It installs the pinned llama.cpp CPU build
 license first. For automation: `mote setup --config examples/setup.json` or
 `mote setup --yes`.
 
+## Install and setup
+
+![curl | sh, then mote setup](docs/demo/install.gif)
+
 ## First run
 
 ```sh
@@ -64,6 +68,54 @@ mote run patch ./src "Rename load to read_config" --apply
 `mote tasks` lists tasks and what each needs; `mote doctor` checks the
 installation; `mote models` shows models, sizes and which are in use. Exit
 codes: 0 ok, 1 error, 2 usage, 3 missing setup, model or tool.
+
+## text → text
+
+![mote run chat](docs/demo/chat.gif)
+
+## text → code
+
+![mote run code](docs/demo/code.gif)
+
+## code → code
+
+![mote run refactor](docs/demo/refactor.gif)
+
+## code → documentation
+
+![mote run doc](docs/demo/doc.gif)
+
+## document → structured data
+
+![mote run extract](docs/demo/extract.gif)
+
+## image + text → text
+
+![mote run describe](docs/demo/describe.gif)
+
+## audio → text
+
+![mote run transcribe](docs/demo/transcribe.gif)
+
+## text → audio
+
+![mote run speak](docs/demo/speak.gif)
+
+## video → images
+
+![mote run frames](docs/demo/frames.gif)
+
+## video → text
+
+![mote run video](docs/demo/video.gif)
+
+## image → image
+
+![mote run convert](docs/demo/convert.gif)
+
+## directory → code changes
+
+![mote run patch](docs/demo/patch.gif)
 
 ## Local and CPU-only
 
