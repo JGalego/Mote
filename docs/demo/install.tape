@@ -7,12 +7,12 @@ Show
 Sleep 600ms
 Enter
 # profile
-Wait+Screen /choice \[1\]:/
+Wait+Screen /3\) quality/
 Sleep 1.5s
 Enter
 Sleep 1s
 # editor
-Wait+Screen /choice \[1\]:/
+Wait+Screen /2\) nano/
 Sleep 1.5s
 Enter
 Sleep 1s
@@ -22,12 +22,12 @@ Sleep 1.5s
 Enter
 Sleep 1s
 # automatic downloads
-Wait+Screen /\[y\/N\]:/
+Wait+Screen /first time a task/
 Sleep 1.5s
 Enter
 Sleep 1s
 # download the text model now
-Wait+Screen /\[Y\/n\]:/
+Wait+Screen /text model now/
 Sleep 1.5s
 Enter
 Sleep 1s
