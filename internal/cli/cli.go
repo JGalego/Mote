@@ -398,10 +398,20 @@ func (a *app) run(ctx context.Context, args []string) error {
 		TempDir: filepath.Join(a.dataDir(), "tmp"),
 		Status:  a.status,
 	}
+	// Highlight source code and JSON, but only on the way to a terminal:
+	// files and pipes keep the exact bytes the model produced.
+	var code *ui.CodeStream
+	if out == "" && (t.Out == "code" || t.Out == "data") {
+		code = a.uo.CodeStream(highlightLang(t, ""))
+	}
 	// Stream to interactive terminals only: pipes get the post-processed
 	// value (fences stripped, JSON normalised) in one piece.
 	if out == "" && a.uo.Live() {
-		env.Stream = func(tok string) { fmt.Fprint(a.out, tok) }
+		if code != nil {
+			env.Stream, env.Lang = code.Write, code.Lang
+		} else {
+			env.Stream = func(tok string) { fmt.Fprint(a.out, tok) }
+		}
 	}
 	defer os.RemoveAll(env.TempDir)
 	res, err := t.Run(ctx, env, pos[1:], task.Options{Output: out, Apply: vals["--apply"] == "true"})
@@ -419,7 +429,10 @@ func (a *app) run(ctx context.Context, args []string) error {
 		}
 		fmt.Fprintf(a.err, "%s wrote %s\n", a.ue.OK(), out)
 	case res.Streamed:
+		code.Flush()
 		fmt.Fprintln(a.out)
+	case code != nil:
+		fmt.Fprintln(a.out, a.uo.Highlight(strings.TrimRight(res.Text, "\n"), highlightLang(t, res.Lang)))
 	case t.Out == "diff" && a.uo.Color():
 		for _, l := range strings.Split(strings.TrimRight(res.Text, "\n"), "\n") {
 			switch {
@@ -439,6 +452,16 @@ func (a *app) run(ctx context.Context, args []string) error {
 	}
 	a.footer(res.Calls)
 	return nil
+}
+
+// highlightLang maps a task and the language its reply named to a lexer
+// name. A task that always produces one format wins over the model's fence,
+// which is often absent or wrong. Diffs keep their own colouring below.
+func highlightLang(t task.Task, fence string) string {
+	if t.Out == "data" {
+		return "json"
+	}
+	return fence
 }
 
 // footer prints a one-line summary of model usage on interactive stderr.

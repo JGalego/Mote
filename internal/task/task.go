@@ -83,6 +83,10 @@ type Env struct {
 	// Stream, when set, receives the final answer as it is generated, for
 	// steps whose output needs no post-processing.
 	Stream func(token string)
+	// Lang, when set, is called with the language named by a Markdown fence
+	// in a streamed reply ("python"), before the code itself is streamed.
+	// The CLI uses it to highlight what it prints.
+	Lang func(lang string)
 }
 
 // Options are per-run switches from the command line.
@@ -95,7 +99,8 @@ type Options struct {
 type Result struct {
 	Value
 	Calls    []Call
-	Streamed bool // the text was already written through Env.Stream
+	Streamed bool   // the text was already written through Env.Stream
+	Lang     string // language named by the reply's Markdown fence, if any
 }
 
 // Call records one model invocation, for reporting and benchmarks.
@@ -242,6 +247,7 @@ type run struct {
 	sessions map[string]runtime.Session
 	calls    []Call
 	streamed bool
+	lang     string
 }
 
 // Run executes t with positional args.
@@ -284,7 +290,7 @@ func (t Task) Run(ctx context.Context, env Env, args []string, opt Options) (Res
 		}
 		r.vars[s.As] = v
 	}
-	return Result{Value: r.vars["out"], Calls: r.calls, Streamed: r.streamed}, nil
+	return Result{Value: r.vars["out"], Calls: r.calls, Streamed: r.streamed, Lang: r.lang}, nil
 }
 
 func (r *run) param(p Param, v string) (Value, error) {

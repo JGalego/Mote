@@ -118,7 +118,7 @@ func opGenerate(r *run, s Step) (Value, error) {
 		done := r.status("thinking with " + m.ID)
 		var sf *streamFilter
 		if stream {
-			sf = &streamFilter{after: m.OutputAfter, fences: s.Fences == "strip", emit: func(t string) {
+			sf = &streamFilter{after: m.OutputAfter, fences: s.Fences == "strip", lang: r.env.Lang, emit: func(t string) {
 				if done != nil {
 					done(true)
 					done = nil
@@ -163,6 +163,9 @@ func opGenerate(r *run, s Step) (Value, error) {
 		}
 	}
 	if s.Fences == "strip" {
+		if s.As == "out" {
+			r.lang = FenceLang(text)
+		}
 		text = StripFences(text)
 	}
 	if wantJSON {
@@ -182,6 +185,7 @@ func opGenerate(r *run, s Step) (Value, error) {
 // from the full reply, so this only affects what the terminal shows.
 type streamFilter struct {
 	emit    func(string)
+	lang    func(string)
 	after   string
 	fences  bool
 	acc     strings.Builder
@@ -220,7 +224,14 @@ func (f *streamFilter) write(tok string) {
 		}
 		f.line.Reset()
 		f.line.WriteString(buf[nl+1:])
-		if !strings.HasPrefix(strings.TrimSpace(buf[:nl]), "```") {
+		if line := strings.TrimSpace(buf[:nl]); strings.HasPrefix(line, "```") {
+			if f.lang != nil {
+				if info := strings.TrimSpace(strings.TrimPrefix(line, "```")); info != "" {
+					f.lang(info)
+					f.lang = nil // only the opening fence names a language
+				}
+			}
+		} else {
 			f.emit(buf[:nl+1])
 		}
 	}
@@ -231,6 +242,20 @@ func (f *streamFilter) flush() {
 		f.emit(rest)
 	}
 	f.line.Reset()
+}
+
+// FenceLang returns the language named by the first Markdown fence
+// ("```python"), or "" when the text has no fence or the fence is bare.
+func FenceLang(text string) string {
+	start := strings.Index(text, "```")
+	if start < 0 {
+		return ""
+	}
+	info := text[start+3:]
+	if nl := strings.IndexByte(info, '\n'); nl >= 0 {
+		info = info[:nl]
+	}
+	return strings.TrimSpace(info)
 }
 
 // StripFences returns the body of the first fenced code block, or the text

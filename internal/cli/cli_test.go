@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -280,5 +281,58 @@ func TestUpdate(t *testing.T) {
 	t.Setenv("MOTE_REGISTRY_URL", "http://example.org/models.json")
 	if code, _, errs := e.mote("", "update"); code == 0 || !strings.Contains(errs, "https") {
 		t.Errorf("plain http accepted: %s", errs)
+	}
+}
+
+// moteTTY runs mote with stdout on a real file, which ui treats as
+// colourable when CLICOLOR_FORCE is set (a bytes.Buffer never is).
+func (e *env) moteTTY(args ...string) (int, string) {
+	p := filepath.Join(e.t.TempDir(), "stdout")
+	f, err := os.Create(p)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	var errb bytes.Buffer
+	code := Main(args, strings.NewReader(""), f, &errb)
+	f.Close()
+	b, _ := os.ReadFile(p)
+	return code, string(b)
+}
+
+func TestRunHighlightsCodeOnlyForTerminals(t *testing.T) {
+	e := newEnv(t)
+	e.setup()
+	e.install("qwen3.5-0.8b")
+	dir := t.TempDir()
+	doc := filepath.Join(dir, "doc.txt")
+	os.WriteFile(doc, []byte("Invoice 7"), 0o644)
+
+	code, plain, errs := e.mote("", "run", "extract", doc)
+	if code != 0 {
+		t.Fatalf("extract: %d %s", code, errs)
+	}
+	if strings.Contains(plain, "\x1b[") {
+		t.Errorf("piped output is coloured: %q", plain)
+	}
+
+	t.Setenv("CLICOLOR_FORCE", "1")
+	code, coloured := e.moteTTY("run", "extract", doc)
+	if code != 0 {
+		t.Fatalf("extract with colour: %d", code)
+	}
+	if !strings.Contains(coloured, "\x1b[") {
+		t.Errorf("terminal output is not highlighted: %q", coloured)
+	}
+	if got := regexp.MustCompile(`\x1b\[[0-9;]*m`).ReplaceAllString(coloured, ""); got != plain {
+		t.Errorf("highlighting changed the text:\n got %q\nwant %q", got, plain)
+	}
+
+	// A file keeps the exact bytes: highlighting must not leak into -o.
+	out := filepath.Join(dir, "out.json")
+	if code, _, errs := e.mote("", "run", "extract", doc, "-o", out); code != 0 {
+		t.Fatalf("extract -o: %s", errs)
+	}
+	if b, _ := os.ReadFile(out); strings.Contains(string(b), "\x1b[") {
+		t.Errorf("colour written to file: %q", b)
 	}
 }
