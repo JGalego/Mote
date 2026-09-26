@@ -18,7 +18,27 @@ type UI struct {
 	w     io.Writer
 	color bool
 	live  bool // may redraw lines (spinners, bars)
+	file  *os.File
 	mu    sync.Mutex
+}
+
+// Width returns the terminal width in columns (80 when unknown).
+func (u *UI) Width() int {
+	if u.file != nil {
+		if w := termWidth(u.file); w > 0 {
+			return w
+		}
+	}
+	return 80
+}
+
+// fit shortens s to at most n runes, marking the cut with an ellipsis.
+func fit(s string, n int) string {
+	r := []rune(s)
+	if n <= 1 || len(r) <= n {
+		return s
+	}
+	return string(r[:n-1]) + "…"
 }
 
 // New inspects w and the environment to decide what decoration is safe.
@@ -38,6 +58,7 @@ func New(w io.Writer) *UI {
 		return u
 	}
 	u.live = tty
+	u.file = f
 	u.color = os.Getenv("NO_COLOR") == ""
 	return u
 }
@@ -143,8 +164,9 @@ func (u *UI) Spin(msg string) *Spinner {
 		defer t.Stop()
 		for i := 0; ; i++ {
 			u.mu.Lock()
-			fmt.Fprintf(u.w, "\r\x1b[2K%s %s %s", u.Accent(spinFrames[i%len(spinFrames)]), s.msg,
-				u.Dim(fmt.Sprintf("%.1fs", time.Since(s.start).Seconds())))
+			el := fmt.Sprintf("%.1fs", time.Since(s.start).Seconds())
+			msg := fit(s.msg, u.Width()-len(el)-4)
+			fmt.Fprintf(u.w, "\r\x1b[2K%s %s %s", u.Accent(spinFrames[i%len(spinFrames)]), msg, u.Dim(el))
 			u.mu.Unlock()
 			select {
 			case <-s.stop:
@@ -201,7 +223,6 @@ func (b *Bar) Set(done int64) {
 }
 
 func (b *Bar) line() string {
-	const width = 28
 	frac := 0.0
 	if b.total > 0 {
 		frac = float64(b.done) / float64(b.total)
@@ -209,23 +230,37 @@ func (b *Bar) line() string {
 	if frac > 1 {
 		frac = 1
 	}
-	fill := int(frac * width)
-	bar := strings.Repeat("━", fill)
-	rest := ""
-	if fill < width {
-		rest = "╸" + strings.Repeat("━", width-fill-1)
-	}
-	secs := time.Since(b.start).Seconds()
+	count := fmt.Sprintf("%d/%d MB", b.done>>20, b.total>>20)
 	speed := ""
-	if secs > 0.3 {
+	if secs := time.Since(b.start).Seconds(); secs > 0.3 {
 		rate := float64(b.done>>20) / secs
 		speed = fmt.Sprintf("  %.0f MB/s", rate)
 		if rate > 0 && b.done < b.total {
 			speed += fmt.Sprintf("  %ds left", int(float64((b.total-b.done)>>20)/rate))
 		}
 	}
-	return fmt.Sprintf("  %s %s%s %s%s", b.label, b.u.Accent(bar), b.u.Dim(rest),
-		fmt.Sprintf("%d/%d MB", b.done>>20, b.total>>20), b.u.Dim(speed))
+	// Keep the line narrower than the terminal: a wrapped line cannot be
+	// redrawn in place. Shrink the bar first, then the label, then drop speed.
+	cols := b.u.Width() - 1
+	label := b.label
+	width := 28
+	used := func() int { return 2 + len([]rune(label)) + 1 + width + 1 + len(count) + len(speed) }
+	for used() > cols && width > 10 {
+		width--
+	}
+	if used() > cols {
+		label = fit(label, len([]rune(label))-(used()-cols))
+	}
+	if used() > cols {
+		speed = ""
+	}
+	fill := int(frac * float64(width))
+	bar := strings.Repeat("━", fill)
+	rest := ""
+	if fill < width {
+		rest = "╸" + strings.Repeat("━", width-fill-1)
+	}
+	return fmt.Sprintf("  %s %s%s %s%s", label, b.u.Accent(bar), b.u.Dim(rest), count, b.u.Dim(speed))
 }
 
 // Finish prints the final state of the bar.

@@ -18,3 +18,18 @@ func enableVT(f *os.File) bool {
 	r, _, _ := k.NewProc("SetConsoleMode").Call(uintptr(h), uintptr(mode|vt))
 	return r != 0
 }
+
+// termWidth returns the console's visible column count, or 0 if unknown.
+func termWidth(f *os.File) int {
+	var info struct {
+		Size, Cursor             [2]int16
+		Attr                     uint16
+		Left, Top, Right, Bottom int16
+		MaxX, MaxY               int16
+	}
+	k := syscall.NewLazyDLL("kernel32.dll")
+	if r, _, _ := k.NewProc("GetConsoleScreenBufferInfo").Call(f.Fd(), uintptr(unsafe.Pointer(&info))); r == 0 {
+		return 0
+	}
+	return int(info.Right-info.Left) + 1
+}
