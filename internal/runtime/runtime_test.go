@@ -219,6 +219,11 @@ func TestLlamaSession(t *testing.T) {
 	if res.Text != `{"ok": true}` {
 		t.Errorf("schema request: %q", res.Text)
 	}
+	var streamed []string
+	res, err = s.Generate(context.Background(), Request{Prompt: "one two three", OnToken: func(t string) { streamed = append(streamed, t) }})
+	if err != nil || res.Text != "echo: one two three" || len(streamed) != 4 || res.OutputTokens != 20 {
+		t.Errorf("stream: %+v %q %v", res, streamed, err)
+	}
 	st := s.Close()
 	if st.StartupMS <= 0 {
 		t.Errorf("stats %+v", st)

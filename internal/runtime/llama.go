@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -29,6 +30,8 @@ type Request struct {
 	MaxTokens   int
 	Temperature float64
 	JSONSchema  json.RawMessage
+	// OnToken, when set, receives the reply incrementally as it is generated.
+	OnToken func(string)
 }
 
 // Result is the model output plus timing reported by the runtime.
@@ -213,9 +216,14 @@ func (s *server) Generate(ctx context.Context, req Request) (Result, error) {
 		msgs = append(msgs, map[string]any{"role": "system", "content": req.System})
 	}
 	msgs = append(msgs, map[string]any{"role": "user", "content": parts})
-	body := map[string]any{"messages": msgs, "temperature": req.Temperature, "stream": false}
+	body := map[string]any{"messages": msgs, "temperature": req.Temperature, "stream": req.OnToken != nil}
 	if req.MaxTokens > 0 {
 		body["max_tokens"] = req.MaxTokens
+	}
+	if len(req.JSONSchema) == 0 && len(req.Audio) == 0 {
+		// DRY penalises repeated token sequences; small models otherwise
+		// sometimes loop until the token limit.
+		body["dry_multiplier"] = 0.8
 	}
 	if len(req.JSONSchema) > 0 {
 		body["response_format"] = map[string]any{"type": "json_schema",
@@ -232,10 +240,14 @@ func (s *server) Generate(ctx context.Context, req Request) (Result, error) {
 		return Result{}, fmt.Errorf("llama-server: %w\n%s", err, tail(s.logPath, 10))
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
 	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		return Result{}, fmt.Errorf("llama-server: %s: %s", resp.Status, strings.TrimSpace(string(raw)))
 	}
+	if req.OnToken != nil {
+		return s.readStream(resp.Body, req.OnToken)
+	}
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
 	var out struct {
 		Choices []struct {
 			Message struct {
@@ -257,6 +269,56 @@ func (s *server) Generate(ctx context.Context, req Request) (Result, error) {
 		PromptTokens: out.Timings.PromptN, OutputTokens: out.Timings.PredictedN,
 		PromptMS: out.Timings.PromptMS, GenMS: out.Timings.PredictedMS,
 	}, nil
+}
+
+// readStream consumes a server-sent-events chat completion.
+func (s *server) readStream(r io.Reader, onToken func(string)) (Result, error) {
+	var res Result
+	var text strings.Builder
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 1<<20), 16<<20)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		data, ok := strings.CutPrefix(line, "data:")
+		if !ok {
+			continue
+		}
+		data = strings.TrimSpace(data)
+		if data == "[DONE]" {
+			break
+		}
+		var chunk struct {
+			Choices []struct {
+				Delta struct {
+					Content string `json:"content"`
+				} `json:"delta"`
+			} `json:"choices"`
+			Timings *struct {
+				PromptN     int     `json:"prompt_n"`
+				PromptMS    float64 `json:"prompt_ms"`
+				PredictedN  int     `json:"predicted_n"`
+				PredictedMS float64 `json:"predicted_ms"`
+			} `json:"timings"`
+		}
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			return Result{}, fmt.Errorf("llama-server: bad stream chunk: %.200s", data)
+		}
+		for _, c := range chunk.Choices {
+			if c.Delta.Content != "" {
+				text.WriteString(c.Delta.Content)
+				onToken(c.Delta.Content)
+			}
+		}
+		if t := chunk.Timings; t != nil {
+			res.PromptTokens, res.PromptMS = t.PromptN, t.PromptMS
+			res.OutputTokens, res.GenMS = t.PredictedN, t.PredictedMS
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return Result{}, fmt.Errorf("llama-server: %w", err)
+	}
+	res.Text = Clean(text.String(), s.model.OutputAfter)
+	return res, nil
 }
 
 // Clean strips reasoning blocks and model-specific prefixes from output.

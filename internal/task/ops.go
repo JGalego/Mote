@@ -113,8 +113,26 @@ func opGenerate(r *run, s Step) (Value, error) {
 	if err != nil {
 		return Value{}, err
 	}
+	stream := r.env.Stream != nil && s.As == "out" && !s.Each && s.Fences == "" && !wantJSON && m.OutputAfter == ""
 	call := func(req runtime.Request) (string, error) {
+		done := r.status("thinking with " + m.ID)
+		if stream {
+			first := true
+			req.OnToken = func(tok string) {
+				if first {
+					first = false
+					done(true)
+					done = func(bool) {}
+					tok = strings.TrimLeft(tok, " \n")
+				}
+				r.env.Stream(tok)
+			}
+		}
 		res, err := sess.Generate(r.ctx, req)
+		done(err == nil)
+		if stream && err == nil {
+			r.streamed = true
+		}
 		if err != nil {
 			return "", err
 		}
@@ -195,8 +213,10 @@ func opSpeak(r *run, s Step) (Value, error) {
 	if out == "" {
 		out = "speech.wav"
 	}
-	r.logf("synthesizing with %s", m.ID)
-	if _, err := b.Speak(r.ctx, m, files, text, out); err != nil {
+	done := r.status("speaking with " + m.ID)
+	_, err = b.Speak(r.ctx, m, files, text, out)
+	done(err == nil)
+	if err != nil {
 		return Value{}, err
 	}
 	return Value{Text: out, Files: []string{out}}, nil
@@ -246,7 +266,10 @@ func opAudio(r *run, s Step) (Value, error) {
 		return Value{}, err
 	}
 	out := filepath.Join(dir, "audio.wav")
-	if _, err := runTool(ffmpeg, "-v", "error", "-y", "-i", src, "-vn", "-ac", "1", "-ar", "16000", out); err != nil {
+	done := r.status("extracting audio with ffmpeg")
+	_, err = runTool(ffmpeg, "-v", "error", "-y", "-i", src, "-vn", "-ac", "1", "-ar", "16000", out)
+	done(err == nil)
+	if err != nil {
 		return Value{}, err
 	}
 	if st, err := os.Stat(out); err != nil || st.Size() <= 44 {
@@ -291,7 +314,10 @@ func opFrames(r *run, s Step) (Value, error) {
 	}
 	rate := strconv.FormatFloat(float64(n)/dur, 'f', 6, 64)
 	pattern := filepath.Join(dir, "frame_%03d.png")
-	if _, err := runTool(ffmpeg, "-v", "error", "-y", "-i", in.Files[0], "-vf", "fps="+rate, "-frames:v", strconv.Itoa(n), pattern); err != nil {
+	done := r.status(fmt.Sprintf("extracting %d frames with ffmpeg", n))
+	_, err = runTool(ffmpeg, "-v", "error", "-y", "-i", in.Files[0], "-vf", "fps="+rate, "-frames:v", strconv.Itoa(n), pattern)
+	done(err == nil)
+	if err != nil {
 		return Value{}, err
 	}
 	files, _ := filepath.Glob(filepath.Join(dir, "frame_*.png"))

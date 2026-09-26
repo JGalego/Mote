@@ -90,6 +90,7 @@ func server(args []string) int {
 				Content json.RawMessage `json:"content"`
 			} `json:"messages"`
 			ResponseFormat json.RawMessage `json:"response_format"`
+			Stream         bool            `json:"stream"`
 		}
 		json.NewDecoder(r.Body).Decode(&req)
 		var parts []struct {
@@ -118,6 +119,17 @@ func server(args []string) int {
 		}
 		if os.Getenv("MOTE_FAKE_ASR") != "" {
 			reply = "language English<asr_text>" + reply
+		}
+		timings := map[string]any{"prompt_n": 10, "prompt_ms": 5.0, "predicted_n": 20, "predicted_ms": 100.0}
+		if req.Stream {
+			w.Header().Set("Content-Type", "text/event-stream")
+			for _, word := range strings.SplitAfter(reply, " ") {
+				b, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"content": word}}}})
+				fmt.Fprintf(w, "data: %s\n\n", b)
+			}
+			b, _ := json.Marshal(map[string]any{"choices": []any{}, "timings": timings})
+			fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", b)
+			return
 		}
 		json.NewEncoder(w).Encode(map[string]any{
 			"choices": []any{map[string]any{"message": map[string]any{"role": "assistant", "content": reply}}},

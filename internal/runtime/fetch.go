@@ -16,16 +16,26 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 // Fetcher downloads files over HTTPS and verifies their SHA-256. Partial
 // downloads are resumed. Nothing downloaded is ever executed by the fetcher.
 type Fetcher struct {
 	Client   *http.Client
-	Progress io.Writer // optional, receives a single updating status line
+	Progress Progress // optional
 	// AllowHTTP permits plain HTTP to loopback addresses (tests only).
 	AllowHTTP bool
+}
+
+// Progress receives download progress; the CLI renders it as a bar.
+type Progress interface {
+	Start(label string, have, total int64) Tracker
+}
+
+// Tracker follows one download.
+type Tracker interface {
+	Set(done int64)
+	Finish(err error)
 }
 
 func (f Fetcher) client() *http.Client {
@@ -86,17 +96,27 @@ func (f Fetcher) Download(ctx context.Context, rawURL, dest, sum string, size in
 	if err != nil {
 		return err
 	}
-	pw := &progress{w: f.Progress, label: label, done: have, total: size}
+	pw := &progress{done: have}
+	if f.Progress != nil {
+		pw.t = f.Progress.Start(label, have, size)
+	}
 	_, err = io.Copy(out, io.TeeReader(io.LimitReader(resp.Body, size-have+1), pw))
-	pw.finish()
 	if cerr := out.Close(); err == nil {
 		err = cerr
 	}
-	if err != nil {
-		return fmt.Errorf("download %s: %w (partial file kept for resume)", label, err)
+	if err == nil {
+		err = VerifyFile(part, sum, size)
+		if err != nil {
+			os.Remove(part)
+		}
 	}
-	if err := VerifyFile(part, sum, size); err != nil {
-		os.Remove(part)
+	if pw.t != nil {
+		pw.t.Finish(err)
+	}
+	if err != nil {
+		if _, serr := os.Stat(part); serr == nil {
+			return fmt.Errorf("download %s: %w (partial file kept for resume)", label, err)
+		}
 		return fmt.Errorf("download %s: %w", label, err)
 	}
 	return os.Rename(part, dest)
@@ -124,25 +144,16 @@ func VerifyFile(p, sum string, size int64) error {
 }
 
 type progress struct {
-	w           io.Writer
-	label       string
-	done, total int64
-	last        time.Time
+	t    Tracker
+	done int64
 }
 
 func (p *progress) Write(b []byte) (int, error) {
 	p.done += int64(len(b))
-	if p.w != nil && time.Since(p.last) > 500*time.Millisecond {
-		p.last = time.Now()
-		fmt.Fprintf(p.w, "\r  %s  %d/%d MB", p.label, p.done>>20, p.total>>20)
+	if p.t != nil {
+		p.t.Set(p.done)
 	}
 	return len(b), nil
-}
-
-func (p *progress) finish() {
-	if p.w != nil {
-		fmt.Fprintf(p.w, "\r  %s  %d/%d MB\n", p.label, p.done>>20, p.total>>20)
-	}
 }
 
 // Extract unpacks a .tar.gz or .zip archive into dest. A single top-level

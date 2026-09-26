@@ -142,7 +142,16 @@ func (a *app) doctor() error {
 		if status == "FAIL" {
 			fails++
 		}
-		fmt.Fprintf(a.out, "%-4s  %-14s %s\n", status, what, detail)
+		o := a.uo
+		if !o.Color() {
+			fmt.Fprintf(a.out, "%-4s  %-14s %s\n", status, what, detail)
+			return
+		}
+		sym := map[string]string{"ok": o.OK(), "warn": o.Warn(), "FAIL": o.Fail()}[status]
+		if status != "ok" {
+			detail = map[string]func(string) string{"warn": o.Yellow, "FAIL": o.Red}[status](detail)
+		}
+		fmt.Fprintf(a.out, "%s %s %s\n", sym, o.Bold(pad(what, 14)), detail)
 	}
 	info := a.platform()
 	line("ok", "platform", describe(info, a.dataDir()))
@@ -184,7 +193,7 @@ func (a *app) doctor() error {
 			case !a.store().Installed(m):
 				line("warn", "model "+c, fmt.Sprintf("%s not downloaded (%s); `mote models pull %s`", m.ID, mb(m.Bytes()), m.ID))
 			case !ch.Meets:
-				line("warn", "model "+c, m.ID+": "+ch.Reason)
+				line("warn", "model "+c, fmt.Sprintf("%s (outside the %s profile's limits; see `mote models why %s`)", m.ID, a.cfg.Profile, c))
 			default:
 				line("ok", "model "+c, m.ID)
 			}
@@ -261,17 +270,24 @@ func (a *app) bench(ctx context.Context, args []string) error {
 		if serr := bench.Save(a.dataDir(), describe(a.platform(), a.dataDir()), entries); serr != nil {
 			return serr
 		}
-		fmt.Fprintf(a.out, "%-16s %9s %10s %9s %10s %7s\n", "MODEL", "STARTUP", "GEN TOK/S", "PEAK RSS", "LATENCY", "CHECKS")
+		o := a.uo
+		fmt.Fprintln(a.out, o.Bold(fmt.Sprintf("%-16s %9s %10s %9s %10s %7s", "MODEL", "STARTUP", "GEN TOK/S", "PEAK RSS", "LATENCY", "CHECKS")))
 		for _, e := range entries {
-			fmt.Fprintf(a.out, "%-16s %7.0fms %10.1f %6d MB %8.0fms %3d/%-3d\n", e.Model, e.StartupMS, e.TokensPerSec, e.PeakRSSMB, e.LatencyMS, e.Passed, e.Cases)
+			checks := fmt.Sprintf("%3d/%-3d", e.Passed, e.Cases)
+			if e.Passed == e.Cases {
+				checks = o.Green(checks)
+			} else {
+				checks = o.Yellow(checks)
+			}
+			fmt.Fprintf(a.out, "%s %7.0fms %10.1f %6d MB %8.0fms %s\n", o.Bold(pad(e.Model, 16)), e.StartupMS, e.TokensPerSec, e.PeakRSSMB, e.LatencyMS, checks)
 			for _, f := range e.Failures {
-				fmt.Fprintln(a.out, "    fail:", f)
+				fmt.Fprintln(a.out, "   ", o.Red("fail:"), f)
 			}
 			for _, s := range e.Skipped {
-				fmt.Fprintln(a.out, "    skip:", s)
+				fmt.Fprintln(a.out, "   ", o.Dim("skip: "+s))
 			}
 		}
-		fmt.Fprintf(a.out, "saved to %s; `mote tune` proposes config changes from these results\n", filepath.Join(a.dataDir(), "bench"))
+		fmt.Fprintln(a.out, o.Dim(fmt.Sprintf("saved to %s; `mote tune` proposes config changes from these results", filepath.Join(a.dataDir(), "bench"))))
 	}
 	return err
 }
@@ -301,7 +317,7 @@ func (a *app) tune(args []string) error {
 		if !ch.Pin {
 			action = "unpin (back to policy default)"
 		}
-		fmt.Fprintf(a.out, "%s: %s -> %s [%s]\n  %s\n", ch.Cap, ch.From, ch.To, action, ch.Reason)
+		fmt.Fprintf(a.out, "%s: %s %s %s %s\n  %s\n", a.uo.Accent(ch.Cap), ch.From, a.uo.Arrow(), a.uo.Bold(ch.To), a.uo.Dim("["+action+"]"), ch.Reason)
 	}
 	dir := filepath.Join(a.dataDir(), "proposals")
 	os.MkdirAll(dir, 0o755)

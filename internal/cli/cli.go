@@ -19,6 +19,7 @@ import (
 	"github.com/jgalego/mote/internal/platform"
 	mrt "github.com/jgalego/mote/internal/runtime"
 	"github.com/jgalego/mote/internal/task"
+	"github.com/jgalego/mote/internal/ui"
 	"github.com/jgalego/mote/registry"
 )
 
@@ -80,6 +81,7 @@ type app struct {
 	reg      *registry.Registry
 	info     *platform.Info
 	fetcher  mrt.Fetcher
+	ue, uo   *ui.UI // decorated stderr and stdout
 	regURL   string
 	tty      bool
 }
@@ -96,7 +98,8 @@ func Main(args []string, in io.Reader, out, errw io.Writer) int {
 			a.tty = true
 		}
 	}
-	a.fetcher = mrt.Fetcher{Progress: errw}
+	a.ue, a.uo = ui.New(errw), ui.New(out)
+	a.fetcher = mrt.Fetcher{Progress: barProgress{a.ue}}
 	a.cfg, a.cfgErr = config.Load(a.cfgDir)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -105,7 +108,11 @@ func Main(args []string, in io.Reader, out, errw io.Writer) int {
 	if err == nil {
 		return ExitOK
 	}
-	fmt.Fprintln(errw, "mote:", err)
+	if a.ue.Color() {
+		fmt.Fprintf(errw, "%s %s\n", a.ue.Fail(), err)
+	} else {
+		fmt.Fprintln(errw, "mote:", err)
+	}
 	var ue usageError
 	var me missingError
 	switch {
@@ -119,13 +126,13 @@ func Main(args []string, in io.Reader, out, errw io.Writer) int {
 
 func (a *app) dispatch(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		fmt.Fprint(a.out, usage)
+		a.usage()
 		return nil
 	}
 	cmd, rest := args[0], args[1:]
 	switch cmd {
 	case "help", "-h", "--help":
-		fmt.Fprint(a.out, usage)
+		a.usage()
 		return nil
 	case "version", "--version":
 		fmt.Fprintf(a.out, "mote %s (%s/%s, registry %s)\n", Version, runtime.GOOS, runtime.GOARCH, a.registry().Version)
@@ -290,7 +297,7 @@ func (a *app) ensure(ctx context.Context, m *registry.Model, allow bool) error {
 	if !allow {
 		return missingf("model %s (%s) is not downloaded; run `mote models pull %s`", m.ID, mb(size), m.ID)
 	}
-	fmt.Fprintf(a.err, "downloading %s (%s, %s) from %s\n", m.ID, mb(size), m.License, hostOf(missing[0].URL))
+	fmt.Fprintf(a.err, "%s downloading %s %s\n", a.ue.Arrow(), a.ue.Bold(m.ID), a.ue.Dim(fmt.Sprintf("(%s, %s, from %s)", mb(size), m.License, hostOf(missing[0].URL))))
 	return a.store().Pull(ctx, a.fetcher, m)
 }
 
@@ -389,6 +396,10 @@ func (a *app) run(ctx context.Context, args []string) error {
 		Stdin:   a.in,
 		Log:     a.err,
 		TempDir: filepath.Join(a.dataDir(), "tmp"),
+		Status:  a.status,
+	}
+	if out == "" {
+		env.Stream = func(tok string) { fmt.Fprint(a.out, tok) }
 	}
 	defer os.RemoveAll(env.TempDir)
 	res, err := t.Run(ctx, env, pos[1:], task.Options{Output: out, Apply: vals["--apply"] == "true"})
@@ -404,11 +415,38 @@ func (a *app) run(ctx context.Context, args []string) error {
 		if err := os.WriteFile(out, []byte(strings.TrimRight(res.Text, "\n")+"\n"), 0o644); err != nil {
 			return err
 		}
-		fmt.Fprintln(a.err, "wrote", out)
+		fmt.Fprintf(a.err, "%s wrote %s\n", a.ue.OK(), out)
+	case res.Streamed:
+		fmt.Fprintln(a.out)
 	default:
 		fmt.Fprintln(a.out, strings.TrimRight(res.Text, "\n"))
 	}
+	a.footer(res.Calls)
 	return nil
+}
+
+// footer prints a one-line summary of model usage on interactive stderr.
+func (a *app) footer(calls []task.Call) {
+	if !a.ue.Live() || len(calls) == 0 {
+		return
+	}
+	models := map[string]bool{}
+	var names []string
+	var tokens int
+	var ms float64
+	for _, c := range calls {
+		if !models[c.Model] {
+			models[c.Model] = true
+			names = append(names, c.Model)
+		}
+		tokens += c.Result.OutputTokens
+		ms += c.Result.GenMS
+	}
+	line := fmt.Sprintf("%s · %d tokens", strings.Join(names, " + "), tokens)
+	if ms > 0 {
+		line += fmt.Sprintf(" · %.1f tok/s", float64(tokens)/ms*1000)
+	}
+	fmt.Fprintln(a.err, a.ue.Dim(line+" · local CPU"))
 }
 
 func (a *app) tasks() error {
@@ -417,30 +455,31 @@ func (a *app) tasks() error {
 		return err
 	}
 	for _, t := range tasks {
-		fmt.Fprintf(a.out, "%-11s %-22s %s\n", t.ID, strings.Join(t.In, "+")+" -> "+t.Out, t.Summary)
-		fmt.Fprintf(a.out, "%-11s usage: mote run %s %s\n", "", t.ID, t.Usage())
+		o := a.uo
+		fmt.Fprintf(a.out, "%s %s %s\n", o.Bold(pad(t.ID, 11)), o.Accent(pad(strings.Join(t.In, "+")+" -> "+t.Out, 22)), t.Summary)
+		fmt.Fprintf(a.out, "%-11s %s\n", "", o.Dim("usage: mote run "+t.ID+" "+t.Usage()))
 		var needs []string
 		for _, c := range t.Caps() {
 			status := "not set up"
 			if a.cfgErr == nil {
 				if m, _, err := a.choose(c, a.cfg.Profile); err != nil {
-					status = "no model fits"
+					status = a.uo.Red("no model fits")
 				} else if a.store().Installed(m) {
-					status = m.ID
+					status = a.uo.Green(m.ID)
 				} else {
-					status = m.ID + ", not downloaded"
+					status = a.uo.Yellow(m.ID + ", not downloaded")
 				}
 			}
 			needs = append(needs, c+": "+status)
 		}
 		for _, tl := range t.Tools() {
 			if _, err := a.tool(tl); err == nil {
-				needs = append(needs, tl+": ok")
+				needs = append(needs, tl+": "+a.uo.Green("ok"))
 			} else {
-				needs = append(needs, tl+": missing")
+				needs = append(needs, tl+": "+a.uo.Yellow("missing"))
 			}
 		}
-		fmt.Fprintf(a.out, "%-11s needs: %s\n", "", strings.Join(needs, "; "))
+		fmt.Fprintf(a.out, "%-11s %s %s\n", "", a.uo.Dim("needs:"), strings.Join(needs, "; "))
 	}
 	return nil
 }
@@ -464,20 +503,21 @@ func (a *app) models(ctx context.Context, args []string) error {
 				used[m.ID] = append(used[m.ID], c)
 			}
 		}
-		fmt.Fprintf(a.out, "%-16s %-8s %-7s %-9s %-9s %-26s %s\n", "MODEL", "QUANT", "PARAMS", "DOWNLOAD", "RAM(EST)", "CAPABILITIES", "STATUS")
+		o := a.uo
+		fmt.Fprintln(a.out, o.Bold(fmt.Sprintf("%-16s %-8s %-7s %-9s %-9s %-26s %s", "MODEL", "QUANT", "PARAMS", "DOWNLOAD", "RAM(EST)", "CAPABILITIES", "STATUS")))
 		for i := range reg.Models {
 			m := &reg.Models[i]
-			status := "-"
+			status := o.Dim("-")
 			if a.store().Installed(m) {
-				status = "installed"
+				status = o.Green("installed")
 			}
 			if u := used[m.ID]; len(u) > 0 {
-				status += ", default for " + strings.Join(u, ",")
+				status += ", " + o.Cyan("default for "+strings.Join(u, ","))
 			}
-			fmt.Fprintf(a.out, "%-16s %-8s %-7s %-9s %-9s %-26s %s\n", m.ID, m.Quant, fmt.Sprintf("%.1fB", m.ParamsB),
-				mb(m.Bytes()), fmt.Sprintf("%d MB", m.RAMEstimate), strings.Join(m.Caps, ","), status)
+			fmt.Fprintf(a.out, "%s %-8s %-7s %-9s %-9s %s %s\n", o.Bold(pad(m.ID, 16)), m.Quant, fmt.Sprintf("%.1fB", m.ParamsB),
+				mb(m.Bytes()), fmt.Sprintf("%d MB", m.RAMEstimate), o.Accent(pad(strings.Join(m.Caps, ","), 26)), status)
 		}
-		fmt.Fprintf(a.out, "\nregistry %s, profile %s, runtime llama.cpp %s\n", reg.Version, a.cfg.Profile, reg.Runtime.Version)
+		fmt.Fprintln(a.out, o.Dim(fmt.Sprintf("\nregistry %s · profile %s · runtime llama.cpp %s", reg.Version, a.cfg.Profile, reg.Runtime.Version)))
 		return nil
 	case "pull":
 		if len(args) == 0 {
@@ -495,13 +535,13 @@ func (a *app) models(ctx context.Context, args []string) error {
 				}
 			}
 			if a.store().Installed(m) {
-				fmt.Fprintf(a.out, "%s already installed\n", m.ID)
+				fmt.Fprintf(a.out, "%s %s already installed\n", a.uo.OK(), m.ID)
 				continue
 			}
 			if err := a.ensure(ctx, m, true); err != nil {
 				return err
 			}
-			fmt.Fprintf(a.out, "%s installed (sha256 verified)\n", m.ID)
+			fmt.Fprintf(a.out, "%s %s installed %s\n", a.uo.OK(), a.uo.Bold(m.ID), a.uo.Dim("(sha256 verified)"))
 		}
 		return nil
 	case "rm", "remove":
@@ -543,7 +583,7 @@ func (a *app) models(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(a.out, "%s -> %s (profile %s, %d MB RAM detected)\n%s\n", c, m.ID, a.cfg.Profile, a.ramMB(), ch.Reason)
+		fmt.Fprintf(a.out, "%s %s %s %s\n%s\n", a.uo.Accent(c), a.uo.Arrow(), a.uo.Bold(m.ID), a.uo.Dim(fmt.Sprintf("(profile %s, %d MB RAM detected)", a.cfg.Profile, a.ramMB())), ch.Reason)
 		if g, ok := reg.Policy.Gates[c]; ok && g.Note != "" {
 			fmt.Fprintln(a.out, "note:", g.Note)
 		}

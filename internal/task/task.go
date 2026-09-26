@@ -77,6 +77,12 @@ type Env struct {
 	Stdin   io.Reader
 	Log     io.Writer
 	TempDir string
+	// Status, when set, is called when slow work starts; the returned func
+	// is called with the outcome when it ends. The CLI shows spinners.
+	Status func(msg string) func(ok bool)
+	// Stream, when set, receives the final answer as it is generated, for
+	// steps whose output needs no post-processing.
+	Stream func(token string)
 }
 
 // Options are per-run switches from the command line.
@@ -88,7 +94,8 @@ type Options struct {
 // Result is the final value plus model usage.
 type Result struct {
 	Value
-	Calls []Call
+	Calls    []Call
+	Streamed bool // the text was already written through Env.Stream
 }
 
 // Call records one model invocation, for reporting and benchmarks.
@@ -234,6 +241,7 @@ type run struct {
 	vars     map[string]Value
 	sessions map[string]runtime.Session
 	calls    []Call
+	streamed bool
 }
 
 // Run executes t with positional args.
@@ -276,7 +284,7 @@ func (t Task) Run(ctx context.Context, env Env, args []string, opt Options) (Res
 		}
 		r.vars[s.As] = v
 	}
-	return Result{Value: r.vars["out"], Calls: r.calls}, nil
+	return Result{Value: r.vars["out"], Calls: r.calls, Streamed: r.streamed}, nil
 }
 
 func (r *run) param(p Param, v string) (Value, error) {
@@ -335,13 +343,21 @@ func (r *run) session(capability string) (*registry.Model, runtime.Session, erro
 	if err != nil {
 		return nil, nil, err
 	}
-	r.logf("loading %s for %s", m.ID, capability)
+	done := r.status(fmt.Sprintf("loading %s for %s", m.ID, capability))
 	s, err := b.Open(r.ctx, m, files)
+	done(err == nil)
 	if err != nil {
 		return nil, nil, err
 	}
 	r.sessions[m.ID] = s
 	return m, s, nil
+}
+
+func (r *run) status(msg string) func(bool) {
+	if r.env.Status == nil {
+		return func(bool) {}
+	}
+	return r.env.Status(msg)
 }
 
 func (r *run) close() {

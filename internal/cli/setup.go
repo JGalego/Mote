@@ -25,7 +25,8 @@ func (p *prompter) ask(q, def string) string {
 	if p.yes {
 		return def
 	}
-	fmt.Fprintf(p.a.out, "%s [%s]: ", q, def)
+	o := p.a.uo
+	fmt.Fprintf(p.a.out, "%s %s %s: ", o.Ask(), o.Bold(q), o.Dim("["+def+"]"))
 	line, err := p.r.ReadString('\n')
 	line = strings.TrimSpace(line)
 	if err != nil && line == "" {
@@ -60,9 +61,15 @@ func (p *prompter) choose(q string, opts []string, def int) int {
 	if p.yes || len(opts) < 2 {
 		return def
 	}
-	fmt.Fprintln(p.a.out, q)
+	u := p.a.uo
+	fmt.Fprintf(p.a.out, "%s %s\n", u.Ask(), u.Bold(q))
 	for i, o := range opts {
-		fmt.Fprintf(p.a.out, "  %d) %s\n", i+1, o)
+		name, rest, _ := strings.Cut(o, " - ")
+		line := u.Cyan(name)
+		if rest != "" {
+			line += " " + u.Dim(rest)
+		}
+		fmt.Fprintf(p.a.out, "  %s %s\n", u.Accent(fmt.Sprintf("%d)", i+1)), line)
 	}
 	for {
 		n, err := strconv.Atoi(p.ask("choice", strconv.Itoa(def+1)))
@@ -121,7 +128,10 @@ func (a *app) setup(ctx context.Context, args []string) error {
 		return usagef("unknown profile %q (have %s)", cfg.Profile, strings.Join(reg.ProfileNames(), ", "))
 	}
 
-	fmt.Fprintf(a.out, "Detected: %s\n", describe(info, cfg.Data()))
+	if !p.yes || a.uo.Color() {
+		fmt.Fprint(a.out, a.uo.Banner("small models · local machines · useful work"))
+	}
+	fmt.Fprintf(a.out, "%s Detected: %s\n", a.uo.OK(), describe(info, cfg.Data()))
 	if info.RAMMB == 0 {
 		gb, _ := strconv.Atoi(p.ask("Could not detect RAM. How many GB does this machine have?", "8"))
 		if gb > 0 {
@@ -182,7 +192,7 @@ func (a *app) setup(ctx context.Context, args []string) error {
 	if changed, err := config.Save(a.cfgDir, cfg, "setup"); err != nil {
 		return err
 	} else if changed {
-		fmt.Fprintf(a.out, "Saved %s\n", config.Path(a.cfgDir))
+		fmt.Fprintf(a.out, "%s Saved %s\n", a.uo.OK(), a.uo.Dim(config.Path(a.cfgDir)))
 	}
 	a.cfg, a.cfgErr = cfg, nil
 
@@ -193,7 +203,7 @@ func (a *app) setup(ctx context.Context, args []string) error {
 		}
 		st := a.store()
 		if _, err := mrt.FindLlama("", st, reg.Runtime); err != nil {
-			fmt.Fprintf(a.out, "Installing llama.cpp %s (%s, MIT) from %s\n", reg.Runtime.Version, mb(asset.Size), hostOf(asset.URL))
+			fmt.Fprintf(a.out, "%s Installing llama.cpp %s %s\n", a.uo.Arrow(), reg.Runtime.Version, a.uo.Dim(fmt.Sprintf("(%s, MIT, from %s)", mb(asset.Size), hostOf(asset.URL))))
 			if _, err := st.InstallRuntime(ctx, a.fetcher, reg.Runtime, asset); err != nil {
 				return err
 			}
@@ -215,10 +225,10 @@ func (a *app) setup(ctx context.Context, args []string) error {
 	}
 	for _, t := range []string{"ffmpeg", "git"} {
 		if _, err := a.tool(t); err != nil {
-			fmt.Fprintf(a.out, "Optional: %s not found; audio/video tasks need ffmpeg; git lets `patch` skip ignored files (%s).\n", t, installHint(t))
+			fmt.Fprintf(a.out, "%s Optional: %s not found; audio/video tasks need ffmpeg; git lets `patch` skip ignored files (%s).\n", a.uo.Warn(), t, installHint(t))
 		}
 	}
-	fmt.Fprintln(a.out, "Ready. Try: mote run chat \"hello\"   (mote tasks lists everything)")
+	fmt.Fprintf(a.out, "%s %s Try %s %s\n", a.uo.OK(), a.uo.Bold("Ready."), a.uo.Cyan(`mote run chat "hello"`), a.uo.Dim("(mote tasks lists everything)"))
 	return nil
 }
 
