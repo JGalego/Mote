@@ -17,7 +17,11 @@ for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 wi
     -o "$work/$bin" ./cmd/mote
   cp LICENSE README.md "$work/"
   if [ "$os" = windows ]; then
-    (cd "$work" && zip -q -X "mote_${os}_${arch}.zip" "$bin" LICENSE README.md)
+    if command -v zip >/dev/null 2>&1; then
+      (cd "$work" && zip -q -X "mote_${os}_${arch}.zip" "$bin" LICENSE README.md)
+    else
+      (cd "$work" && 7z a -tzip -bso0 "mote_${os}_${arch}.zip" "$bin" LICENSE README.md)
+    fi
     mv "$work/mote_${os}_${arch}.zip" "$out/"
   else
     tar -C "$work" -czf "$out/mote_${os}_${arch}.tar.gz" "$bin" LICENSE README.md
