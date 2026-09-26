@@ -115,7 +115,7 @@ func server(args []string) int {
 			reply = "=== hello.txt ===\nhello, world\n"
 		}
 		if len(req.ResponseFormat) > 0 {
-			reply = `{"ok": true}`
+			reply = schemaReply(req.ResponseFormat, strings.Join(text, " "))
 		}
 		if os.Getenv("MOTE_FAKE_ASR") != "" {
 			reply = "language English<asr_text>" + reply
@@ -138,6 +138,43 @@ func server(args []string) int {
 	})
 	http.Serve(ln, mux)
 	return 0
+}
+
+// schemaReply answers a schema-constrained request. Properties with an enum
+// are answered with whichever value the prompt mentions, falling back to the
+// first: enough for routing, where the reply must be one of the task ids.
+func schemaReply(format json.RawMessage, prompt string) string {
+	var f struct {
+		JSONSchema struct {
+			Schema struct {
+				Properties map[string]struct {
+					Enum []string `json:"enum"`
+				} `json:"properties"`
+			} `json:"schema"`
+		} `json:"json_schema"`
+	}
+	if err := json.Unmarshal(format, &f); err != nil {
+		return `{"ok": true}`
+	}
+	out := map[string]any{}
+	for name, p := range f.JSONSchema.Schema.Properties {
+		if len(p.Enum) == 0 {
+			continue
+		}
+		pick := p.Enum[0]
+		for _, v := range p.Enum {
+			if strings.Contains(prompt, v) {
+				pick = v
+				break
+			}
+		}
+		out[name] = pick
+	}
+	if len(out) == 0 {
+		return `{"ok": true}`
+	}
+	b, _ := json.Marshal(out)
+	return string(b)
 }
 
 func tts(args []string) int {

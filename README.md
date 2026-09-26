@@ -34,6 +34,7 @@ mote runs X-to-Y AI tasks (text, code, images, audio, video, files) on your CPU 
   - [convert](#convert---)
   - [patch](#patch---)
   - [chained](#chained-)
+  - [chosen](#chosen-)
   - [spoken](#spoken-)
   - [your own](#your-own-)
 - [How it works](#how-it-works)
@@ -79,6 +80,7 @@ In a clone, `go install ./cmd/mote` does the same into `$(go env GOPATH)/bin`. `
 | `mote setup [--profile P] [--yes]` | Install the runtime and the models for a profile (`small`, `balanced`, `quality`) |
 | `mote run TASK [ARGS...]` | Run a task, e.g. `mote run chat "Explain what a mutex is"`; `-o FILE` writes the output, `--model ID` overrides the model, `--apply` writes `patch` changes |
 | `mote pipe "A \| B \| !cmd"` | Chain tasks in one process, each stage receiving the last one's value: `{}` or `-` places it, `!` runs a shell command |
+| `mote do "REQUEST"` | Pick the task that fits a request written in plain words and run it; `--dry-run` shows the choice without running |
 | `mote listen [TASK]` | Wait for a wake word on the microphone, then run what you say next (never listens unless you start it) |
 | `mote tasks` | List the tasks, their arguments and what each one needs |
 | `mote models [pull\|rm\|why\|verify]` | Show models, sizes and which are in use; fetch, remove, explain or re-verify them |
@@ -175,6 +177,22 @@ mote pipe "frames clip.mp4 3 | describe | !tee notes.txt"
 Each stage receives the previous stage's value: `{}` inside an argument or a bare `-` says where it goes, and with neither it fills the first argument you left out. Several files fan out into one run per file. A stage starting with `!` is a shell command reading that value on stdin, so ordinary tools mix in.
 
 Plain shell pipes still work too (`mote run video clip.mp4 | mote run chat -`), at the cost of reloading a model per command.
+
+### chosen 🎯
+
+`mote do` reads a request in plain words, picks the task that fits and runs
+it. The text model makes the choice, constrained by a JSON schema to a real
+task id, so it cannot invent one:
+
+```sh
+mote do "explain what a mutex is"
+mote do "summarise meeting.m4a in three bullets"
+mote do "what is on the sign in photo.jpg" --dry-run
+```
+
+Words naming a file or directory that exists fill the task's file arguments;
+what is left becomes its text argument. `--dry-run` prints the `mote run`
+command it chose without running it.
 
 ### spoken 🎤
 
