@@ -418,6 +418,20 @@ func (a *app) run(ctx context.Context, args []string) error {
 		fmt.Fprintf(a.err, "%s wrote %s\n", a.ue.OK(), out)
 	case res.Streamed:
 		fmt.Fprintln(a.out)
+	case t.Out == "diff" && a.uo.Color():
+		for _, l := range strings.Split(strings.TrimRight(res.Text, "\n"), "\n") {
+			switch {
+			case strings.HasPrefix(l, "+++"), strings.HasPrefix(l, "---"):
+				l = a.uo.Bold(l)
+			case strings.HasPrefix(l, "+"):
+				l = a.uo.Green(l)
+			case strings.HasPrefix(l, "-"):
+				l = a.uo.Red(l)
+			case strings.HasPrefix(l, "@@"):
+				l = a.uo.Cyan(l)
+			}
+			fmt.Fprintln(a.out, l)
+		}
 	default:
 		fmt.Fprintln(a.out, strings.TrimRight(res.Text, "\n"))
 	}
