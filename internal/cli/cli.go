@@ -67,7 +67,7 @@ Usage:
   mote run TASK [ARGS...] [-o OUTPUT] [--apply] [--model ID] [--profile P]
   mote pipe "TASK ARGS | TASK ARGS | sh: COMMAND" [-o OUTPUT] [--trace] [--model ID]
   mote do "REQUEST" [-o OUTPUT] [--apply] [--dry-run] [--plan [--trace]] [--yes] [--model ID] [--profile P]
-  mote agent "GOAL" [-o OUTPUT] [--tools a,b] [--mcp SERVER,...] [--steps N] [--allow-sh] [--yes] [--model ID]
+  mote agent "GOAL" [-o OUTPUT] [--tools a,b] [--mcp SERVER,...] [--steps N] [--allow-sh [--sandbox auto|on|off] [--sandbox-net]] [--yes] [--model ID]
   mote mcp [tools [NAME...]]
   mote listen [TASK] [--wake PHRASE] [--device D] [--chunk SECONDS] [--once]
   mote remember "FACT" | mote forget N|--all|--history | mote memory [search "Q"]

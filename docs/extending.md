@@ -11,6 +11,7 @@ internal/task         tasks.json pipelines and the ops they use
 internal/bench        local benchmark cases, results, tuning proposals
 internal/memory       facts, history and search over past exchanges
 internal/mcp          a client for local MCP servers (stdio JSON-RPC)
+internal/sandbox      runs the agent's shell commands under bwrap or sandbox-exec
 internal/cli          commands and the setup wizard
 install/              install.sh (Linux/macOS), install.ps1 (Windows)
 ```
@@ -50,7 +51,10 @@ it runs: a short list of catastrophic commands is refused outright, a list
 of read-only programs (with the options that make them write, like
 `find -delete`, excluded) runs under `--yes`, and the rest is asked about.
 It reads command lines as text, so it fails safe but is not a security
-boundary.
+boundary. That is `internal/sandbox`: when bwrap (Linux) or sandbox-exec
+(macOS) works, commands run with only the working directory writable, home
+hidden and no network, and `--yes` then approves writes as well. Its tests
+run real commands in the sandbox and skip where none is available.
 
 **A tool for the agent** is a task, which is how local programs get there
 too, or an MCP server listed in `mcp.json`. `mote agent` offers each one

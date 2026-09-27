@@ -16,6 +16,7 @@ import (
 
 	"github.com/jgalego/mote/internal/mcp"
 	mrt "github.com/jgalego/mote/internal/runtime"
+	"github.com/jgalego/mote/internal/sandbox"
 	"github.com/jgalego/mote/internal/task"
 )
 
@@ -175,11 +176,21 @@ func positional(t task.Task, named map[string]string) ([]string, error) {
 
 // shellTool runs a command line the model wrote. It exists only when the
 // user passes --allow-sh, and gate decides whether each command runs.
-func (a *app) shellTool(gate func(cmd string) error) agentTool {
+func (a *app) shellTool(gate func(cmd string) error, box shellBox) agentTool {
+	summary := "Run a shell command and read its output"
+	if box.sb.Available() {
+		// Told up front, the model does not spend steps finding out that
+		// it cannot write elsewhere or reach the network.
+		summary += " (sandboxed: it can write only in the working directory"
+		if !box.net {
+			summary += ", and has no network"
+		}
+		summary += ")"
+	}
 	return agentTool{
 		id:        "sh",
 		signature: "sh(command)",
-		summary:   "Run a shell command and read its output",
+		summary:   summary,
 		examples:  []string{"list the files here", "count the lines in a file"},
 		schema:    object(prop{"command", map[string]any{"type": "string"}}),
 		asks:      true,
@@ -199,7 +210,7 @@ func (a *app) shellTool(gate func(cmd string) error) agentTool {
 			if runtime.GOOS == "windows" {
 				shell, flag = "cmd", "/c"
 			}
-			cmd := exec.CommandContext(ctx, shell, flag, args.Command)
+			cmd := box.sb.Command(ctx, box.dir, box.net, shell, flag, args.Command)
 			out := &cappedBuffer{max: 64 << 10}
 			cmd.Stdout, cmd.Stderr = out, out
 			err := cmd.Run()
@@ -216,6 +227,14 @@ func (a *app) shellTool(gate func(cmd string) error) agentTool {
 			return text, nil
 		},
 	}
+}
+
+// shellBox is where the agent's shell commands run: a sandbox, when there
+// is one, around the working directory.
+type shellBox struct {
+	sb  sandbox.Sandbox
+	dir string
+	net bool
 }
 
 // cappedBuffer keeps the first max bytes written to it.
@@ -344,7 +363,7 @@ func canonical(raw json.RawMessage) string {
 // unless named) and every tool of the MCP servers started with --mcp. A
 // --tools list names tasks, MCP tools (server.tool) or whole servers, and
 // sh, which also needs --allow-sh; --allow-sh alone adds it.
-func (a *app) agentTools(tasks []task.Task, names string, allowSh bool, env task.Env, ask func(string) bool, gate func(string) error, external []agentTool) ([]agentTool, error) {
+func (a *app) agentTools(tasks []task.Task, names string, allowSh bool, env task.Env, ask func(string) bool, gate func(string) error, box shellBox, external []agentTool) ([]agentTool, error) {
 	var tools []agentTool
 	if names == "" {
 		for _, t := range routable(tasks) {
@@ -388,7 +407,7 @@ func (a *app) agentTools(tasks []task.Task, names string, allowSh bool, env task
 		}
 	}
 	if allowSh {
-		tools = append(tools, a.shellTool(gate))
+		tools = append(tools, a.shellTool(gate, box))
 	}
 	// The same tool named twice, as itself and through its server, is
 	// offered once.
@@ -410,14 +429,14 @@ func (a *app) agentTools(tasks []task.Task, names string, allowSh bool, env task
 // agent implements `mote agent`.
 func (a *app) agent(ctx context.Context, args []string) error {
 	vals, pos, err := flags(args,
-		[]string{"-o", "--output", "--model", "--profile", "--tools", "--steps", "--mcp"},
-		[]string{"--allow-sh", "--yes", "-y"})
+		[]string{"-o", "--output", "--model", "--profile", "--tools", "--steps", "--mcp", "--sandbox"},
+		[]string{"--allow-sh", "--yes", "-y", "--sandbox-net"})
 	if err != nil {
 		return err
 	}
 	goal := strings.TrimSpace(strings.Join(pos, " "))
 	if goal == "" {
-		return usagef(`usage: mote agent "GOAL" [--tools a,b] [--mcp SERVER,...] [--steps N] [--allow-sh] [--yes]`)
+		return usagef(`usage: mote agent "GOAL" [--tools a,b] [--mcp SERVER,...] [--steps N] [--allow-sh [--sandbox auto|on|off] [--sandbox-net]] [--yes]`)
 	}
 	steps := defaultAgentSteps
 	if v := vals["--steps"]; v != "" {
@@ -426,6 +445,10 @@ func (a *app) agent(ctx context.Context, args []string) error {
 		}
 	}
 	allowSh := vals["--allow-sh"] == "true"
+	sbMode := firstNonEmpty(vals["--sandbox"], "auto")
+	if sbMode != "auto" && sbMode != "on" && sbMode != "off" {
+		return usagef("--sandbox is auto, on or off")
+	}
 	yes := vals["--yes"] == "true" || vals["-y"] == "true"
 	if allowSh && !yes && !a.tty {
 		return usagef("sh asks before running each command, and stdin is not a terminal; pass --yes to run them without asking")
@@ -455,6 +478,27 @@ func (a *app) agent(ctx context.Context, args []string) error {
 	env.Memory = remembered
 	env.Stdin = nil // a tool's "-" is text, not a request to read the terminal
 
+	wd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	// The shell runs in a sandbox when the system has one: the working
+	// directory is writable, home is hidden and the network is off.
+	box := shellBox{dir: wd, net: vals["--sandbox-net"] == "true"}
+	if allowSh && sbMode != "off" {
+		box.sb = sandbox.Detect(ctx, exec.LookPath)
+		if !box.sb.Available() && sbMode == "on" {
+			return missingf("--sandbox on needs bwrap (Linux) or sandbox-exec (macOS), and neither works here")
+		}
+	}
+	if allowSh {
+		note := "sh: " + box.sb.Describe(wd, box.net)
+		if !box.sb.Available() {
+			note += "; commands that are not read-only are asked about"
+		}
+		fmt.Fprintf(a.err, "%s\n", a.ue.Dim(note))
+	}
+
 	answers := bufio.NewReader(a.in)
 	prompt := func(what, why string) bool {
 		if why != "" {
@@ -469,14 +513,15 @@ func (a *app) agent(ctx context.Context, args []string) error {
 	// --yes answers for the user, who named those tools.
 	ask := func(call string) bool { return yes || prompt(call, "") }
 	// gate decides whether a command the model wrote runs. Blocked ones
-	// never do. --yes approves only read-only ones, since the model, not
-	// the user, chose the command.
+	// never do. --yes approves read-only ones, since the model, not the
+	// user, chose the command; in a sandbox, where a command can change
+	// only the working directory, it approves the rest too.
 	gate := func(cmd string) error {
 		v := classifyShell(cmd)
 		switch {
 		case v.blocked:
 			return fmt.Errorf("blocked: %s; mote never runs this. Find another way, or finish", v.reason)
-		case yes && v.readOnly:
+		case yes && (v.readOnly || box.sb.Available()):
 			return nil
 		case !a.tty:
 			return fmt.Errorf("not run: %s, and there is no one to ask. With --yes, mote runs only read-only commands on its own", v.reason)
@@ -497,7 +542,7 @@ func (a *app) agent(ctx context.Context, args []string) error {
 			}
 		}()
 	}
-	tools, err := a.agentTools(tasks, vals["--tools"], allowSh, env, ask, gate, external)
+	tools, err := a.agentTools(tasks, vals["--tools"], allowSh, env, ask, gate, box, external)
 	if err != nil {
 		return err
 	}
@@ -513,10 +558,6 @@ func (a *app) agent(ctx context.Context, args []string) error {
 		byID[t.id] = t
 	}
 
-	wd, err := os.Getwd()
-	if err != nil {
-		return err
-	}
 	system := agentSystem
 	if remembered != "" {
 		system = remembered + "\n\n" + system

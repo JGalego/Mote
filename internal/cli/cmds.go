@@ -17,6 +17,7 @@ import (
 	"github.com/jgalego/mote/internal/bench"
 	"github.com/jgalego/mote/internal/config"
 	mrt "github.com/jgalego/mote/internal/runtime"
+	"github.com/jgalego/mote/internal/sandbox"
 	"github.com/jgalego/mote/internal/task"
 	"github.com/jgalego/mote/registry"
 )
@@ -221,6 +222,12 @@ func (a *app) doctor() error {
 		} else {
 			line("warn", t, err.Error())
 		}
+	}
+	// Only mote agent --allow-sh uses it, so a missing one is a warning.
+	if sb := sandbox.Detect(context.Background(), exec.LookPath); sb.Available() {
+		line("ok", "sandbox", string(sb.Kind)+" ("+sb.Prog+"), for the agent's shell")
+	} else {
+		line("warn", "sandbox", "none; the agent's shell runs unsandboxed (install bubblewrap on Linux)")
 	}
 	if fails > 0 {
 		return fmt.Errorf("%d problem(s) found", fails)

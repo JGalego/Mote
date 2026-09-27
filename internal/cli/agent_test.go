@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -138,7 +139,7 @@ func TestAgentToolsChoice(t *testing.T) {
 		return strings.Join(out, ",")
 	}
 
-	tools, err := a.agentTools(tasks, "", false, task.Env{}, ask, nil, nil)
+	tools, err := a.agentTools(tasks, "", false, task.Env{}, ask, nil, shellBox{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,11 +147,11 @@ func TestAgentToolsChoice(t *testing.T) {
 	if !strings.Contains(got, "chat") || strings.Contains(got, "speak") || strings.Contains(got, "convert") || strings.Contains(got, "sh") {
 		t.Errorf("default tools %s: tasks writing files and sh should be left out", got)
 	}
-	tools, _ = a.agentTools(tasks, "", true, task.Env{}, ask, nil, nil)
+	tools, _ = a.agentTools(tasks, "", true, task.Env{}, ask, nil, shellBox{}, nil)
 	if !strings.Contains(ids(tools), ",sh") {
 		t.Errorf("--allow-sh did not add sh: %s", ids(tools))
 	}
-	tools, err = a.agentTools(tasks, "code, chat,chat", false, task.Env{}, ask, nil, nil)
+	tools, err = a.agentTools(tasks, "code, chat,chat", false, task.Env{}, ask, nil, shellBox{}, nil)
 	if err != nil || ids(tools) != "chat,code" {
 		t.Errorf("--tools: %s %v", ids(tools), err)
 	}
@@ -160,7 +161,7 @@ func TestAgentToolsChoice(t *testing.T) {
 		"convert":  "needs -o",
 		",":        "no tools",
 	} {
-		if _, err := a.agentTools(tasks, names, false, task.Env{}, ask, nil, nil); err == nil || !strings.Contains(err.Error(), want) {
+		if _, err := a.agentTools(tasks, names, false, task.Env{}, ask, nil, shellBox{}, nil); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("--tools %q: %v, want %q", names, err, want)
 		}
 	}
@@ -518,5 +519,72 @@ func TestDoConfirmsTasksMarkedAsks(t *testing.T) {
 	}
 	if _, err := os.Stat(marker); err != nil {
 		t.Error("--yes did not run it")
+	}
+}
+
+func TestAgentSaysWhetherTheShellIsSandboxed(t *testing.T) {
+	e := agentEnv(t) // PATH is empty, so no sandbox can be found
+	done := `{"thought":"t","action":{"tool":"finish","args":{"answer":"ok"}}}`
+	script(t, done)
+	_, _, errs := e.mote("", "agent", "--allow-sh", "--yes", "x")
+	if !strings.Contains(errs, "sh: not sandboxed; commands that are not read-only are asked about") {
+		t.Errorf("no sandbox note:\n%s", errs)
+	}
+	if code, _, errs := e.mote("", "agent", "--allow-sh", "--yes", "--sandbox", "on", "x"); code != ExitMissing || !strings.Contains(errs, "bwrap") {
+		t.Errorf("--sandbox on without one: %d %s", code, errs)
+	}
+	if code, _, _ := e.mote("", "agent", "--allow-sh", "--sandbox", "maybe", "x"); code != ExitUsage {
+		t.Errorf("bad --sandbox: %d", code)
+	}
+	// Without sh there is nothing to sandbox and nothing to say.
+	if _, _, errs := e.mote("", "agent", "--tools", "chat", "x"); strings.Contains(errs, "sandbox") {
+		t.Errorf("sandbox mentioned without sh:\n%s", errs)
+	}
+}
+
+func TestAgentShellInARealSandbox(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("exercised with bwrap; the macOS profile is tested in internal/sandbox")
+	}
+	bwrap, err := exec.LookPath("bwrap")
+	if err != nil {
+		t.Skip("bwrap is not installed")
+	}
+	pkg, _ := os.Getwd()
+	outside, err := os.MkdirTemp(pkg, "outside-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(outside) })
+	e := agentEnv(t)
+	t.Setenv("PATH", filepath.Dir(bwrap))
+	work := t.TempDir()
+	t.Chdir(work)
+
+	write := `{"thought":"t","action":{"tool":"sh","args":{"command":"echo hi > made.txt"}}}`
+	escape := `{"thought":"t","action":{"tool":"sh","args":{"command":"echo hi > ` + filepath.Join(outside, "escaped") + `"}}}`
+	done := `{"thought":"t","action":{"tool":"finish","args":{"answer":"ok"}}}`
+	log := script(t, write, escape, done)
+	code, _, errs := e.mote("", "agent", "--allow-sh", "--yes", "--tools", "chat", "x")
+	if code == ExitMissing && strings.Contains(errs, "bwrap") {
+		t.Skip("bwrap is installed but cannot create a sandbox here")
+	}
+	if code != 0 || !strings.Contains(errs, "sh: sandboxed with bwrap: writes only in "+work) {
+		t.Fatalf("agent: %d\n%s", code, errs)
+	}
+	// In a sandbox, --yes lets a command write, but only where it may.
+	if b, err := os.ReadFile(filepath.Join(work, "made.txt")); err != nil || string(b) != "hi\n" {
+		t.Errorf("the write in the working directory: %q %v", b, err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "escaped")); err == nil {
+		t.Error("a write outside the working directory got through")
+	}
+	steps := constrained(t, log)
+	if !strings.Contains(steps[0]["prompt"].(string), "sandboxed: it can write only in the working directory, and has no network") {
+		t.Error("the model was not told about the sandbox")
+	}
+	// Read-only, or not there at all when it lies in the hidden home.
+	if p := steps[2]["prompt"].(string); !strings.Contains(p, "Observation: error:") || !strings.Contains(p, "cannot create") {
+		t.Errorf("the failed escape did not come back:\n%s", steps[2]["prompt"])
 	}
 }
