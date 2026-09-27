@@ -381,27 +381,9 @@ func (a *app) update(ctx context.Context, args []string) error {
 	if len(pos) > 0 {
 		return usagef("usage: mote update [--check]")
 	}
-	u, err := url.Parse(a.regURL)
-	if err != nil || (u.Scheme != "https" && !(u.Scheme == "http" && (u.Hostname() == "127.0.0.1" || u.Hostname() == "localhost"))) {
-		return fmt.Errorf("registry URL must be https: %s", a.regURL)
-	}
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, a.regURL, nil)
-	req.Header.Set("User-Agent", "mote/"+version())
-	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
-	if err != nil {
-		return fmt.Errorf("fetch registry: %w (nothing changed)", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("fetch registry: %s (nothing changed)", resp.Status)
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	next, body, err := a.fetchRegistry(ctx)
 	if err != nil {
 		return err
-	}
-	next, err := registry.Parse(body)
-	if err != nil {
-		return fmt.Errorf("downloaded registry rejected, keeping %s: %w", a.registry().Version, err)
 	}
 	cur := a.registry()
 	if !registry.Newer(next.Version, cur.Version) {
@@ -433,6 +415,44 @@ func (a *app) update(ctx context.Context, args []string) error {
 	if vals["--check"] == "true" {
 		return nil
 	}
+	if err := a.adoptRegistry(ctx, cur, next, body); err != nil {
+		return err
+	}
+	fmt.Fprintln(a.out, "updated; the previous registry is kept as models.prev.json. New mote releases: re-run the installer.")
+	return nil
+}
+
+// fetchRegistry downloads and validates the published registry without
+// installing it.
+func (a *app) fetchRegistry(ctx context.Context) (*registry.Registry, []byte, error) {
+	u, err := url.Parse(a.regURL)
+	if err != nil || (u.Scheme != "https" && !(u.Scheme == "http" && (u.Hostname() == "127.0.0.1" || u.Hostname() == "localhost"))) {
+		return nil, nil, fmt.Errorf("registry URL must be https: %s", a.regURL)
+	}
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, a.regURL, nil)
+	req.Header.Set("User-Agent", "mote/"+version())
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	if err != nil {
+		return nil, nil, fmt.Errorf("fetch registry: %w (nothing changed)", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, nil, fmt.Errorf("fetch registry: %s (nothing changed)", resp.Status)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil {
+		return nil, nil, err
+	}
+	next, err := registry.Parse(body)
+	if err != nil {
+		return nil, nil, fmt.Errorf("downloaded registry rejected, keeping %s: %w", a.registry().Version, err)
+	}
+	return next, body, nil
+}
+
+// adoptRegistry installs a fetched registry, keeping the previous one as
+// models.prev.json, and the llama.cpp build it pins when mote manages it.
+func (a *app) adoptRegistry(ctx context.Context, cur, next *registry.Registry, body []byte) error {
 	path := a.userRegistryPath()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -453,6 +473,5 @@ func (a *app) update(ctx context.Context, args []string) error {
 			}
 		}
 	}
-	fmt.Fprintln(a.out, "updated; the previous registry is kept as models.prev.json. New mote releases: re-run the installer.")
 	return nil
 }

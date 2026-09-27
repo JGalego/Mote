@@ -72,7 +72,7 @@ Usage:
   mote listen [TASK] [--wake PHRASE] [--device D] [--chunk SECONDS] [--once]
   mote remember "FACT" | mote forget N|--all|--history | mote memory [search "Q"]
   mote tasks
-  mote models [list | pull ID|CAP... | rm ID | why CAP | verify]
+  mote models [list | pull ID|CAP...|--all|--missing | upgrade [--check] [--prune] | rm ID | why CAP | verify]
   mote bench [--full] [--model ID]
   mote tune [--apply]
   mote doctor
@@ -745,10 +745,23 @@ func (a *app) models(ctx context.Context, args []string) error {
 		fmt.Fprintln(a.out, o.Dim(fmt.Sprintf("\nregistry %s · profile %s · runtime llama.cpp %s", reg.Version, a.cfg.Profile, reg.Runtime.Version)))
 		return nil
 	case "pull":
-		if len(args) == 0 {
-			return usagef("usage: mote models pull ID|CAPABILITY...")
+		vals, pos, err := flags(args, nil, []string{"--all", "--missing", "--yes", "-y"})
+		if err != nil {
+			return err
 		}
-		for _, name := range args {
+		all, missing := vals["--all"] == "true", vals["--missing"] == "true"
+		if (len(pos) == 0) == !(all || missing) || (all && missing) {
+			return usagef("usage: mote models pull ID|CAPABILITY... | --all | --missing [--yes]")
+		}
+		yes := vals["--yes"] == "true" || vals["-y"] == "true"
+		if all {
+			return a.pullMany(ctx, a.pullable(), nil, yes)
+		}
+		if missing {
+			ms, _ := a.wanted()
+			return a.pullMany(ctx, ms, nil, yes)
+		}
+		for _, name := range pos {
 			m, ok := reg.Model(name)
 			if !ok {
 				if _, isCap := registry.Capabilities[name]; !isCap {
@@ -769,6 +782,8 @@ func (a *app) models(ctx context.Context, args []string) error {
 			fmt.Fprintf(a.out, "%s %s installed %s\n", a.uo.OK(), a.uo.Bold(m.ID), a.uo.Dim("(sha256 verified)"))
 		}
 		return nil
+	case "upgrade":
+		return a.upgrade(ctx, args)
 	case "rm", "remove":
 		if len(args) != 1 {
 			return usagef("usage: mote models rm ID")
