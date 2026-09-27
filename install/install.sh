@@ -69,7 +69,9 @@ if [ "${MOTE_SOURCE:-0}" = 1 ]; then
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' EXIT INT TERM
   say "building github.com/$REPO/cmd/mote@$ref with $(go version | cut -d" " -f3)"
-  GOBIN="$tmp" go install "github.com/$REPO/cmd/mote@$ref" ||
+  # Go's module proxy caches what a branch points at for a few minutes, so
+  # fetch straight from the repository unless a proxy is configured.
+  GOBIN="$tmp" GOPROXY="${GOPROXY:-direct}" go install "github.com/$REPO/cmd/mote@$ref" ||
     die "build failed; check that $ref exists in https://github.com/$REPO"
   [ -x "$tmp/mote" ] || die "build produced no mote binary"
   install_binary "$tmp/mote"

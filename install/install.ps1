@@ -44,9 +44,17 @@ try {
         $ref = if ($Version -eq 'latest') { 'main' } else { $Version }
         $gov = (((go version) -split ' ')[2])
         Say "building github.com/$Repo/cmd/mote@$ref with $gov"
+        # Go's module proxy caches what a branch points at for a few
+        # minutes, so fetch straight from the repository unless a proxy is
+        # already configured.
+        $proxy = $env:GOPROXY
         $env:GOBIN = $tmp
+        if (-not $proxy) { $env:GOPROXY = 'direct' }
         try { & go install "github.com/$Repo/cmd/mote@$ref" }
-        finally { Remove-Item Env:GOBIN -ErrorAction SilentlyContinue }
+        finally {
+            Remove-Item Env:GOBIN -ErrorAction SilentlyContinue
+            if (-not $proxy) { Remove-Item Env:GOPROXY -ErrorAction SilentlyContinue }
+        }
         if ($LASTEXITCODE -ne 0) { Die "build failed; check that $ref exists in https://github.com/$Repo" }
         Copy-Item -Force (Join-Path $tmp 'mote.exe') (Join-Path $Prefix 'mote.exe')
     }
