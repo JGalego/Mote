@@ -50,7 +50,17 @@ try {
         $proxy = $env:GOPROXY
         $env:GOBIN = $tmp
         if (-not $proxy) { $env:GOPROXY = 'direct' }
-        try { & go install "github.com/$Repo/cmd/mote@$ref" }
+        # A direct fetch looks the module up under several paths at once,
+        # sharing one git clone, and one lookup can unshallow it while
+        # another reads it ("shallow file has changed"). A second try finds
+        # the clone complete.
+        try {
+            & go install "github.com/$Repo/cmd/mote@$ref"
+            if ($LASTEXITCODE -ne 0) {
+                Say 'retrying the build'
+                & go install "github.com/$Repo/cmd/mote@$ref"
+            }
+        }
         finally {
             Remove-Item Env:GOBIN -ErrorAction SilentlyContinue
             if (-not $proxy) { Remove-Item Env:GOPROXY -ErrorAction SilentlyContinue }

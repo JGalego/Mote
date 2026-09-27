@@ -71,7 +71,11 @@ if [ "${MOTE_SOURCE:-0}" = 1 ]; then
   say "building github.com/$REPO/cmd/mote@$ref with $(go version | cut -d" " -f3)"
   # Go's module proxy caches what a branch points at for a few minutes, so
   # fetch straight from the repository unless a proxy is configured.
-  GOBIN="$tmp" GOPROXY="${GOPROXY:-direct}" go install "github.com/$REPO/cmd/mote@$ref" ||
+  build() { GOBIN="$tmp" GOPROXY="${GOPROXY:-direct}" go install "github.com/$REPO/cmd/mote@$ref"; }
+  # A direct fetch looks the module up under several paths at once, sharing
+  # one git clone, and one lookup can unshallow it while another reads it
+  # ("shallow file has changed"). A second try finds the clone complete.
+  build || { say "retrying the build"; build; } ||
     die "build failed; check that $ref exists in https://github.com/$REPO"
   [ -x "$tmp/mote" ] || die "build produced no mote binary"
   install_binary "$tmp/mote"
