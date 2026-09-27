@@ -80,7 +80,7 @@ In a clone, `go install ./cmd/mote` does the same into `$(go env GOPATH)/bin`. `
 | --- | --- |
 | `mote setup [--profile P] [--yes]` | Install the runtime and the models for a profile (`small`, `balanced`, `quality`) |
 | `mote run TASK [ARGS...]` | Run a task, e.g. `mote run chat "Explain what a mutex is"`; `-o FILE` writes the output, `--model ID` overrides the model, `--apply` writes `patch` changes |
-| `mote pipe "A \| B \| !cmd"` | Chain tasks in one process, each stage receiving the last one's value: `{}` or `-` places it, `!` runs a shell command |
+| `mote pipe "A \| B \| sh: cmd"` | Chain tasks in one process, each stage receiving the last one's value: `{}` or `-` places it, `sh:` runs a shell command, `--trace` shows each step |
 | `mote do "REQUEST"` | Pick the task that fits a request written in plain words and run it; `--router embed` chooses with the encoder, `--dry-run` shows the choice |
 | `mote remember "FACT"` | Keep a fact in front of every model step; `mote memory` lists them, `mote forget N\|--all` removes them |
 | `mote memory [search "Q"]` | Show what mote remembers, or find a past exchange by meaning |
@@ -174,12 +174,17 @@ In a clone, `go install ./cmd/mote` does the same into `$(go env GOPATH)/bin`. `
 
 ```sh
 mote pipe "transcribe meeting.m4a | chat 'Summarise in 3 bullets: {}'"
-mote pipe "frames clip.mp4 3 | describe | !tee notes.txt"
+mote pipe "code 'print the first 10 Fibonacci numbers' | sh: python3 -"
+mote pipe --trace "frames clip.mp4 3 | describe | sh: tee notes.txt"
 ```
 
-Each stage receives the previous stage's value: `{}` inside an argument or a bare `-` says where it goes, and with neither it fills the first argument you left out. Several files fan out into one run per file. A stage starting with `!` is a shell command reading that value on stdin, so ordinary tools mix in.
+Each stage receives the previous stage's value: `{}` inside an argument or a bare `-` says where it goes, and with neither it fills the first argument you left out. Several files fan out into one run per file. A stage starting with `sh:` (or `!`) is a shell command reading that value on stdin, so ordinary tools mix in.
 
-Plain shell pipes still work too (`mote run video clip.mp4 | mote run chat -`), at the cost of reloading a model per command.
+Prefer `sh:` when typing interactively: bash and zsh expand `!` inside double quotes as history before mote sees it, unless you wrap the pipeline in `'single quotes'`.
+
+Only the last stage prints. `--trace` shows what each earlier stage handed on, and a stage that produces nothing stops the pipeline instead of letting the next model answer an empty question.
+
+Plain shell pipes still work too (`mote run code "..." | python3`), at the cost of reloading a model per command.
 
 ### chosen 🎯
 
