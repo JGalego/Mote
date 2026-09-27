@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -259,8 +260,8 @@ func TestRunWithTheRuntimePin(t *testing.T) {
 }
 
 func TestRunCannotWriteTheRegistry(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root ignores permissions")
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("file permissions do not stop writes here")
 	}
 	t.Setenv("MOTE_HF_BASE", stubHF(t))
 	dir := seedRegistry(t, emptyModels)

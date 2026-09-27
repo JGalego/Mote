@@ -120,8 +120,8 @@ func TestListenHearsAWakeWordAndRuns(t *testing.T) {
 // the error paths of code that writes files.
 func readOnlyDir(t *testing.T) string {
 	t.Helper()
-	if os.Geteuid() == 0 {
-		t.Skip("root ignores permissions")
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("file permissions do not stop writes here")
 	}
 	dir := t.TempDir()
 	locked := filepath.Join(dir, "locked")
@@ -142,7 +142,7 @@ func TestWritingOutputThatCannotBeWritten(t *testing.T) {
 	if code == 0 {
 		t.Errorf("writing into a read-only directory reported success")
 	}
-	if !strings.Contains(errs, "permission denied") {
+	if !strings.Contains(strings.ToLower(errs), "permission") && !strings.Contains(errs, "denied") {
 		t.Errorf("unhelpful error: %s", errs)
 	}
 }

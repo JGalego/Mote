@@ -7,6 +7,9 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/jgalego/mote/internal/ui"
+	"github.com/jgalego/mote/registry"
 )
 
 func TestVersionAndHelp(t *testing.T) {
@@ -238,7 +241,7 @@ func TestInstallHintAndHostOf(t *testing.T) {
 		}
 	}
 	// ffprobe ships with ffmpeg, so that is what the hint names.
-	if h := installHint("ffprobe"); !strings.Contains(h, "ffmpeg") {
+	if h := installHint("ffprobe"); !strings.Contains(strings.ToLower(h), "ffmpeg") {
 		t.Errorf("ffprobe hint: %q", h)
 	}
 	cases := map[string]string{
@@ -271,6 +274,16 @@ func TestMBFormatsSizes(t *testing.T) {
 func (e *env) moteLive(stdin string, args ...string) (int, string, string) {
 	e.t.Setenv("MOTE_FORCE_LIVE", "1")
 	e.t.Setenv("CLICOLOR_FORCE", "1")
+	// Windows colours console handles only, so a file is never live there.
+	probe, err := os.CreateTemp(e.t.TempDir(), "probe")
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	live := ui.New(probe).Live()
+	probe.Close()
+	if !live {
+		e.t.Skip("this platform does not treat a file as a terminal")
+	}
 	dir := e.t.TempDir()
 	outPath, errPath := filepath.Join(dir, "out"), filepath.Join(dir, "err")
 	outF, err := os.Create(outPath)
@@ -418,9 +431,40 @@ func TestPullReportsWhatIsAlreadyThere(t *testing.T) {
 	}
 }
 
-func TestSetupWizardAnswers(t *testing.T) {
+// wizardEnv prepares an interactive setup run: the prompts a machine asks
+// vary (RAM detection, a llama.cpp already on PATH), and a fresh `mote
+// setup` would download the runtime, so seed a configuration first.
+func wizardEnv(t *testing.T) *env {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		t.Skip("the wizard asks different questions on other platforms")
+	}
 	e := newEnv(t)
-	t.Setenv("MOTE_FORCE_LIVE", "1") // pretend stdin is a terminal
+	e.setup() // records llama_dir, so nothing is downloaded
+	e.seedRuntime()
+	t.Setenv("MOTE_FORCE_LIVE", "1")
+	return e
+}
+
+// seedRuntime puts a stand-in llama-server where the managed install would
+// be, so setup finds a runtime instead of downloading one.
+func (e *env) seedRuntime() {
+	e.t.Helper()
+	dir := filepath.Join(e.home, "runtime", "llama.cpp-"+registry.Default().Runtime.Version)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		e.t.Fatal(err)
+	}
+	name := "llama-server"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+func TestSetupWizardAnswers(t *testing.T) {
+	e := wizardEnv(t)
 
 	// Profile choice, then whatever else is asked: blank lines take the
 	// default, so the script only has to answer the first question.
@@ -441,8 +485,7 @@ func TestSetupWizardAnswers(t *testing.T) {
 }
 
 func TestSetupWizardRejectsNonsenseThenAccepts(t *testing.T) {
-	e := newEnv(t)
-	t.Setenv("MOTE_FORCE_LIVE", "1")
+	e := wizardEnv(t)
 	// An out-of-range choice and a non-number are re-asked rather than
 	// taken as the default.
 	code, out, errs := e.mote("9\nabc\n1\n\n\n\n\n\n\n\n", "setup", "--no-download")
@@ -456,6 +499,8 @@ func TestSetupWizardRejectsNonsenseThenAccepts(t *testing.T) {
 
 func TestSetupFlags(t *testing.T) {
 	e := newEnv(t)
+	e.setup() // seeds llama_dir so no runtime is downloaded
+	e.seedRuntime()
 	if code, _, errs := e.mote("", "setup", "--yes", "--no-download", "--profile", "quality"); code != 0 {
 		t.Fatalf("setup --profile: %s", errs)
 	}
@@ -470,7 +515,8 @@ func TestSetupFlags(t *testing.T) {
 	if code, _, errs := e.mote("", "setup", "--yes", "--no-download", "--data-dir", dd); code != 0 {
 		t.Fatalf("setup --data-dir: %s", errs)
 	}
-	if _, out, _ := e.mote("", "config", "show"); !strings.Contains(out, dd) {
+	// The path is JSON-escaped in the file, so compare on its last element.
+	if _, out, _ := e.mote("", "config", "show"); !strings.Contains(out, filepath.Base(dd)) {
 		t.Errorf("data dir not saved: %s", out)
 	}
 	if code, _, errs := e.mote("", "setup", "--yes", "--no-download", "--config", filepath.Join(t.TempDir(), "missing.json")); code == 0 {
@@ -485,6 +531,8 @@ func TestSetupFlags(t *testing.T) {
 
 func TestSetupSaysWhenStdinIsNotATerminal(t *testing.T) {
 	e := newEnv(t)
+	e.setup() // seeds llama_dir so no runtime is downloaded
+	e.seedRuntime()
 	code, out, errs := e.mote("", "setup", "--no-download")
 	if code != 0 {
 		t.Fatalf("setup: %d %s", code, errs)
@@ -673,11 +721,7 @@ func TestSearchWithNothingRemembered(t *testing.T) {
 }
 
 func TestSetupOffersToReuseASystemLlama(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("the stand-in llama-server is a shell script")
-	}
-	e := newEnv(t)
-	t.Setenv("MOTE_FORCE_LIVE", "1")
+	e := wizardEnv(t)
 	// A llama-server on PATH is offered instead of the pinned download.
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "llama-server"), []byte("#!/bin/sh\necho fake\n"), 0o755)
@@ -697,11 +741,7 @@ func TestSetupOffersToReuseASystemLlama(t *testing.T) {
 }
 
 func TestSetupDeclinesASystemLlama(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("the stand-in llama-server is a shell script")
-	}
-	e := newEnv(t)
-	t.Setenv("MOTE_FORCE_LIVE", "1")
+	e := wizardEnv(t)
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "llama-server"), []byte("#!/bin/sh\n"), 0o755)
 	t.Setenv("PATH", dir)
@@ -725,6 +765,8 @@ func TestSetupRejectsExtraArguments(t *testing.T) {
 
 func TestSetupAutoDownloadFlag(t *testing.T) {
 	e := newEnv(t)
+	e.setup() // seeds llama_dir so no runtime is downloaded
+	e.seedRuntime()
 	if code, _, errs := e.mote("", "setup", "--yes", "--no-download", "--auto-download"); code != 0 {
 		t.Fatalf("setup --auto-download: %s", errs)
 	}
