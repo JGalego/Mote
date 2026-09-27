@@ -2,6 +2,8 @@
 # Creates the input files used by the demo recordings in ~/demo.
 # Run after `mote setup` with the throwaway HOME from common.tape.
 set -eu
+# Resolved before changing directory, since $0 may be a relative path.
+repo=$(cd "$(dirname "$0")/../.." && pwd)
 mkdir -p ~/demo && cd ~/demo
 font=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf
 ffmpeg -v error -y -f lavfi -i color=c=0x2e4a3a:s=640x400 -frames:v 1 \
@@ -16,7 +18,6 @@ def slugify(text, sep="-"):
     text = re.sub(r"[^a-z0-9]+", sep, text)
     return text.strip(sep)
 PY
-repo=$(cd "$(dirname "$0")/../.." && pwd)
 cp "$repo/examples/invoice.txt" "$repo/examples/invoice.schema.json" .
 mote run speak "Quick update from the team meeting. The release moves to Thursday, and Maria will handle the migration." -o meeting.wav
 ffmpeg -v error -y -f lavfi -i "testsrc2=size=640x400:rate=10:duration=4" -loop 1 -t 4 -i sign.png -i meeting.wav \
