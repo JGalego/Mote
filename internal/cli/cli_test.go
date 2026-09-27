@@ -377,3 +377,51 @@ func TestCustomTasks(t *testing.T) {
 		t.Errorf("broken task file: %d %s", code, errs)
 	}
 }
+
+func TestLangHint(t *testing.T) {
+	dir := t.TempDir()
+	py := filepath.Join(dir, "slugify.py")
+	os.WriteFile(py, []byte("x = 1\n"), 0o644)
+	cases := map[string][]string{
+		"python":     {"Python function that checks for palindromes"},
+		"go":         {"a Go function Reverse(s string) string"},
+		"":           {"go through the list and explain it"},
+		"rust":       {"write it in Rust, please"},
+		"cpp":        {"a C++ class for a stack"},
+		"bash":       {"a shell script that backs up ~/notes"},
+		"python ":    {py, "add type hints"},
+		"javascript": {"port this to JavaScript"},
+	}
+	for want, args := range cases {
+		if got := langHint(args); got != strings.TrimSpace(want) {
+			t.Errorf("%q: %q, want %q", args, got, strings.TrimSpace(want))
+		}
+	}
+	// A file's extension wins over words in the instruction.
+	if got := langHint([]string{py, "rewrite this in Rust"}); got != "python" {
+		t.Errorf("file then words: %q", got)
+	}
+}
+
+// Small models told to answer with code only often leave out the fence that
+// names the language; the request names it instead.
+func TestRunHighlightsUnfencedCode(t *testing.T) {
+	e := newEnv(t)
+	e.setup()
+	e.install("qwen3.5-0.8b")
+	t.Setenv("MOTE_FAKE_REPLY", "def is_palindrome(s):\n    return s == s[::-1]\n")
+	t.Setenv("CLICOLOR_FORCE", "1")
+	code, out, coloured := e.moteTTY("run", "code", "Python function that checks for palindromes")
+	if code != 0 {
+		t.Fatalf("code: %d", code)
+	}
+	if !coloured {
+		t.Skip("this platform does not colour a plain file handle")
+	}
+	if !strings.Contains(out, "\x1b[") {
+		t.Errorf("unfenced Python was not highlighted: %q", out)
+	}
+	if got := regexp.MustCompile(`\x1b\[[0-9;]*m`).ReplaceAllString(out, ""); !strings.Contains(got, "def is_palindrome(s):") {
+		t.Errorf("highlighting changed the text: %q", got)
+	}
+}

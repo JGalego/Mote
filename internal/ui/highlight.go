@@ -2,6 +2,7 @@ package ui
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/alecthomas/chroma/v2"
@@ -53,6 +54,16 @@ func lexerFor(code, lang string) chroma.Lexer {
 		return nil
 	}
 	return chroma.Coalesce(l)
+}
+
+// LangForFile names the lexer for a file by its name, or "" when none
+// matches.
+func LangForFile(path string) string {
+	l := lexers.Match(filepath.Base(path))
+	if l == nil {
+		return ""
+	}
+	return strings.ToLower(l.Config().Name)
 }
 
 func formatter() chroma.Formatter {

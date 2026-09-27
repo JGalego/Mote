@@ -240,6 +240,9 @@ func (a *app) do(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	if res.Lang == "" {
+		res.Lang = langHint(taskArgs)
+	}
 	a.record(t, request, res)
 	return a.emit(t, res, out, nil)
 }

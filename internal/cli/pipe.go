@@ -325,7 +325,7 @@ func (a *app) runStages(ctx context.Context, stages []stage, found []task.Task, 
 		var code *ui.CodeStream
 		if i == last {
 			if out == "" && (t.Out == "code" || t.Out == "data") {
-				code = a.uo.CodeStream(highlightLang(t, ""))
+				code = a.uo.CodeStream(highlightLang(t, langHint(runs[0])))
 			}
 			// Only the last stage streams: earlier ones are inputs to the
 			// next task, not output for the reader.
@@ -360,6 +360,9 @@ func (a *app) runStages(ctx context.Context, stages []stage, found []task.Task, 
 		}
 		trace(i, t.ID, val)
 		if i == last {
+			if res.Lang == "" && len(runs) > 0 {
+				res.Lang = langHint(runs[0])
+			}
 			a.record(t, request, res)
 			return a.emit(t, res, out, code)
 		}

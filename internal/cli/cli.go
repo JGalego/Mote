@@ -514,8 +514,9 @@ func (a *app) run(ctx context.Context, args []string) error {
 	// Highlight source code and JSON, but only on the way to a terminal:
 	// files and pipes keep the exact bytes the model produced.
 	var code *ui.CodeStream
+	hint := langHint(pos[1:])
 	if out == "" && (t.Out == "code" || t.Out == "data") {
-		code = a.uo.CodeStream(highlightLang(t, ""))
+		code = a.uo.CodeStream(highlightLang(t, hint))
 	}
 	// Stream to interactive terminals only: pipes get the post-processed
 	// value (fences stripped, JSON normalised) in one piece.
@@ -530,6 +531,9 @@ func (a *app) run(ctx context.Context, args []string) error {
 	res, err := t.Run(ctx, env, pos[1:], task.Options{Output: out, Apply: vals["--apply"] == "true"})
 	if err != nil {
 		return err
+	}
+	if res.Lang == "" {
+		res.Lang = hint
 	}
 	a.record(t, request, res)
 	return a.emit(t, res, out, code)
@@ -634,6 +638,47 @@ func highlightLang(t task.Task, fence string) string {
 		return "json"
 	}
 	return fence
+}
+
+// promptLangs are language names a request may mention, mapped to lexer
+// names. Only unambiguous words count: "go" is also a verb, so Go needs its
+// capital or "golang", and one-letter names like C and R are left out.
+var promptLangs = map[string]string{
+	"python": "python", "javascript": "javascript", "typescript": "typescript", "rust": "rust",
+	"java": "java", "kotlin": "kotlin", "swift": "swift", "ruby": "ruby", "php": "php",
+	"bash": "bash", "shell": "bash", "zsh": "bash", "powershell": "powershell", "sql": "sql",
+	"html": "html", "css": "css", "lua": "lua", "perl": "perl", "haskell": "haskell",
+	"scala": "scala", "c++": "cpp", "cpp": "cpp", "c#": "csharp", "csharp": "csharp",
+	"golang": "go", "yaml": "yaml", "json": "json", "dockerfile": "docker", "makefile": "make",
+	"elixir": "elixir", "dart": "dart", "julia": "julia", "zig": "zig",
+}
+
+// langHint guesses the language of code a task will produce from its
+// arguments: a file's extension, else a language the request names. It is
+// used when the reply has no fence to say, which is how small models told to
+// answer with code only often reply, and short code defeats detection by
+// content alone.
+func langHint(args []string) string {
+	for _, a := range args {
+		if st, err := os.Stat(a); err == nil && !st.IsDir() {
+			if l := ui.LangForFile(a); l != "" {
+				return l
+			}
+		}
+	}
+	for _, a := range args {
+		for _, w := range strings.FieldsFunc(a, func(r rune) bool {
+			return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '+' || r == '#')
+		}) {
+			if w == "Go" {
+				return "go"
+			}
+			if l, ok := promptLangs[strings.ToLower(w)]; ok {
+				return l
+			}
+		}
+	}
+	return ""
 }
 
 // footer prints a one-line summary of model usage on interactive stderr.

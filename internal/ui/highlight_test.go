@@ -129,3 +129,11 @@ func TestCodeStreamLangOnlyBeforeOutput(t *testing.T) {
 		t.Errorf("lang changed after output started: %q", c.lang)
 	}
 }
+
+func TestLangForFile(t *testing.T) {
+	for file, want := range map[string]string{"a/b/slugify.py": "python", "main.go": "go", "notes": "", "Dockerfile": "docker"} {
+		if got := LangForFile(file); got != want {
+			t.Errorf("%s: %q, want %q", file, got, want)
+		}
+	}
+}
