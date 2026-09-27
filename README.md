@@ -81,7 +81,7 @@ In a clone, `go install ./cmd/mote` does the same into `$(go env GOPATH)/bin`. `
 | `mote setup [--profile P] [--yes]` | Install the runtime and the models for a profile (`small`, `balanced`, `quality`) |
 | `mote run TASK [ARGS...]` | Run a task, e.g. `mote run chat "Explain what a mutex is"`; `-o FILE` writes the output, `--model ID` overrides the model, `--apply` writes `patch` changes |
 | `mote pipe "A \| B \| sh: cmd"` | Chain tasks in one process, each stage receiving the last one's value: `{}` or `-` places it, `sh:` runs a shell command, `--trace` shows each step |
-| `mote do "REQUEST"` | Pick the task that fits a request written in plain words and run it; `--router embed` chooses with the encoder, `--dry-run` shows the choice |
+| `mote do "REQUEST"` | Pick the task that fits a request written in plain words and run it; `--router embed` chooses with the encoder, `--plan` writes a pipeline of several tasks, `--dry-run` shows the choice |
 | `mote remember "FACT"` | Keep a fact in front of every model step; `mote memory` lists them, `mote forget N\|--all` removes them |
 | `mote memory [search "Q"]` | Show what mote remembers, or find a past exchange by meaning |
 | `mote listen [TASK]` | Wait for a wake word on the microphone, then run what you say next (never listens unless you start it) |
@@ -210,6 +210,23 @@ no tokens generated, milliseconds on a CPU.
 
 Both read the `examples` in [`tasks.json`](internal/task/tasks.json), so a
 task of your own is routable as soon as you give it a few phrasings.
+
+A request that takes several steps needs a pipeline rather than one task.
+`--plan` asks the text model to write one, shows it as the `mote pipe`
+command it amounts to, and runs it:
+
+```sh
+mote do --plan "document calc.py then translate it to French"
+# -> mote pipe 'doc calc.py | chat "Translate the documentation to French: {}"'
+```
+
+The plan is constrained like the router's choice: only real tasks, no more
+arguments than they take, and only files the request actually names. It is
+then checked before anything runs, so a stage that would be handed text
+where it needs a file stops the plan instead of failing half way.
+`--dry-run` shows the plan without running it and `--trace` shows each
+stage's output. Planning is noticeably better with the `balanced` profile's
+2B model than with the 0.8B one.
 
 ### spoken 🎤
 

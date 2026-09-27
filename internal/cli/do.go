@@ -161,13 +161,25 @@ func bindRequest(t task.Task, request string) ([]string, error) {
 func (a *app) do(ctx context.Context, args []string) error {
 	vals, pos, err := flags(args,
 		[]string{"-o", "--output", "--model", "--profile", "--router"},
-		[]string{"--apply", "--dry-run", "--continue", "--recall"})
+		[]string{"--apply", "--dry-run", "--continue", "--recall", "--plan", "--trace"})
 	if err != nil {
 		return err
 	}
 	request := strings.TrimSpace(strings.Join(pos, " "))
 	if request == "" {
-		return usagef(`usage: mote do "REQUEST" [--router text|embed] [--dry-run]`)
+		return usagef(`usage: mote do "REQUEST" [--router text|embed | --plan] [--dry-run]`)
+	}
+	planning := vals["--plan"] == "true"
+	if planning {
+		// A plan is written by the text model and runs as a pipeline, whose
+		// stages share remembered facts but no single conversation.
+		for _, f := range []string{"--router", "--continue", "--recall"} {
+			if vals[f] != "" {
+				return usagef("%s does not apply to --plan", f)
+			}
+		}
+	} else if vals["--trace"] != "" {
+		return usagef("--trace shows the stages of a plan; use it with --plan")
 	}
 	tasks, err := task.LoadFrom(a.tasksDir())
 	if err != nil {
@@ -184,6 +196,10 @@ func (a *app) do(ctx context.Context, args []string) error {
 	}
 	sessions := map[string]mrt.Session{}
 	defer task.CloseSessions(sessions)
+
+	if planning {
+		return a.doPlan(ctx, request, choices, vals, profile, sessions)
+	}
 
 	var id string
 	switch router {

@@ -227,8 +227,29 @@ func (a *app) pipe(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	// Resolve every task up front: a typo in the last stage should not
-	// surface after minutes of generation.
+	found, err := resolveStages(stages, tasks)
+	if err != nil {
+		return err
+	}
+	profile, err := a.selectModels(vals)
+	if err != nil {
+		return err
+	}
+	sessions := map[string]mrt.Session{}
+	defer task.CloseSessions(sessions)
+	// Facts apply to every stage; --continue and --recall belong to a
+	// single request, which a pipeline is not.
+	remembered, err := a.memoryFor(ctx, "", nil, profile, sessions)
+	if err != nil {
+		return err
+	}
+	return a.runStages(ctx, stages, found, vals, profile, sessions, remembered, strings.Join(pos, " "))
+}
+
+// resolveStages finds the task for every stage up front: a typo in the last
+// stage should not surface after minutes of generation. Shell stages have
+// no task and get a zero one.
+func resolveStages(stages []stage, tasks []task.Task) ([]task.Task, error) {
 	found := make([]task.Task, len(stages))
 	for i, s := range stages {
 		if s.shell != "" {
@@ -236,28 +257,23 @@ func (a *app) pipe(ctx context.Context, args []string) error {
 		}
 		t, ok := task.Find(tasks, s.id)
 		if !ok {
-			return usagef("unknown task %q in stage %d; see `mote tasks`", s.id, i+1)
+			return nil, usagef("unknown task %q in stage %d; see `mote tasks`", s.id, i+1)
 		}
 		if len(s.args) > len(t.Params) {
-			return usagef("too many arguments for %s; usage: mote run %s %s", t.ID, t.ID, t.Usage())
+			return nil, usagef("too many arguments for %s; usage: mote run %s %s", t.ID, t.ID, t.Usage())
 		}
 		found[i] = t
 	}
-	profile, err := a.selectModels(vals)
-	if err != nil {
-		return err
-	}
+	return found, nil
+}
 
+// runStages runs resolved stages in order, each receiving the value of the
+// one before, and emits the last one's result. request is what gets
+// recorded in the history.
+func (a *app) runStages(ctx context.Context, stages []stage, found []task.Task, vals map[string]string,
+	profile string, sessions map[string]mrt.Session, remembered, request string) error {
 	out := firstNonEmpty(vals["-o"], vals["--output"])
-	sessions := map[string]mrt.Session{}
-	defer task.CloseSessions(sessions)
 	defer os.RemoveAll(a.env(profile, nil).TempDir)
-	// Facts apply to every stage; --continue and --recall belong to a
-	// single request, which a pipeline is not.
-	remembered, err := a.memoryFor(ctx, "", nil, profile, sessions)
-	if err != nil {
-		return err
-	}
 
 	last := len(stages) - 1
 	var val task.Value
@@ -288,6 +304,7 @@ func (a *app) pipe(ctx context.Context, args []string) error {
 
 	for i, s := range stages {
 		if s.shell != "" {
+			var err error
 			if val, err = a.runShell(ctx, s, val); err != nil {
 				return err
 			}
@@ -343,7 +360,7 @@ func (a *app) pipe(ctx context.Context, args []string) error {
 		}
 		trace(i, t.ID, val)
 		if i == last {
-			a.record(t, strings.Join(pos, " "), res)
+			a.record(t, request, res)
 			return a.emit(t, res, out, code)
 		}
 	}

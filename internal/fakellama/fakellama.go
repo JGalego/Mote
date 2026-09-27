@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -137,7 +138,11 @@ func server(args []string) int {
 		}
 		if len(req.ResponseFormat) > 0 {
 			reply = schemaReply(req.ResponseFormat, strings.Join(text, " "))
+			if r, ok := scripted(); ok {
+				reply = r
+			}
 		}
+		logRequest(req.Messages, strings.Join(text, " "), req.ResponseFormat)
 		// MOTE_FAKE_REPLY lets a test force an awkward answer, such as a
 		// router reply that is not the JSON the caller expects.
 		if v := os.Getenv("MOTE_FAKE_REPLY"); v != "" {
@@ -164,6 +169,72 @@ func server(args []string) int {
 	})
 	http.Serve(ln, mux)
 	return 0
+}
+
+// MOTE_FAKE_SCRIPT names a file of replies, one per line, given in turn to
+// schema-constrained requests: a planner's plan, or an agent's steps. The
+// last line repeats once the script runs out. The count lives in the
+// server, which serves one mote process.
+var (
+	scriptMu   sync.Mutex
+	scriptNext int
+)
+
+func scripted() (string, bool) {
+	path := os.Getenv("MOTE_FAKE_SCRIPT")
+	if path == "" {
+		return "", false
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", false
+	}
+	var lines []string
+	for _, l := range strings.Split(string(b), "\n") {
+		if strings.TrimSpace(l) != "" {
+			lines = append(lines, l)
+		}
+	}
+	if len(lines) == 0 {
+		return "", false
+	}
+	scriptMu.Lock()
+	defer scriptMu.Unlock()
+	i := scriptNext
+	if i >= len(lines) {
+		i = len(lines) - 1
+	}
+	scriptNext++
+	return lines[i], true
+}
+
+// MOTE_FAKE_LOG names a file that gets one JSON line per chat request, so a
+// test can check what a model was shown.
+func logRequest(msgs []struct {
+	Role    string          `json:"role"`
+	Content json.RawMessage `json:"content"`
+}, prompt string, format json.RawMessage) {
+	path := os.Getenv("MOTE_FAKE_LOG")
+	if path == "" {
+		return
+	}
+	var system string
+	if len(msgs) > 1 && msgs[0].Role == "system" {
+		json.Unmarshal(msgs[0].Content, &system)
+	}
+	entry := map[string]any{"system": system, "prompt": prompt}
+	if len(format) > 0 {
+		entry["format"] = format
+	}
+	b, _ := json.Marshal(entry)
+	scriptMu.Lock()
+	defer scriptMu.Unlock()
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	f.Write(append(b, '\n'))
 }
 
 // schemaReply answers a schema-constrained request. Properties with an enum

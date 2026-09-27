@@ -66,7 +66,7 @@ Usage:
   mote setup [--yes] [--config FILE] [--profile P] [--data-dir DIR] [--auto-download] [--no-download]
   mote run TASK [ARGS...] [-o OUTPUT] [--apply] [--model ID] [--profile P]
   mote pipe "TASK ARGS | TASK ARGS | sh: COMMAND" [-o OUTPUT] [--trace] [--model ID]
-  mote do "REQUEST" [-o OUTPUT] [--apply] [--dry-run] [--model ID] [--profile P]
+  mote do "REQUEST" [-o OUTPUT] [--apply] [--dry-run] [--plan [--trace]] [--model ID] [--profile P]
   mote listen [TASK] [--wake PHRASE] [--device D] [--chunk SECONDS] [--once]
   mote remember "FACT" | mote forget N|--all|--history | mote memory [search "Q"]
   mote tasks
