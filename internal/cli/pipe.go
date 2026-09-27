@@ -246,9 +246,22 @@ func (a *app) pipe(ctx context.Context, args []string) error {
 	last := len(stages) - 1
 	var val task.Value
 	var res task.Result
+	// empty reports a stage that produced nothing to pass on. Sending an
+	// empty value to the next task would have it answer a question nobody
+	// asked, so the pipeline stops and says which stage ran dry.
+	empty := func(i int, name string, v task.Value) error {
+		if i == last || strings.TrimSpace(v.Text) != "" || len(v.Files) > 0 {
+			return nil
+		}
+		return fmt.Errorf("stage %d (%s) produced nothing for the next stage", i+1, name)
+	}
+
 	for i, s := range stages {
 		if s.shell != "" {
 			if val, err = a.runShell(ctx, s, val); err != nil {
+				return err
+			}
+			if err := empty(i, s.shell, val); err != nil {
 				return err
 			}
 			res = task.Result{Value: val}
@@ -294,6 +307,9 @@ func (a *app) pipe(ctx context.Context, args []string) error {
 		}
 		val = task.Value{Text: strings.Join(texts, "\n"), Files: files}
 		res.Value = val
+		if err := empty(i, t.ID, val); err != nil {
+			return err
+		}
 		if i == last {
 			a.record(t, strings.Join(pos, " "), res)
 			return a.emit(t, res, out, code)

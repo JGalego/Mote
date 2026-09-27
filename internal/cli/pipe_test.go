@@ -188,3 +188,26 @@ func TestPipeReportsBadPipelinesBeforeRunning(t *testing.T) {
 		t.Errorf("no room for the value: %d %s", code, errs)
 	}
 }
+
+func TestPipeStopsWhenAStageProducesNothing(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell stages use cmd /c on Windows")
+	}
+	e := newEnv(t)
+	e.setup()
+	e.install("qwen3.5-0.8b")
+
+	// Without this, the next task is asked to comment on nothing and the
+	// model invents an answer.
+	code, out, errs := e.mote("", "pipe", `chat hello | !printf '' | chat "about: {}"`)
+	if code == 0 {
+		t.Errorf("empty stage was passed on: %q %s", out, errs)
+	}
+	if !strings.Contains(errs, "produced nothing") || !strings.Contains(errs, "stage 2") {
+		t.Errorf("unhelpful error: %s", errs)
+	}
+	// An empty *last* stage is fine: there is nothing after it to mislead.
+	if code, _, errs := e.mote("", "pipe", `chat hello | !printf ''`); code != 0 {
+		t.Errorf("empty final stage: %d %s", code, errs)
+	}
+}
