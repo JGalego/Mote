@@ -259,10 +259,23 @@ different words.
 ```mermaid
 %%{init: {"flowchart": {"wrappingWidth": 320}}}%%
 flowchart TD
-  IN["<code>mote run TASK ARGS</code>"] --> PIPE["🧩 task pipeline<br/><code>tasks.json</code>"]
+  subgraph ask["💬 what you type"]
+    direction LR
+    RUN["⌨️ <code>mote run</code> · <code>mote pipe</code>"]
+    DO["🎯 <code>mote do</code><br/>picks a task · <code>--plan</code> writes a pipeline"]
+    AGENT["🤖 <code>mote agent</code><br/>thought → call → observation"]
+  end
 
-  PIPE -- "model step<br/><code>text · code · extract</code><br/><code>vision · asr · tts</code>" --> LLAMA["🦙 <code>llama-server</code> · <code>llama-tts</code><br/>127.0.0.1 · CPU only"]
-  PIPE -- "tool step" --> TOOLS["🔧 <code>ffmpeg</code> · <code>ffprobe</code> · <code>git</code>"]
+  RUN --> PIPE["🧩 task pipeline<br/><code>tasks.json</code> · your own tasks"]
+  DO --> PIPE
+  AGENT -- "task calls" --> PIPE
+  AGENT -- "<code>--allow-sh</code>" --> SH["🐚 shell<br/>checked · asks · 🔒 bwrap / sandbox-exec"]
+  AGENT -- "<code>--mcp</code>" --> MCP["🔌 local MCP servers<br/>stdio · <code>mcp.json</code>"]
+
+  PIPE -- "model step<br/><code>text · code · extract</code><br/><code>vision · asr</code><br/><code>tts · embed</code>" --> LLAMA["🦙 <code>llama-server</code> · <code>llama-tts</code><br/>127.0.0.1 · CPU only"]
+  DO -. "choice under a JSON schema" .-> LLAMA
+  AGENT -. "each step under a JSON schema" .-> LLAMA
+  PIPE -- "tool step · <code>exec</code>" --> TOOLS["🔧 <code>ffmpeg</code> · <code>git</code><br/>any local program, no shell"]
 
   DATA[("💾 data dir<br/>GGUF models · runtime · logs")] --> LLAMA
   HF(["🤗 Hugging Face"]) -. "<code>mote setup</code><br/><code>mote models pull</code><br/>pinned to a commit · SHA-256" .-> DATA
@@ -273,9 +286,11 @@ flowchart TD
 
 Inference runs in a llama.cpp server bound to `127.0.0.1` with GPU offload disabled (`--device none`). GGUF weights come from Hugging Face only when you allow it, pinned to a commit and verified by SHA-256.
 
-Models, logs and benchmark results live in the data directory (`~/.local/share/mote`, `~/Library/Application Support/mote`, `%LOCALAPPDATA%\mote`), configuration in the OS config directory. After setup, only `mote update` and explicit pulls touch the network.
+Models, logs and benchmark results live in the data directory (`~/.local/share/mote`, `~/Library/Application Support/mote`, `%LOCALAPPDATA%\mote`), configuration in the OS config directory. After setup, mote itself touches the network only for `mote update` and explicit pulls; MCP servers you add are programs of their own and may do more.
 
-Tasks are short pipelines in [`internal/task/tasks.json`](internal/task/tasks.json): each step calls a model capability (`text`, `code`, `extract`, `vision`, `asr`, `tts`) or a local tool (`ffmpeg`, `git`), and every capability has its own specialized model.
+Tasks are short pipelines in [`internal/task/tasks.json`](internal/task/tasks.json): each step calls a model capability (`text`, `code`, `extract`, `vision`, `asr`, `tts`, `embed`) or a local program (`ffmpeg`, `git`, or any other through `exec`), and every capability has its own specialized model.
+
+`mote do` and `mote agent` never let a model call anything directly. Every choice the model makes is generated under a JSON schema listing only the real tasks and tools, so it cannot name one that does not exist or give it malformed arguments. mote then runs the call and feeds the result back. The agent's shell commands are checked, confirmed and, where possible, sandboxed. MCP servers are only ever local processes.
 
 ## Models
 
