@@ -414,6 +414,13 @@ func (a *app) update(ctx context.Context, args []string) error {
 	if next.Runtime.Version != cur.Runtime.Version {
 		fmt.Fprintf(a.out, "  runtime: llama.cpp %s -> %s\n", cur.Runtime.Version, next.Runtime.Version)
 	}
+	for _, rt := range next.Runtimes {
+		if old, ok := cur.RuntimeFor(rt.Name); !ok {
+			fmt.Fprintf(a.out, "  runtime: %s %s (new; installed when first needed)\n", rt.Name, rt.Version)
+		} else if old.Version != rt.Version {
+			fmt.Fprintf(a.out, "  runtime: %s %s -> %s\n", rt.Name, old.Version, rt.Version)
+		}
+	}
 	if vals["--check"] == "true" {
 		return nil
 	}

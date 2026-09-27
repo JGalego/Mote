@@ -8,6 +8,7 @@ import (
 	"bytes"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"regexp"
@@ -19,8 +20,10 @@ import (
 //go:embed models.json
 var embeddedModels []byte
 
-// Schema is the registry format version understood by this binary.
-const Schema = 1
+// Schema is the registry format version understood by this binary. 2 added
+// runtimes other than llama.cpp (Runtimes) and models built from files in
+// several repositories.
+const Schema = 2
 
 // Capabilities a model can provide. Tasks request capabilities, not models.
 var Capabilities = map[string]string{
@@ -33,6 +36,24 @@ var Capabilities = map[string]string{
 	"embed":   "text -> vector (routing, search)",
 }
 
+// Optional capabilities are left out of setup and profile checks: their
+// models are large and slow on a CPU, so they are downloaded the first time
+// something needs them, and only on machines with room for them.
+var Optional = map[string]bool{}
+
+// Backends a model can run on, and the file roles each one needs. llama.cpp
+// is the main runtime; others are pinned in Registry.Runtimes.
+var Backends = map[string][]string{
+	"llama.cpp": {"model"},
+	"sd.cpp":    {"model", "vae", "llm"},
+}
+
+// fileRoles are the roles a backend's files may have.
+var fileRoles = map[string]map[string]bool{
+	"llama.cpp": {"model": true, "mmproj": true},
+	"sd.cpp":    {"model": true, "vae": true, "llm": true},
+}
+
 // Benchmark kinds. Only upstream measurements and explicit estimates may
 // appear in the repository registry; local measurements live in the user's
 // data directory and are never written back here.
@@ -43,17 +64,21 @@ const (
 )
 
 type Registry struct {
-	Schema    int                          `json:"schema"`
-	Version   string                       `json:"version"`
-	Generated string                       `json:"generated"`
-	Note      string                       `json:"note,omitempty"`
-	Runtime   Runtime                      `json:"runtime"`
-	Policy    Policy                       `json:"policy"`
-	Models    []Model                      `json:"models"`
-	Defaults  map[string]map[string]Choice `json:"defaults"`
+	Schema    int     `json:"schema"`
+	Version   string  `json:"version"`
+	Generated string  `json:"generated"`
+	Note      string  `json:"note,omitempty"`
+	Runtime   Runtime `json:"runtime"`
+	// Runtimes pins the runtimes of other backends, such as sd.cpp. They
+	// are installed only when a model that needs one is used.
+	Runtimes []Runtime                    `json:"runtimes,omitempty"`
+	Policy   Policy                       `json:"policy"`
+	Models   []Model                      `json:"models"`
+	Defaults map[string]map[string]Choice `json:"defaults"`
 }
 
-// Runtime pins the llama.cpp release used for inference.
+// Runtime pins a release of an inference runtime: llama.cpp, or another
+// backend's in Registry.Runtimes. Name is the backend it serves.
 type Runtime struct {
 	Name      string  `json:"name"`
 	Version   string  `json:"version"`
@@ -97,7 +122,7 @@ type Model struct {
 }
 
 type File struct {
-	Role   string `json:"role"` // model or mmproj
+	Role   string `json:"role"` // model or mmproj; for sd.cpp also vae and llm
 	Name   string `json:"name"`
 	URL    string `json:"url"`
 	SHA256 string `json:"sha256"`
@@ -155,8 +180,23 @@ func Default() *Registry {
 	return r
 }
 
+// ErrOldSchema marks a registry written for an older mote. The one embedded
+// in this binary supersedes it.
+var ErrOldSchema = errors.New("registry is in an older format")
+
 // Parse decodes and validates a registry document.
 func Parse(b []byte) (*Registry, error) {
+	// The schema is read on its own first: a registry from a newer mote has
+	// fields this one does not know, and saying so beats naming a field.
+	var head struct {
+		Schema int `json:"schema"`
+	}
+	if json.Unmarshal(b, &head) == nil && head.Schema > Schema {
+		return nil, fmt.Errorf("registry schema %d needs a newer mote (this one reads %d); reinstall mote to update it", head.Schema, Schema)
+	}
+	if head.Schema > 0 && head.Schema < Schema {
+		return nil, fmt.Errorf("%w: schema %d", ErrOldSchema, head.Schema)
+	}
 	var r Registry
 	dec := json.NewDecoder(bytes.NewReader(b))
 	dec.DisallowUnknownFields()
@@ -206,13 +246,29 @@ func (r *Registry) Model(id string) (*Model, bool) {
 }
 
 // Asset returns the runtime archive for an OS/arch pair.
-func (r *Registry) Asset(goos, arch string) (Asset, bool) {
-	for _, a := range r.Runtime.Assets {
+func (r *Registry) Asset(goos, arch string) (Asset, bool) { return r.Runtime.Asset(goos, arch) }
+
+// Asset returns the build of rt for an OS and architecture.
+func (rt Runtime) Asset(goos, arch string) (Asset, bool) {
+	for _, a := range rt.Assets {
 		if a.OS == goos && a.Arch == arch {
 			return a, true
 		}
 	}
 	return Asset{}, false
+}
+
+// RuntimeFor returns the pinned runtime a backend runs on.
+func (r *Registry) RuntimeFor(backend string) (Runtime, bool) {
+	if backend == r.Runtime.Name {
+		return r.Runtime, true
+	}
+	for _, rt := range r.Runtimes {
+		if rt.Name == backend {
+			return rt, true
+		}
+	}
+	return Runtime{}, false
 }
 
 // ProfileNames returns profile names sorted by their RAM ceiling.
@@ -300,22 +356,40 @@ func (r *Registry) Validate() error {
 	if r.Runtime.Name != "llama.cpp" || r.Runtime.Version == "" {
 		bad("runtime must be a pinned llama.cpp release")
 	}
-	for _, a := range r.Runtime.Assets {
-		if a.OS != "linux" && a.OS != "darwin" && a.OS != "windows" {
-			bad("runtime asset: unknown os %q", a.OS)
+	checkAssets := func(rt Runtime) {
+		for _, a := range rt.Assets {
+			where := fmt.Sprintf("%s asset %s/%s", rt.Name, a.OS, a.Arch)
+			if a.OS != "linux" && a.OS != "darwin" && a.OS != "windows" {
+				bad("%s: unknown os", where)
+			}
+			if a.Arch != "amd64" && a.Arch != "arm64" {
+				bad("%s: unknown arch", where)
+			}
+			if err := httpsURL(a.URL); err != nil {
+				bad("%s: %v", where, err)
+			}
+			if !strings.HasSuffix(a.URL, ".tar.gz") && !strings.HasSuffix(a.URL, ".zip") {
+				bad("%s: unsupported archive %s", where, a.URL)
+			}
+			if !sha256Re.MatchString(a.SHA256) || a.Size <= 0 {
+				bad("%s: missing sha256 or size", where)
+			}
 		}
-		if a.Arch != "amd64" && a.Arch != "arm64" {
-			bad("runtime asset: unknown arch %q", a.Arch)
+	}
+	checkAssets(r.Runtime)
+	named := map[string]bool{}
+	for _, rt := range r.Runtimes {
+		if _, ok := Backends[rt.Name]; !ok || rt.Name == "llama.cpp" {
+			bad("runtimes: unknown backend %q", rt.Name)
 		}
-		if err := httpsURL(a.URL); err != nil {
-			bad("runtime asset %s/%s: %v", a.OS, a.Arch, err)
+		if named[rt.Name] {
+			bad("runtimes: %s pinned twice", rt.Name)
 		}
-		if !strings.HasSuffix(a.URL, ".tar.gz") && !strings.HasSuffix(a.URL, ".zip") {
-			bad("runtime asset %s/%s: unsupported archive %s", a.OS, a.Arch, a.URL)
+		named[rt.Name] = true
+		if rt.Version == "" || rt.License == "" {
+			bad("runtimes: %s needs a version and a license", rt.Name)
 		}
-		if !sha256Re.MatchString(a.SHA256) || a.Size <= 0 {
-			bad("runtime asset %s/%s: missing sha256 or size", a.OS, a.Arch)
-		}
+		checkAssets(rt)
 	}
 
 	p := r.Policy
@@ -349,8 +423,16 @@ func (r *Registry) Validate() error {
 			bad("%s: duplicate id", where)
 		}
 		seen[m.ID] = true
-		if m.Backend != "llama.cpp" {
+		roles, known := Backends[m.Backend]
+		if !known {
 			bad("%s: unknown backend %q", where, m.Backend)
+		} else if _, pinned := r.RuntimeFor(m.Backend); !pinned {
+			bad("%s: backend %s has no pinned runtime", where, m.Backend)
+		}
+		for _, role := range roles {
+			if _, ok := m.File(role); !ok {
+				bad("%s: %s models need a %s file", where, m.Backend, role)
+			}
 		}
 		if len(m.Caps) == 0 {
 			bad("%s: no capabilities", where)
@@ -360,25 +442,26 @@ func (r *Registry) Validate() error {
 			if _, ok := Capabilities[c]; !ok {
 				bad("%s: unknown capability %q", where, c)
 			}
-			if c == "vision" || c == "asr" || c == "tts" {
+			if m.Backend == "llama.cpp" && (c == "vision" || c == "asr" || c == "tts") {
 				needsProj = true
 			}
+			if (c == "image") != (m.Backend == "sd.cpp") {
+				bad("%s: image generation runs on sd.cpp, and sd.cpp only generates images", where)
+			}
 		}
-		if m.Context <= 0 {
+		// A context window is a language model's; sd.cpp has none.
+		if m.Backend == "llama.cpp" && m.Context <= 0 {
 			bad("%s: context must be set explicitly", where)
 		}
 		if m.License == "" {
 			bad("%s: license is required", where)
 		}
-		if _, ok := m.File("model"); !ok {
-			bad("%s: no model file", where)
-		}
 		if _, ok := m.File("mmproj"); needsProj && !ok {
 			bad("%s: capabilities %v require an mmproj file", where, m.Caps)
 		}
 		for _, f := range m.Files {
-			if f.Role != "model" && f.Role != "mmproj" {
-				bad("%s: unknown file role %q", where, f.Role)
+			if !fileRoles[m.Backend][f.Role] {
+				bad("%s: unknown file role %q for %s", where, f.Role, m.Backend)
 			}
 			if !fileRe.MatchString(f.Name) {
 				bad("%s: unsafe file name %q", where, f.Name)

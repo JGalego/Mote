@@ -18,7 +18,7 @@ func stubHF(t *testing.T) string {
 	t.Helper()
 	routes := map[string]any{
 		"/api/models/org/gguf?expand[]=sha": map[string]any{"sha": rev},
-		"/api/models/org/gguf/tree/" + rev: []map[string]any{
+		"/api/models/org/gguf/tree/" + rev + "?recursive=true": []map[string]any{
 			{"path": "m-Q4_K_M.gguf", "size": 1 << 20, "lfs": map[string]any{"oid": strings.Repeat("a", 64)}},
 		},
 		"/api/models/org/upstream?expand[]=cardData&expand[]=safetensors&expand[]=evalResults": map[string]any{

@@ -86,6 +86,14 @@ case in `internal/bench/cases.json`. It also needs a user: a task, or a
 command listed in the `byCommand` map in `internal/task/task_test.go`, which
 is how `embed` is used (`mote do --router embed`, not a task).
 
+A candidate's `files` map roles to names in its `repo`, or to
+`{"repo": ..., "file": ...}` for a file kept elsewhere; each repo is pinned
+to its own revision. A model on another backend names it in `backend`, and
+that backend's runtime is pinned under `runtimes` in `candidates.json`, whose
+asset names may use `*` (sd.cpp names its macOS build after the macOS
+version). Such runtimes are installed the first time one of their models is
+used, not at setup.
+
 **A backend** implements `runtime.Backend` (`Open` a session that can
 `Generate`, and `Speak`) and is chosen in `cli.app.backend` from the model's
 `backend` field, which `registry.Validate` must also accept.

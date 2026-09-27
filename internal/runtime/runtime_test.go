@@ -324,6 +324,42 @@ func TestInstallRuntime(t *testing.T) {
 	}
 }
 
+func TestInstallAnotherBackendsRuntime(t *testing.T) {
+	dir := t.TempDir()
+	arc := filepath.Join(dir, "sd.tar.gz")
+	writeTarGz(t, arc, []entry{{name: exe("sd-cli"), body: "bin", mode: 0o755}})
+	body, _ := os.ReadFile(arc)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(body) }))
+	defer srv.Close()
+	s := Store{Dir: filepath.Join(dir, "data")}
+	sd := registry.Runtime{Name: "sd.cpp", Version: "master-1"}
+	llama := registry.Runtime{Name: "llama.cpp", Version: "master-1"}
+	// Each backend has its own directory, even at the same version.
+	if s.RuntimeDir(sd) == s.RuntimeDir(llama) {
+		t.Fatal("runtimes share a directory")
+	}
+	// A runtime with no name is llama.cpp's, as older registries wrote it.
+	if s.RuntimeDir(registry.Runtime{Version: "b1"}) != filepath.Join(s.Dir, "runtime", "llama.cpp-b1") {
+		t.Error("unnamed runtime moved")
+	}
+	if _, ok := s.RuntimeInstalled(sd); ok {
+		t.Error("installed before installing")
+	}
+	a := registry.Asset{URL: srv.URL + "/sd.tar.gz", SHA256: hash(body), Size: int64(len(body))}
+	got, err := s.InstallRuntime(context.Background(), Fetcher{AllowHTTP: true}, sd, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d, ok := s.RuntimeInstalled(sd); !ok || d != got {
+		t.Errorf("installed at %s, found %s %v", got, d, ok)
+	}
+	// An archive without the backend's program is refused.
+	s2 := Store{Dir: filepath.Join(dir, "data2")}
+	if _, err := s2.InstallRuntime(context.Background(), Fetcher{AllowHTTP: true}, llama, a); err == nil || !strings.Contains(err.Error(), "llama-server") {
+		t.Errorf("wrong archive: %v", err)
+	}
+}
+
 func TestDownloadStallTimeout(t *testing.T) {
 	block := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -12,6 +12,18 @@
       "windows/arm64": "llama-{tag}-bin-win-cpu-arm64.zip"
     }
   },
+  "runtimes": {
+    "sd.cpp": {
+      "repo": "leejet/stable-diffusion.cpp",
+      "license": "MIT",
+      "refresh_after_days": 14,
+      "assets": {
+        "linux/amd64": "sd-*-bin-Linux-Ubuntu-*-x86_64.zip",
+        "darwin/arm64": "sd-*-bin-Darwin-macOS-*-arm64.zip",
+        "windows/amd64": "sd-*-bin-win-cpu-x64.zip"
+      }
+    }
+  },
   "discover": {
     "max_params_b": 5,
     "gguf_orgs": ["ggml-org", "unsloth"]

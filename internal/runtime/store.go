@@ -71,20 +71,43 @@ func (s Store) Verify(m *registry.Model) error {
 // Remove deletes the local files of m.
 func (s Store) Remove(m *registry.Model) error { return os.RemoveAll(s.modelDir(m)) }
 
-// RuntimeDir is where a pinned runtime release is unpacked.
-func (s Store) RuntimeDir(rt registry.Runtime) string {
-	return filepath.Join(s.Dir, "runtime", "llama.cpp-"+rt.Version)
+// MainBinary is the program whose presence marks a backend's runtime as
+// installed.
+var MainBinary = map[string]string{"llama.cpp": "llama-server", "sd.cpp": "sd-cli"}
+
+// runtimeName is the backend a runtime serves; older registries left it
+// implicit for llama.cpp.
+func runtimeName(rt registry.Runtime) string {
+	if rt.Name == "" {
+		return "llama.cpp"
+	}
+	return rt.Name
 }
 
-// InstallRuntime downloads, verifies and unpacks the pinned llama.cpp build
-// for this OS/arch. It is a no-op when already installed.
-func (s Store) InstallRuntime(ctx context.Context, f Fetcher, rt registry.Runtime, a registry.Asset) (string, error) {
+// RuntimeDir is where a pinned runtime release is unpacked, one directory
+// per backend and version.
+func (s Store) RuntimeDir(rt registry.Runtime) string {
+	return filepath.Join(s.Dir, "runtime", runtimeName(rt)+"-"+rt.Version)
+}
+
+// RuntimeInstalled reports whether rt is unpacked, returning its directory.
+func (s Store) RuntimeInstalled(rt registry.Runtime) (string, bool) {
 	dir := s.RuntimeDir(rt)
-	if _, err := os.Stat(filepath.Join(dir, exe("llama-server"))); err == nil {
+	_, err := os.Stat(filepath.Join(dir, exe(MainBinary[runtimeName(rt)])))
+	return dir, err == nil
+}
+
+// InstallRuntime downloads, verifies and unpacks a pinned runtime build for
+// this OS/arch. It is a no-op when already installed.
+func (s Store) InstallRuntime(ctx context.Context, f Fetcher, rt registry.Runtime, a registry.Asset) (string, error) {
+	name := runtimeName(rt)
+	main := exe(MainBinary[name])
+	dir := s.RuntimeDir(rt)
+	if _, err := os.Stat(filepath.Join(dir, main)); err == nil {
 		return dir, nil
 	}
 	archive := filepath.Join(s.Dir, "runtime", filepath.Base(a.URL))
-	if err := f.Download(ctx, a.URL, archive, a.SHA256, a.Size, "llama.cpp "+rt.Version); err != nil {
+	if err := f.Download(ctx, a.URL, archive, a.SHA256, a.Size, name+" "+rt.Version); err != nil {
 		return "", err
 	}
 	tmp := dir + ".tmp"
@@ -93,9 +116,9 @@ func (s Store) InstallRuntime(ctx context.Context, f Fetcher, rt registry.Runtim
 		os.RemoveAll(tmp)
 		return "", err
 	}
-	if _, err := os.Stat(filepath.Join(tmp, exe("llama-server"))); err != nil {
+	if _, err := os.Stat(filepath.Join(tmp, main)); err != nil {
 		os.RemoveAll(tmp)
-		return "", fmt.Errorf("runtime archive does not contain %s", exe("llama-server"))
+		return "", fmt.Errorf("%s archive does not contain %s", name, main)
 	}
 	os.RemoveAll(dir)
 	if err := os.Rename(tmp, dir); err != nil {

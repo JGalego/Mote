@@ -65,8 +65,19 @@ func TestEmbeddedRegistryIsValid(t *testing.T) {
 		}
 	}
 	for c := range Capabilities {
-		if _, err := r.Select(c, "small", Env{RAMMB: 8192}); err != nil {
-			t.Errorf("capability %s has no small model on 8 GiB: %v", c, err)
+		ram := 8192
+		if Optional[c] {
+			// Optional capabilities need a bigger machine, but not an
+			// unusual one.
+			ram = 16384
+		}
+		if _, err := r.Select(c, "small", Env{RAMMB: ram}); err != nil {
+			t.Errorf("capability %s has no small model on %d GiB: %v", c, ram/1024, err)
+		}
+	}
+	for c := range Optional {
+		if _, ok := Capabilities[c]; !ok {
+			t.Errorf("optional capability %s is not a capability", c)
 		}
 	}
 	// The stored defaults must be reproducible from the stored models and policy.
@@ -230,11 +241,17 @@ type fakeSource struct {
 	up      map[string]UpstreamInfo
 	release Release
 	fail    map[string]bool
+	// Optional per-repo revisions and releases; the defaults otherwise.
+	revs     map[string]string
+	releases map[string]Release
 }
 
 func (f *fakeSource) RepoFiles(_ context.Context, repo string) (string, map[string]RemoteFile, error) {
 	if f.fail[repo] {
 		return "", nil, errors.New("503")
+	}
+	if r, ok := f.revs[repo]; ok {
+		return r, f.files[repo], nil
 	}
 	return strings.Repeat("1", 40), f.files[repo], nil
 }
@@ -244,7 +261,12 @@ func (f *fakeSource) Upstream(_ context.Context, id string) (UpstreamInfo, error
 	}
 	return f.up[id], nil
 }
-func (f *fakeSource) LatestRelease(context.Context, string) (Release, error) { return f.release, nil }
+func (f *fakeSource) LatestRelease(_ context.Context, repo string) (Release, error) {
+	if r, ok := f.releases[repo]; ok {
+		return r, nil
+	}
+	return f.release, nil
+}
 func (f *fakeSource) Leaderboard(_ context.Context, ds string) ([]LeaderboardEntry, error) {
 	return []LeaderboardEntry{{ModelID: "org/New-1B", Value: 40, Params: 1e9}, {ModelID: "org/Up", Value: 50, Params: 1e9}, {ModelID: "org/Huge", Value: 90, Params: 70e9}}, nil
 }
@@ -264,7 +286,7 @@ func refreshFixture() (*Registry, Policy, Candidates, *fakeSource) {
 	c.Discover.MaxParamsB = 5
 	c.Discover.GGUFOrgs = []string{"ggml-org"}
 	c.Candidates = []Candidate{{ID: "up", Name: "Up", Upstream: "org/Up", Repo: "org/Up-GGUF", Quant: "Q4_K_M",
-		Files: map[string]string{"model": "up.gguf"}, Caps: []string{"text"}, Context: 4096}}
+		Files: map[string]FileSpec{"model": {File: "up.gguf"}}, Caps: []string{"text"}, Context: 4096}}
 	src := &fakeSource{
 		files: map[string]map[string]RemoteFile{"org/Up-GGUF": {"up.gguf": {SHA256: sha('d'), Size: 600 << 20}}},
 		up: map[string]UpstreamInfo{"org/Up": {License: "apache-2.0", ParamsB: 1.234, Evals: []Eval{
@@ -330,7 +352,7 @@ func TestRefreshKeepsPreviousOnFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	cands.Candidates = append(cands.Candidates, Candidate{ID: "gone", Upstream: "org/Gone", Repo: "org/Gone-GGUF",
-		Files: map[string]string{"model": "g.gguf"}, Caps: []string{"text"}, Context: 1})
+		Files: map[string]FileSpec{"model": {File: "g.gguf"}}, Caps: []string{"text"}, Context: 1})
 	src.fail["org/Up-GGUF"] = true
 	src.fail["org/Gone-GGUF"] = true
 	_, warns, err := Refresh(context.Background(), good, pol, cands, src, RefreshOptions{Now: now})

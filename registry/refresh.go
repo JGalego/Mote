@@ -9,19 +9,28 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"path"
 	"sort"
 	"strings"
 	"time"
 )
 
+// RuntimeSource says where a runtime's releases come from.
+type RuntimeSource struct {
+	Repo             string `json:"repo"`
+	License          string `json:"license"`
+	RefreshAfterDays int    `json:"refresh_after_days"`
+	// Assets maps "os/arch" to the asset's name: {tag} stands for the
+	// release tag, and * for any text (sd.cpp names its macOS build after
+	// the macOS version it was built on). Exactly one asset must match.
+	Assets map[string]string `json:"assets"`
+}
+
 // Candidates is the human-maintained input to Refresh.
 type Candidates struct {
-	Runtime struct {
-		Repo             string            `json:"repo"`
-		License          string            `json:"license"`
-		RefreshAfterDays int               `json:"refresh_after_days"`
-		Assets           map[string]string `json:"assets"` // "os/arch" -> name pattern with {tag}
-	} `json:"runtime"`
+	Runtime RuntimeSource `json:"runtime"`
+	// Runtimes are the other backends' runtimes, by backend name.
+	Runtimes map[string]RuntimeSource `json:"runtimes,omitempty"`
 	Discover struct {
 		MaxParamsB float64  `json:"max_params_b"`
 		GGUFOrgs   []string `json:"gguf_orgs"`
@@ -30,21 +39,51 @@ type Candidates struct {
 }
 
 type Candidate struct {
-	ID          string            `json:"id"`
-	Name        string            `json:"name"`
-	Upstream    string            `json:"upstream"`
-	Repo        string            `json:"repo"`
-	Quant       string            `json:"quant"`
-	Files       map[string]string `json:"files"`
-	Caps        []string          `json:"caps"`
-	Context     int               `json:"context"`
-	Args        []string          `json:"args,omitempty"`
-	OutputAfter string            `json:"output_after,omitempty"`
-	QueryPrefix string            `json:"query_prefix,omitempty"`
-	Notes       string            `json:"notes,omitempty"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Backend  string `json:"backend,omitempty"` // llama.cpp when empty
+	Upstream string `json:"upstream"`
+	Repo     string `json:"repo"`
+	Quant    string `json:"quant"`
+	// Files maps a role to a file in Repo, or to {"repo", "file"} for one
+	// kept elsewhere: an image model's text encoder and VAE usually are.
+	Files       map[string]FileSpec `json:"files"`
+	Caps        []string            `json:"caps"`
+	Context     int                 `json:"context"`
+	Args        []string            `json:"args,omitempty"`
+	OutputAfter string              `json:"output_after,omitempty"`
+	QueryPrefix string              `json:"query_prefix,omitempty"`
+	Notes       string              `json:"notes,omitempty"`
 	// RAMOverheadMB overrides the policy's estimate overhead for runtimes
 	// whose memory use is not dominated by the weights.
 	RAMOverheadMB int `json:"ram_overhead_mb,omitempty"`
+}
+
+// FileSpec is a file of a candidate, in its own repo or another.
+type FileSpec struct {
+	Repo string `json:"repo,omitempty"`
+	File string `json:"file"`
+}
+
+// UnmarshalJSON accepts a bare file name as well as the object form.
+func (f *FileSpec) UnmarshalJSON(b []byte) error {
+	var name string
+	if json.Unmarshal(b, &name) == nil {
+		*f = FileSpec{File: name}
+		return nil
+	}
+	type plain FileSpec
+	var p plain
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&p); err != nil {
+		return err
+	}
+	if p.File == "" {
+		return fmt.Errorf("file spec %s has no file", b)
+	}
+	*f = FileSpec(p)
+	return nil
 }
 
 // Source provides upstream facts. HF implements it over HTTPS; tests use a
@@ -118,7 +157,7 @@ func Refresh(ctx context.Context, prev *Registry, pol Policy, cands Candidates, 
 	}
 
 	if opt.Runtime {
-		rt, w, err := refreshRuntime(ctx, prev.Runtime, cands, src, opt.Now)
+		rt, w, err := refreshRuntime(ctx, "llama.cpp", prev.Runtime, cands.Runtime, src, opt.Now)
 		if err != nil {
 			warn = append(warn, "runtime: "+err.Error()+"; keeping "+prev.Runtime.Version)
 		} else {
@@ -126,9 +165,40 @@ func Refresh(ctx context.Context, prev *Registry, pol Policy, cands Candidates, 
 			warn = append(warn, w...)
 		}
 	}
+	// Other runtimes follow the same rule, and one that is new is pinned
+	// whether or not bumps were asked for: a model cannot run without it.
+	names := make([]string, 0, len(cands.Runtimes))
+	for n := range cands.Runtimes {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		old, had := prev.RuntimeFor(name)
+		if had && !opt.Runtime {
+			next.Runtimes = append(next.Runtimes, old)
+			continue
+		}
+		rt, w, err := refreshRuntime(ctx, name, old, cands.Runtimes[name], src, opt.Now)
+		switch {
+		case err != nil && had:
+			warn = append(warn, name+": "+err.Error()+"; keeping "+old.Version)
+			next.Runtimes = append(next.Runtimes, old)
+		case err != nil:
+			warn = append(warn, name+": "+err.Error()+"; its models cannot be offered")
+		default:
+			next.Runtimes = append(next.Runtimes, rt)
+			warn = append(warn, w...)
+		}
+	}
 
 	ok := 0
 	for _, c := range cands.Candidates {
+		if c.Backend != "" && c.Backend != "llama.cpp" {
+			if _, ok := next.RuntimeFor(c.Backend); !ok {
+				warn = append(warn, fmt.Sprintf("%s: no %s runtime is pinned; skipped", c.ID, c.Backend))
+				continue
+			}
+		}
 		m, err := buildModel(ctx, c, pol, src)
 		if err != nil {
 			if old, found := prev.Model(c.ID); found {
@@ -168,24 +238,50 @@ func buildModel(ctx context.Context, c Candidate, pol Policy, src Source) (Model
 	if err != nil {
 		return Model{}, err
 	}
+	backend := c.Backend
+	if backend == "" {
+		backend = "llama.cpp"
+	}
 	m := Model{
-		ID: c.ID, Name: c.Name, Backend: "llama.cpp", Upstream: c.Upstream,
+		ID: c.ID, Name: c.Name, Backend: backend, Upstream: c.Upstream,
 		Repo: c.Repo, Revision: rev, License: up.License, Quant: c.Quant,
 		ParamsB: math.Round(up.ParamsB*100) / 100, Caps: c.Caps, Context: c.Context,
 		Args: c.Args, OutputAfter: c.OutputAfter, QueryPrefix: c.QueryPrefix, Notes: c.Notes, Benchmarks: []Benchmark{},
 	}
-	for _, role := range []string{"model", "mmproj"} {
-		name, ok := c.Files[role]
+	// Each other repo is pinned to its own current revision, like the
+	// candidate's.
+	type pinned struct {
+		rev   string
+		files map[string]RemoteFile
+	}
+	repos := map[string]pinned{c.Repo: {rev, remote}}
+	for _, role := range []string{"model", "mmproj", "vae", "llm"} {
+		spec, ok := c.Files[role]
 		if !ok {
 			continue
 		}
-		rf, ok := remote[name]
-		if !ok || rf.SHA256 == "" {
-			return Model{}, fmt.Errorf("%s: file %s not found upstream", c.Repo, name)
+		repo := spec.Repo
+		if repo == "" {
+			repo = c.Repo
 		}
+		p, ok := repos[repo]
+		if !ok {
+			r, files, err := src.RepoFiles(ctx, repo)
+			if err != nil {
+				return Model{}, err
+			}
+			p = pinned{r, files}
+			repos[repo] = p
+		}
+		rf, ok := p.files[spec.File]
+		if !ok || rf.SHA256 == "" {
+			return Model{}, fmt.Errorf("%s: file %s not found upstream", repo, spec.File)
+		}
+		// Stored under its base name: the VAE of a diffusers repo lives
+		// in a vae/ folder, which the local layout does not need.
 		m.Files = append(m.Files, File{
-			Role: role, Name: name, SHA256: rf.SHA256, Size: rf.Size,
-			URL: fmt.Sprintf("https://huggingface.co/%s/resolve/%s/%s", c.Repo, rev, name),
+			Role: role, Name: path.Base(spec.File), SHA256: rf.SHA256, Size: rf.Size,
+			URL: fmt.Sprintf("https://huggingface.co/%s/resolve/%s/%s", repo, p.rev, spec.File),
 		})
 	}
 	mib := int((m.Bytes() + (1<<20 - 1)) >> 20)
@@ -236,40 +332,67 @@ func preferEval(a, b Eval) bool {
 	return a.Source < b.Source
 }
 
-func refreshRuntime(ctx context.Context, prev Runtime, cands Candidates, src Source, now time.Time) (Runtime, []string, error) {
-	rel, err := src.LatestRelease(ctx, cands.Runtime.Repo)
+func refreshRuntime(ctx context.Context, name string, prev Runtime, spec RuntimeSource, src Source, now time.Time) (Runtime, []string, error) {
+	rel, err := src.LatestRelease(ctx, spec.Repo)
 	if err != nil {
 		return prev, nil, err
 	}
 	if rel.Tag == prev.Version {
 		return prev, nil, nil
 	}
-	if prev.Version != "" && cands.Runtime.RefreshAfterDays > 0 {
+	if prev.Version != "" && spec.RefreshAfterDays > 0 {
 		if pub, err := time.Parse("2006-01-02", prev.Published); err == nil &&
-			now.Sub(pub) < time.Duration(cands.Runtime.RefreshAfterDays)*24*time.Hour {
+			now.Sub(pub) < time.Duration(spec.RefreshAfterDays)*24*time.Hour {
 			return prev, nil, nil
 		}
 	}
 	rt := Runtime{
-		Name: "llama.cpp", Version: rel.Tag, License: cands.Runtime.License,
+		Name: name, Version: rel.Tag, License: spec.License,
 		Published: rel.Published.UTC().Format("2006-01-02"),
-		Source:    "https://github.com/" + cands.Runtime.Repo + "/releases/tag/" + rel.Tag,
+		Source:    "https://github.com/" + spec.Repo + "/releases/tag/" + rel.Tag,
 	}
-	keys := make([]string, 0, len(cands.Runtime.Assets))
-	for k := range cands.Runtime.Assets {
+	keys := make([]string, 0, len(spec.Assets))
+	for k := range spec.Assets {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
-		name := strings.ReplaceAll(cands.Runtime.Assets[k], "{tag}", rel.Tag)
-		a, ok := rel.Assets[name]
-		if !ok || a.SHA256 == "" {
-			return prev, nil, fmt.Errorf("release %s lacks %s or its digest", rel.Tag, name)
+		a, err := matchAsset(rel, strings.ReplaceAll(spec.Assets[k], "{tag}", rel.Tag))
+		if err != nil {
+			return prev, nil, err
 		}
 		goos, arch, _ := strings.Cut(k, "/")
 		rt.Assets = append(rt.Assets, Asset{OS: goos, Arch: arch, URL: a.URL, SHA256: a.SHA256, Size: a.Size})
 	}
-	return rt, []string{fmt.Sprintf("runtime: %s -> %s", prev.Version, rel.Tag)}, nil
+	was := prev.Version
+	if was == "" {
+		was = "none"
+	}
+	return rt, []string{fmt.Sprintf("%s: %s -> %s", name, was, rel.Tag)}, nil
+}
+
+// matchAsset finds the one asset of a release whose name matches pattern,
+// in which * stands for any text.
+func matchAsset(rel Release, pattern string) (RemoteAsset, error) {
+	var found []string
+	for n := range rel.Assets {
+		if ok, _ := path.Match(pattern, n); ok {
+			found = append(found, n)
+		}
+	}
+	switch len(found) {
+	case 0:
+		return RemoteAsset{}, fmt.Errorf("release %s has no asset matching %s", rel.Tag, pattern)
+	case 1:
+	default:
+		sort.Strings(found)
+		return RemoteAsset{}, fmt.Errorf("release %s has several assets matching %s: %s", rel.Tag, pattern, strings.Join(found, ", "))
+	}
+	a := rel.Assets[found[0]]
+	if a.SHA256 == "" {
+		return RemoteAsset{}, fmt.Errorf("release %s lacks a digest for %s", rel.Tag, found[0])
+	}
+	return a, nil
 }
 
 func sameContent(a, b *Registry) bool {
@@ -430,7 +553,8 @@ func (h *HF) RepoFiles(ctx context.Context, repo string) (string, map[string]Rem
 			OID string `json:"oid"`
 		} `json:"lfs"`
 	}
-	if err := h.get(ctx, h.hf()+"/api/models/"+repo+"/tree/"+info.SHA, &tree, ""); err != nil {
+	// Recursive, since a diffusers repo keeps its VAE in a vae/ folder.
+	if err := h.get(ctx, h.hf()+"/api/models/"+repo+"/tree/"+info.SHA+"?recursive=true", &tree, ""); err != nil {
 		return "", nil, err
 	}
 	files := map[string]RemoteFile{}
