@@ -288,19 +288,22 @@ flowchart TD
   DO -. "choice under a JSON schema" .-> LLAMA
   AGENT -. "each step under a JSON schema" .-> LLAMA
   PIPE -- "tool step · <code>exec</code>" --> TOOLS["🔧 <code>ffmpeg</code> · <code>git</code><br/>any local program, no shell"]
+  PIPE -- "<code>draw</code>" --> SD["🎨 <code>sd-cli</code> · stable-diffusion.cpp<br/>CPU only · fetched on first use"]
 
-  DATA[("💾 data dir<br/>GGUF models · runtime · logs")] --> LLAMA
+  DATA[("💾 data dir<br/>GGUF models · runtimes · logs")] --> LLAMA
+  DATA --> SD
   HF(["🤗 Hugging Face"]) -. "<code>mote setup</code><br/><code>mote models pull</code><br/>pinned to a commit · SHA-256" .-> DATA
 
   LLAMA --> OUT["📤 stdout · <code>-o FILE</code> · <code>--apply</code>"]
   TOOLS --> OUT
+  SD --> OUT
 ```
 
 Inference runs in a llama.cpp server bound to `127.0.0.1` with GPU offload disabled (`--device none`). GGUF weights come from Hugging Face only when you allow it, pinned to a commit and verified by SHA-256.
 
 Models, logs and benchmark results live in the data directory (`~/.local/share/mote`, `~/Library/Application Support/mote`, `%LOCALAPPDATA%\mote`), configuration in the OS config directory. After setup, mote itself touches the network only for `mote update` and explicit pulls; MCP servers you add are programs of their own and may do more.
 
-Tasks are short pipelines in [`internal/task/tasks.json`](internal/task/tasks.json): each step calls a model capability (`text`, `code`, `extract`, `vision`, `asr`, `tts`, `embed`) or a local program (`ffmpeg`, `git`, or any other through `exec`), and every capability has its own specialized model.
+Tasks are short pipelines in [`internal/task/tasks.json`](internal/task/tasks.json): each step calls a model capability (`text`, `code`, `extract`, `vision`, `asr`, `tts`, `embed`, and the opt-in `image`, which runs on stable-diffusion.cpp) or a local program (`ffmpeg`, `git`, or any other through `exec`), and every capability has its own specialized model.
 
 `mote do` and `mote agent` never let a model call anything directly. Every choice the model makes is generated under a JSON schema listing only the real tasks and tools, so it cannot name one that does not exist or give it malformed arguments. mote then runs the call and feeds the result back. The agent's shell commands are checked, confirmed and, where possible, sandboxed. MCP servers are only ever local processes.
 
