@@ -39,6 +39,7 @@ var ops = map[string]op{
 	"convert":  {fn: opConvert, tools: []string{"ffmpeg"}},
 	"collect":  {fn: opCollect},
 	"rewrite":  {fn: opRewrite},
+	"exec":     {fn: opExec}, // its tool is the step's own cmd[0]
 }
 
 func (r *run) input(s Step) (Value, error) {

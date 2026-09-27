@@ -372,15 +372,19 @@ func installHint(tool string) string { return installHintOn(tool, runtime.GOOS) 
 // installHintOn takes the operating system as an argument so the advice for
 // every platform can be checked from any of them.
 func installHintOn(tool, goos string) string {
-	pkg := tool
-	if tool == "ffprobe" {
-		pkg = "ffmpeg"
+	// Packages named differently from the program they install. Tools
+	// wrapped by exec tasks can be anything, so an unknown one gets general
+	// advice rather than a guessed package name.
+	pkg, known := map[string]string{"ffmpeg": "ffmpeg", "ffprobe": "ffmpeg", "git": "git", "rg": "ripgrep", "jq": "jq"}[tool]
+	if !known {
+		return "install " + tool + " with your package manager, or set tools." + tool + " to its path"
 	}
 	switch goos {
 	case "darwin":
 		return "install it with `brew install " + pkg + "`"
 	case "windows":
-		return "install it with `winget install " + map[string]string{"ffmpeg": "Gyan.FFmpeg", "git": "Git.Git"}[pkg] + "`"
+		return "install it with `winget install " + map[string]string{
+			"ffmpeg": "Gyan.FFmpeg", "git": "Git.Git", "ripgrep": "BurntSushi.ripgrep.MSVC", "jq": "jqlang.jq"}[pkg] + "`"
 	}
 	return "install it with your package manager, e.g. `sudo apt install " + pkg + "`"
 }

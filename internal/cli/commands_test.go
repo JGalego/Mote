@@ -549,6 +549,12 @@ func TestInstallHintPerPlatform(t *testing.T) {
 		{"darwin", "ffprobe", "brew install ffmpeg"},
 		{"windows", "ffmpeg", "winget install Gyan.FFmpeg"},
 		{"windows", "git", "winget install Git.Git"},
+		{"linux", "rg", "apt install ripgrep"},
+		{"windows", "rg", "winget install BurntSushi.ripgrep.MSVC"},
+		{"windows", "jq", "winget install jqlang.jq"},
+		// A program only an exec task knows about gets no guessed package.
+		{"windows", "frobnicate", "install frobnicate with your package manager"},
+		{"linux", "frobnicate", "set tools.frobnicate to its path"},
 	}
 	for _, c := range cases {
 		if got := installHintOn(c.tool, c.goos); !strings.Contains(got, c.want) {

@@ -30,6 +30,17 @@ and an id that matches a built-in replaces it, so a prompt can be adjusted in
 place. A file that does not parse is an error naming the file, not a task that
 quietly disappears.
 
+**A local program** needs no Go: an `exec` step runs it and makes its
+standard output the value. `cmd` is the argument vector, the program first
+and fixed, then arguments that may use `{{name}}`; `from` feeds a value on
+stdin and `dir` sets the working directory. Nothing passes through a shell,
+so a value is always exactly one argument. An argument that is only a
+reference to an unset optional value is dropped. A value starting with `-`
+is refused unless a literal `--` comes before it in `cmd`, since it would
+otherwise reach the program as an option; put `--` before the values of any
+task a model may call. Output is capped at 1 MiB, and `mote tasks` reports
+whether the program is installed. See `examples/tools.json`.
+
 **A local tool or modality** is an op: a Go function in
 `internal/task/ops.go` registered in the `ops` map, with the executables it
 needs listed in `tools` so `mote tasks` and `mote doctor` can report them.

@@ -68,6 +68,10 @@ type Step struct {
 	Width      string `json:"width,omitempty"`
 	Dir        string `json:"dir,omitempty"`
 	Optional   bool   `json:"optional,omitempty"`
+	// Cmd is the argument vector of an exec step: a program on PATH, then
+	// its arguments, which may use {{name}} like a prompt. It never goes
+	// through a shell.
+	Cmd []string `json:"cmd,omitempty"`
 }
 
 // Value is what flows between steps: text, files, or both.
@@ -256,7 +260,10 @@ func (t Task) validate() error {
 				return fmt.Errorf("step %d: %q is not defined before use", i+1, ref)
 			}
 		}
-		for _, m := range tmplRe.FindAllStringSubmatch(s.Prompt+s.System, -1) {
+		if err := s.validateCmd(); err != nil {
+			return fmt.Errorf("step %d: %w", i+1, err)
+		}
+		for _, m := range tmplRe.FindAllStringSubmatch(s.Prompt+s.System+strings.Join(s.Cmd, " "), -1) {
 			if !defined[m[1]] {
 				return fmt.Errorf("step %d: template references undefined %q", i+1, m[1])
 			}
@@ -303,7 +310,11 @@ func (t Task) Tools() []string {
 	var out []string
 	seen := map[string]bool{}
 	for _, s := range t.Steps {
-		for _, tool := range ops[s.Op].tools {
+		tools := ops[s.Op].tools
+		if s.Op == "exec" && len(s.Cmd) > 0 {
+			tools = []string{s.Cmd[0]}
+		}
+		for _, tool := range tools {
 			if !seen[tool] {
 				seen[tool] = true
 				out = append(out, tool)

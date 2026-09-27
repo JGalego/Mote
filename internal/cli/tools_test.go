@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -205,5 +206,55 @@ func TestPipeStageFailuresAreReported(t *testing.T) {
 	code, _, errs := e.mote("", "pipe", "chat hello | describe")
 	if code == 0 || !strings.Contains(errs, "describe") {
 		t.Errorf("stage that cannot bind: %d %s", code, errs)
+	}
+}
+
+// A local program wrapped as a task runs like any other: from `mote run`,
+// inside a pipeline, and listed with the program it needs.
+func TestExecTasksWrapLocalPrograms(t *testing.T) {
+	e := newEnv(t)
+	e.setup()
+	bin := fakeTools(t)
+	e.install("qwen3.5-0.8b")
+	// wc stands in for a real tool: it prints its arguments, one per line,
+	// then counts the lines it was given on stdin.
+	os.WriteFile(filepath.Join(bin, "wc"), []byte(`#!/bin/sh
+for a; do echo "arg:$a"; done
+n=0
+while IFS= read -r line; do n=$((n+1)); done
+echo "lines:$n"
+`), 0o755)
+	dir := t.TempDir()
+	t.Setenv("MOTE_TASKS_DIR", dir)
+	os.WriteFile(filepath.Join(dir, "tools.json"), []byte(`{"tasks":[
+	  {"id":"count","summary":"Count lines","in":["text"],"out":"text",
+	   "params":[{"name":"text","kind":"text"},{"name":"label","kind":"text","optional":true}],
+	   "steps":[{"op":"exec","cmd":["wc","-l","--","{{label}}"],"from":"text","as":"out"}]},
+	  {"id":"absent","summary":"Needs a program that is not here","in":["text"],"out":"text",
+	   "params":[{"name":"text","kind":"text"}],
+	   "steps":[{"op":"exec","cmd":["nonesuch","{{text}}"],"as":"out"}]}]}`), 0o644)
+
+	code, out, errs := e.mote("", "run", "count", "a\nb\nc", "my label")
+	if code != 0 {
+		t.Fatalf("run: %d %s", code, errs)
+	}
+	for _, want := range []string{"arg:-l", "arg:--", "arg:my label", "lines:2"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("run output lacks %q: %q", want, out)
+		}
+	}
+
+	// In a pipeline the model's reply is the program's input.
+	code, out, errs = e.mote("", "pipe", "chat 'one' | count")
+	if code != 0 || !strings.Contains(out, "arg:-l") || strings.Contains(out, "arg:my label") {
+		t.Fatalf("pipe: %d %q %s", code, out, errs)
+	}
+
+	code, out, _ = e.mote("", "tasks")
+	if code != 0 || !regexp.MustCompile(`wc: \S*ok`).MatchString(out) || !regexp.MustCompile(`nonesuch: \S*missing`).MatchString(out) {
+		t.Errorf("tasks should report the wrapped programs: %s", out)
+	}
+	if code, _, errs := e.mote("", "run", "absent", "x"); code == 0 || !strings.Contains(errs, "nonesuch") {
+		t.Errorf("missing program: %d %s", code, errs)
 	}
 }

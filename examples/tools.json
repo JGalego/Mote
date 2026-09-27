@@ -1,0 +1,34 @@
+{
+  "tasks": [
+    {
+      "id": "search",
+      "summary": "Search files for a pattern with ripgrep",
+      "examples": ["find where mutex is used", "search the code for TODO"],
+      "in": ["text"], "out": "text",
+      "params": [{"name": "pattern", "kind": "text"}, {"name": "dir", "kind": "dir", "optional": true}],
+      "steps": [
+        {"op": "exec", "cmd": ["rg", "--line-number", "--max-count", "5", "--", "{{pattern}}", "{{dir}}"], "as": "out"}
+      ]
+    },
+    {
+      "id": "query",
+      "summary": "Pick fields out of a JSON file with jq",
+      "examples": ["get the total from this invoice json", "list the names in this json file"],
+      "in": ["data", "text"], "out": "data",
+      "params": [{"name": "file", "kind": "file"}, {"name": "filter", "kind": "text", "default": "."}],
+      "steps": [
+        {"op": "exec", "cmd": ["jq", "--", "{{filter}}", "{{file}}"], "as": "out"}
+      ]
+    },
+    {
+      "id": "history",
+      "summary": "Show the recent commits of a git repository",
+      "examples": ["what changed recently", "show the last commits"],
+      "in": ["code"], "out": "text",
+      "params": [{"name": "repo", "kind": "dir"}],
+      "steps": [
+        {"op": "exec", "cmd": ["git", "log", "--oneline", "-n", "15"], "dir": "repo", "as": "out"}
+      ]
+    }
+  ]
+}

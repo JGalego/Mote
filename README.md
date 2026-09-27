@@ -232,6 +232,17 @@ chunks, so only the first one waits for it.
 
 Tasks are data, not code: put a file shaped like [`tasks.json`](internal/task/tasks.json) in `tasks/*.json` under the config directory (`mote tasks` prints the path) and it is validated, listed as `custom` and run like the rest. An id that matches a built-in replaces it.
 
+A task can also wrap a program you already have. An `exec` step runs it with
+an argument list, never through a shell, and its output becomes the value:
+
+```json
+{"op": "exec", "cmd": ["rg", "--line-number", "--", "{{pattern}}", "{{dir}}"], "as": "out"}
+```
+
+[`examples/tools.json`](examples/tools.json) wraps `rg`, `jq` and `git log`
+this way; copy it into `tasks/` and they work with `mote run`, `mote pipe` and
+`mote do`.
+
 See [extending mote](docs/extending.md).
 
 ## Memory
