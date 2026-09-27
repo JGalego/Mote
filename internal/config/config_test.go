@@ -122,3 +122,114 @@ func TestDirs(t *testing.T) {
 		t.Error("data_dir ignored")
 	}
 }
+
+func TestDirAndDataDirFollowTheEnvironment(t *testing.T) {
+	t.Setenv("MOTE_CONFIG_DIR", "/tmp/cfg-override")
+	if Dir() != "/tmp/cfg-override" {
+		t.Errorf("Dir: %s", Dir())
+	}
+	t.Setenv("MOTE_CONFIG_DIR", "")
+	if d := Dir(); !strings.HasSuffix(d, "mote") {
+		t.Errorf("default Dir: %s", d)
+	}
+	t.Setenv("MOTE_HOME", "/tmp/data-override")
+	if DefaultDataDir() != "/tmp/data-override" {
+		t.Errorf("DefaultDataDir: %s", DefaultDataDir())
+	}
+	// MOTE_HOME wins over a configured data_dir, so tests stay isolated.
+	c := Config{DataDir: "/tmp/from-config"}
+	if c.Data() != "/tmp/data-override" {
+		t.Errorf("Data with MOTE_HOME set: %s", c.Data())
+	}
+	t.Setenv("MOTE_HOME", "")
+	if c.Data() != "/tmp/from-config" {
+		t.Errorf("Data from config: %s", c.Data())
+	}
+	if (Config{}).Data() == "" {
+		t.Error("default data dir is empty")
+	}
+}
+
+func TestSetEveryKey(t *testing.T) {
+	c := Default()
+	cases := []struct{ key, value string }{
+		{"profile", "quality"}, {"editor", "vi"}, {"workspace", "/tmp/w"},
+		{"data_dir", "/tmp/d"}, {"llama_dir", "/tmp/l"}, {"threads", "4"},
+		{"auto_download", "true"}, {"reuse_tools", "false"},
+		{"wake_word", "hey there"}, {"router", "embed"}, {"memory", "true"},
+		{"models.text", "some-model"}, {"tools.ffmpeg", "/usr/bin/ffmpeg"},
+	}
+	for _, c2 := range cases {
+		if err := c.Set(c2.key, c2.value); err != nil {
+			t.Errorf("set %s=%s: %v", c2.key, c2.value, err)
+		}
+	}
+	if c.Profile != "quality" || c.Editor != "vi" || c.Threads != 4 || !c.AutoDownload ||
+		c.ReuseTools || c.WakeWord != "hey there" || c.Router != "embed" || !c.Memory {
+		t.Errorf("config after sets: %+v", c)
+	}
+	if c.Models["text"] != "some-model" || c.Tools["ffmpeg"] != "/usr/bin/ffmpeg" {
+		t.Errorf("maps: %+v %+v", c.Models, c.Tools)
+	}
+	// Clearing a map entry removes it rather than storing an empty string.
+	if err := c.Set("models.text", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := c.Models["text"]; ok {
+		t.Errorf("cleared key remains: %+v", c.Models)
+	}
+	for _, bad := range []struct{ key, value string }{
+		{"auto_download", "maybe"}, {"reuse_tools", "sometimes"},
+		{"threads", "lots"}, {"router", "psychic"}, {"memory", "perhaps"},
+		{"nosuchkey", "x"},
+	} {
+		if err := c.Set(bad.key, bad.value); err == nil {
+			t.Errorf("%s=%s accepted", bad.key, bad.value)
+		}
+	}
+}
+
+func TestLoadRejectsBrokenConfig(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Load(dir); !errors.Is(err, ErrNotConfigured) {
+		t.Errorf("missing config: %v", err)
+	}
+	os.WriteFile(Path(dir), []byte("{not json"), 0o644)
+	if _, err := Load(dir); err == nil || errors.Is(err, ErrNotConfigured) {
+		t.Errorf("broken config: %v", err)
+	}
+	os.WriteFile(Path(dir), []byte(`{"schema":99,"profile":"small"}`), 0o644)
+	if _, err := Load(dir); err == nil {
+		t.Error("future schema accepted")
+	}
+}
+
+func TestDataDirPerPlatform(t *testing.T) {
+	env := func(vals map[string]string) func(string) string {
+		return func(k string) string { return vals[k] }
+	}
+	none := env(nil)
+	cases := []struct{ goos, want string }{
+		{"linux", "/home/u/.local/share/mote"},
+		{"darwin", "/home/u/Library/Application Support/mote"},
+		{"windows", filepath.Join("/home/u", "AppData", "Local", "mote")},
+	}
+	for _, c := range cases {
+		if got := dataDirOn(c.goos, "/home/u", none); got != c.want {
+			t.Errorf("%s: got %s want %s", c.goos, got, c.want)
+		}
+	}
+	// The platform conventions win over the home directory when set.
+	if got := dataDirOn("linux", "/home/u", env(map[string]string{"XDG_DATA_HOME": "/xdg"})); got != filepath.Join("/xdg", "mote") {
+		t.Errorf("XDG_DATA_HOME ignored: %s", got)
+	}
+	if got := dataDirOn("windows", "/home/u", env(map[string]string{"LOCALAPPDATA": `C:\App`})); got != filepath.Join(`C:\App`, "mote") {
+		t.Errorf("LOCALAPPDATA ignored: %s", got)
+	}
+	// MOTE_HOME overrides everything, which is what keeps tests isolated.
+	for _, goos := range []string{"linux", "darwin", "windows"} {
+		if got := dataDirOn(goos, "/home/u", env(map[string]string{"MOTE_HOME": "/override", "XDG_DATA_HOME": "/xdg"})); got != "/override" {
+			t.Errorf("%s: MOTE_HOME ignored: %s", goos, got)
+		}
+	}
+}

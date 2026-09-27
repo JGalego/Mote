@@ -96,6 +96,23 @@ func TestValidateRejects(t *testing.T) {
 		"gate profile":  func(r *Registry) { delete(r.Policy.Gates["text"].Min, "quality") },
 		"bad default":   func(r *Registry) { r.Defaults = map[string]map[string]Choice{"small": {"text": {Model: "nope"}}} },
 		"asset archive": func(r *Registry) { r.Runtime.Assets[0].URL = "https://example.org/x.exe" },
+		"no version":    func(r *Registry) { r.Version = "" },
+		"asset os":      func(r *Registry) { r.Runtime.Assets[0].OS = "plan9" },
+		"asset arch":    func(r *Registry) { r.Runtime.Assets[0].Arch = "vax" },
+		"asset hash":    func(r *Registry) { r.Runtime.Assets[0].SHA256 = "" },
+		"gate cap":      func(r *Registry) { r.Policy.Gates["telepathy"] = r.Policy.Gates["text"] },
+		"gate fields":   func(r *Registry) { g := r.Policy.Gates["text"]; g.Dataset = ""; r.Policy.Gates["text"] = g },
+		"bad model id":  func(r *Registry) { r.Models[0].ID = "Not An Id!" },
+		"backend":       func(r *Registry) { r.Models[0].Backend = "pytorch" },
+		"no caps":       func(r *Registry) { r.Models[0].Caps = nil },
+		"no license":    func(r *Registry) { r.Models[0].License = "" },
+		"no model file": func(r *Registry) { r.Models[0].Files[0].Role = "mmproj" },
+		"file role":     func(r *Registry) { r.Models[0].Files[0].Role = "surprise" },
+		"bench date":    func(r *Registry) { r.Models[0].Benchmarks[0].Date = "" },
+		"bench kind":    func(r *Registry) { r.Models[0].Benchmarks[0].Kind = "rumour" },
+		"default prof":  func(r *Registry) { r.Defaults = map[string]map[string]Choice{"huge": {"text": {Model: "tiny"}}} },
+		"default cap":   func(r *Registry) { r.Defaults = map[string]map[string]Choice{"small": {"telepathy": {Model: "tiny"}}} },
+		"default lacks": func(r *Registry) { r.Defaults = map[string]map[string]Choice{"small": {"asr": {Model: "tiny"}}} },
 	}
 	for name, mutate := range cases {
 		r := fixture()

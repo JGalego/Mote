@@ -2,7 +2,9 @@ package bench
 
 import (
 	"context"
+	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -143,5 +145,221 @@ func TestSaveLoadPropose(t *testing.T) {
 	}
 	if _, err := os.Stat(dir + "/bench/history.jsonl"); err != nil {
 		t.Error("history not written")
+	}
+}
+
+// embedFake answers embedding requests with bag-of-words vectors, so the
+// embedding case has a real comparison to make.
+type embedFake struct{ fake }
+
+// Open must return the embedding session itself: the promoted method would
+// hand back the plain fake, which cannot embed.
+func (f embedFake) Open(context.Context, *registry.Model, map[string]string) (runtime.Session, error) {
+	return f, nil
+}
+
+func (embedFake) Embed(_ context.Context, texts []string) ([][]float32, error) {
+	out := make([][]float32, len(texts))
+	for i, t := range texts {
+		v := make([]float32, 32)
+		for _, w := range strings.Fields(strings.ToLower(t)) {
+			h := 0
+			for _, c := range w {
+				h = (h*31 + int(c)) % len(v)
+			}
+			v[h]++
+		}
+		out[i] = v
+	}
+	return out, nil
+}
+
+func TestEmbeddingCase(t *testing.T) {
+	c := Case{
+		ID: "embed-routing", Cap: "embed",
+		Prompt:    "turn this recording into text",
+		Similar:   "transcribe a recording into text",
+		Different: "resize an image with ffmpeg",
+	}
+	ok, why, err := embedCase(context.Background(), embedFake{}, c)
+	if err != nil || !ok {
+		t.Errorf("similar text should win: ok=%v why=%q err=%v", ok, why, err)
+	}
+	// Swapped, the case must fail and say what it found.
+	c.Similar, c.Different = c.Different, c.Similar
+	ok, why, err = embedCase(context.Background(), embedFake{}, c)
+	if err != nil || ok {
+		t.Errorf("expected a failure: ok=%v err=%v", ok, err)
+	}
+	if !strings.Contains(why, "closer to") {
+		t.Errorf("unhelpful explanation: %q", why)
+	}
+	// A model that cannot embed is an error, not a silent pass.
+	if _, _, err := embedCase(context.Background(), fake{}, c); err == nil {
+		t.Error("a non-embedding model was accepted")
+	}
+}
+
+func TestRunBenchesAnEmbeddingModel(t *testing.T) {
+	opt := Options{
+		Models:  []*registry.Model{{ID: "vec", Caps: []string{"embed"}}},
+		Files:   func(*registry.Model) map[string]string { return nil },
+		Backend: func(*registry.Model) (runtime.Backend, error) { return embedFake{}, nil },
+		TempDir: t.TempDir(),
+	}
+	entries, err := Run(context.Background(), opt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entries: %+v", entries)
+	}
+	e := entries[0]
+	// The built-in case is scored with a bag-of-words stand-in rather than
+	// a real encoder, so it may or may not pass; what matters is that the
+	// embedding path ran, timed the model and reached a verdict.
+	if e.Cases != 1 {
+		t.Errorf("embedding case did not run: %+v", e)
+	}
+	if e.Passed == 0 && len(e.Failures) == 0 {
+		t.Errorf("no verdict recorded: %+v", e)
+	}
+	if e.LatencyMS <= 0 {
+		t.Errorf("embedding was not timed: %+v", e)
+	}
+	// Nothing is generated, so there is no token rate to report.
+	if e.TokensPerSec != 0 {
+		t.Errorf("tokens per second for an encoder: %v", e.TokensPerSec)
+	}
+}
+
+func TestResultsSortedAndLoadErrors(t *testing.T) {
+	r := Results{Entries: map[string]Entry{
+		"z": {Model: "z"}, "a": {Model: "a"}, "m": {Model: "m"},
+	}}
+	got := r.Sorted()
+	if len(got) != 3 || got[0].Model != "a" || got[2].Model != "z" {
+		t.Errorf("sorted: %+v", got)
+	}
+	if len(Results{}.Sorted()) != 0 {
+		t.Error("empty results should sort to nothing")
+	}
+
+	dir := t.TempDir()
+	// No results yet is not an error.
+	if r, err := Load(dir); err != nil || len(r.Entries) != 0 {
+		t.Errorf("empty dir: %+v %v", r, err)
+	}
+	// A damaged file is reported, naming the path.
+	os.MkdirAll(filepath.Dir(resultsPath(dir)), 0o755)
+	os.WriteFile(resultsPath(dir), []byte("{not json"), 0o644)
+	if _, err := Load(dir); err == nil || !strings.Contains(err.Error(), "results") {
+		t.Errorf("broken results: %v", err)
+	}
+	// A file without an entries map still loads usably.
+	os.WriteFile(resultsPath(dir), []byte(`{"machine":"x"}`), 0o644)
+	r2, err := Load(dir)
+	if err != nil || r2.Entries == nil {
+		t.Errorf("results without entries: %+v %v", r2, err)
+	}
+	if err := Save(dir, "machine", []Entry{{Model: "m"}}); err != nil {
+		t.Fatal(err)
+	}
+	if r3, _ := Load(dir); r3.Machine != "machine" || r3.Entries["m"].Model != "m" {
+		t.Errorf("saved results: %+v", r3)
+	}
+}
+
+func TestCasesRejectsBadDefinitions(t *testing.T) {
+	// The built-in cases must always parse and name real capabilities.
+	if _, err := Cases(); err != nil {
+		t.Fatalf("built-in cases: %v", err)
+	}
+	// Check's regex path is compiled per call, so a bad one must not panic
+	// the run; Cases is what rejects it up front.
+	if ok, why := Check(Case{Regex: `def\s+add`}, "nothing here"); ok || why == "" {
+		t.Errorf("regex mismatch: %v %q", ok, why)
+	}
+}
+
+// failing backends, to check that one bad model does not sink a run.
+type openFails struct{ fake }
+
+func (openFails) Open(context.Context, *registry.Model, map[string]string) (runtime.Session, error) {
+	return nil, errors.New("model will not load")
+}
+
+type genFails struct{ fake }
+
+func (g genFails) Open(context.Context, *registry.Model, map[string]string) (runtime.Session, error) {
+	return g, nil
+}
+func (genFails) Generate(context.Context, runtime.Request) (runtime.Result, error) {
+	return runtime.Result{}, errors.New("generation failed")
+}
+
+type speakFails struct{ fake }
+
+func (s speakFails) Open(context.Context, *registry.Model, map[string]string) (runtime.Session, error) {
+	return s, nil
+}
+func (speakFails) Speak(context.Context, *registry.Model, map[string]string, string, string) (runtime.Stats, error) {
+	return runtime.Stats{}, errors.New("no voice")
+}
+
+func TestRunReportsModelFailures(t *testing.T) {
+	base := func(b runtime.Backend, caps ...string) Options {
+		return Options{
+			Models:  []*registry.Model{{ID: "m", Caps: caps}},
+			Files:   func(*registry.Model) map[string]string { return nil },
+			Backend: func(*registry.Model) (runtime.Backend, error) { return b, nil },
+			TempDir: t.TempDir(),
+		}
+	}
+	// A model that will not load stops the run and says which one.
+	if _, err := Run(context.Background(), base(openFails{}, "text")); err == nil || !strings.Contains(err.Error(), "m:") {
+		t.Errorf("open failure: %v", err)
+	}
+	// A model that loads but cannot answer records failures instead.
+	entries, err := Run(context.Background(), base(genFails{}, "text"))
+	if err != nil {
+		t.Fatalf("generate failure: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Passed != 0 || len(entries[0].Failures) == 0 {
+		t.Errorf("failures not recorded: %+v", entries)
+	}
+	// A tts model whose synthesis fails is reported, not silently skipped.
+	opt := base(speakFails{}, "tts")
+	entries, err = Run(context.Background(), opt)
+	if err != nil {
+		t.Fatalf("speak failure: %v", err)
+	}
+	if len(entries[0].Failures) == 0 {
+		t.Errorf("tts failure not recorded: %+v", entries[0])
+	}
+	// A backend that cannot be built at all is an error.
+	bad := base(fake{}, "text")
+	bad.Backend = func(*registry.Model) (runtime.Backend, error) { return nil, errors.New("unknown backend") }
+	if _, err := Run(context.Background(), bad); err == nil {
+		t.Error("a backend failure was accepted")
+	}
+	// A model with no cases for its capability is skipped quietly.
+	none := base(fake{}, "vision")
+	none.Models[0].Caps = []string{"telepathy"}
+	if entries, err := Run(context.Background(), none); err != nil || len(entries) != 0 {
+		t.Errorf("unknown capability: %+v %v", entries, err)
+	}
+}
+
+func TestSaveRefusesAnUnwritableDirectory(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores permissions")
+	}
+	dir := t.TempDir()
+	locked := filepath.Join(dir, "locked")
+	os.Mkdir(locked, 0o500)
+	t.Cleanup(func() { os.Chmod(locked, 0o700) })
+	if err := Save(locked, "machine", []Entry{{Model: "m"}}); err == nil {
+		t.Error("saving into a read-only directory reported success")
 	}
 }

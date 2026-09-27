@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -343,5 +344,460 @@ func TestDownloadStallTimeout(t *testing.T) {
 	}
 	if st, _ := os.Stat(dest + ".part"); st == nil || st.Size() != 5 {
 		t.Error("partial file not kept for resume")
+	}
+}
+
+func TestVerifyFileReportsWhatIsWrong(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "f.bin")
+	body := []byte("hello")
+	os.WriteFile(p, body, 0o644)
+	sum := sha256.Sum256(body)
+	good := hex.EncodeToString(sum[:])
+
+	if err := VerifyFile(p, good, int64(len(body))); err != nil {
+		t.Errorf("good file: %v", err)
+	}
+	err := VerifyFile(p, good, 99)
+	if err == nil || !strings.Contains(err.Error(), "size mismatch") {
+		t.Errorf("size: %v", err)
+	}
+	err = VerifyFile(p, strings.Repeat("0", 64), int64(len(body)))
+	if err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
+		t.Errorf("checksum: %v", err)
+	}
+	if err := VerifyFile(filepath.Join(dir, "missing"), good, 5); err == nil {
+		t.Error("missing file accepted")
+	}
+}
+
+func TestExtractRejectsUnknownArchives(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "thing.rar")
+	os.WriteFile(p, []byte("x"), 0o644)
+	err := Extract(p, filepath.Join(dir, "out"))
+	if err == nil || !strings.Contains(err.Error(), "unsupported archive") {
+		t.Errorf("unknown archive: %v", err)
+	}
+	// A corrupt archive of a supported type fails cleanly too.
+	bad := filepath.Join(dir, "broken.tar.gz")
+	os.WriteFile(bad, []byte("not gzip"), 0o644)
+	if err := Extract(bad, filepath.Join(dir, "out2")); err == nil {
+		t.Error("corrupt tar.gz accepted")
+	}
+	badZip := filepath.Join(dir, "broken.zip")
+	os.WriteFile(badZip, []byte("not a zip"), 0o644)
+	if err := Extract(badZip, filepath.Join(dir, "out3")); err == nil {
+		t.Error("corrupt zip accepted")
+	}
+}
+
+func TestStorePullDownloadsWhatIsMissing(t *testing.T) {
+	body := []byte("model weights")
+	sum := sha256.Sum256(body)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(body)
+	}))
+	defer srv.Close()
+
+	m := &registry.Model{ID: "m", Files: []registry.File{{
+		Role: "model", Name: "m.gguf", URL: srv.URL + "/m.gguf",
+		SHA256: hex.EncodeToString(sum[:]), Size: int64(len(body)),
+	}}}
+	s := Store{Dir: t.TempDir()}
+	if s.Installed(m) {
+		t.Fatal("empty store reports the model installed")
+	}
+	f := Fetcher{AllowHTTP: true}
+	if err := s.Pull(context.Background(), f, m); err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	if !s.Installed(m) {
+		t.Error("model not installed after pull")
+	}
+	if err := s.Verify(m); err != nil {
+		t.Errorf("verify after pull: %v", err)
+	}
+	// Pulling again is a no-op rather than a re-download.
+	if err := s.Pull(context.Background(), f, m); err != nil {
+		t.Errorf("second pull: %v", err)
+	}
+	if err := s.Remove(m); err != nil {
+		t.Fatal(err)
+	}
+	if s.Installed(m) {
+		t.Error("model still installed after remove")
+	}
+	// A pull that cannot be verified is an error.
+	m.Files[0].SHA256 = strings.Repeat("b", 64)
+	if err := s.Pull(context.Background(), f, m); err == nil {
+		t.Error("pull accepted a file with the wrong hash")
+	}
+}
+
+func TestImageMIME(t *testing.T) {
+	cases := map[string]string{
+		"a.png": "image/png", "a.PNG": "image/png",
+		"a.jpg": "image/jpeg", "a.jpeg": "image/jpeg",
+		"a.webp": "image/webp", "a.gif": "image/gif", "a.bmp": "image/bmp",
+		"a.bin": "image/png", // unknown extensions are assumed to be png
+	}
+	for in, want := range cases {
+		if got := imageMIME(in); got != want {
+			t.Errorf("imageMIME(%q) = %q want %q", in, got, want)
+		}
+	}
+}
+
+func TestCosine(t *testing.T) {
+	if got := Cosine([]float32{1, 0}, []float32{1, 0}); got < 0.999 {
+		t.Errorf("identical vectors scored %v", got)
+	}
+	if got := Cosine([]float32{1, 0}, []float32{0, 1}); got != 0 {
+		t.Errorf("orthogonal vectors scored %v", got)
+	}
+	// Mismatched, empty or zero vectors are not comparable and score 0.
+	for _, c := range [][2][]float32{
+		{{1, 0}, {1, 0, 0}},
+		{{}, {}},
+		{{0, 0}, {1, 1}},
+	} {
+		if got := Cosine(c[0], c[1]); got != 0 {
+			t.Errorf("Cosine(%v, %v) = %v", c[0], c[1], got)
+		}
+	}
+}
+
+func TestTailReadsTheEndOfALog(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "log")
+	os.WriteFile(p, []byte("one\ntwo\nthree\n"), 0o644)
+	got := tail(p, 2)
+	if !strings.Contains(got, "three") || strings.Contains(got, "one") {
+		t.Errorf("tail: %q", got)
+	}
+	if tail(filepath.Join(t.TempDir(), "missing"), 2) != "" {
+		t.Error("missing log should read as empty")
+	}
+}
+
+// stubServer returns a *server talking to h instead of a real llama-server,
+// so the HTTP handling can be tested without starting a process.
+func stubServer(t *testing.T, h http.HandlerFunc) *server {
+	t.Helper()
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+	return &server{
+		base: srv.URL, client: srv.Client(),
+		model: &registry.Model{ID: "m"}, exited: make(chan struct{}),
+	}
+}
+
+func TestGenerateReportsServerProblems(t *testing.T) {
+	ctx := context.Background()
+	// A non-200 carries the body, which is where llama.cpp explains itself.
+	s := stubServer(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "context too long", http.StatusBadRequest)
+	})
+	_, err := s.Generate(ctx, Request{Prompt: "hi"})
+	if err == nil || !strings.Contains(err.Error(), "context too long") {
+		t.Errorf("status error: %v", err)
+	}
+	// A body that is not the expected shape is reported, not ignored.
+	s = stubServer(t, func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`{"choices":[]}`)) })
+	if _, err := s.Generate(ctx, Request{Prompt: "hi"}); err == nil {
+		t.Error("a reply with no choices was accepted")
+	}
+	s = stubServer(t, func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("not json")) })
+	if _, err := s.Generate(ctx, Request{Prompt: "hi"}); err == nil {
+		t.Error("a non-JSON reply was accepted")
+	}
+	// A dead server surfaces the transport error.
+	dead := &server{base: "http://127.0.0.1:1", client: &http.Client{}, model: &registry.Model{ID: "m"}}
+	if _, err := dead.Generate(ctx, Request{Prompt: "hi"}); err == nil {
+		t.Error("an unreachable server was accepted")
+	}
+	// A missing image is caught before the request is sent.
+	if _, err := s.Generate(ctx, Request{Images: []string{"/nope/missing.png"}}); err == nil {
+		t.Error("a missing image was accepted")
+	}
+	if _, err := s.Generate(ctx, Request{Audio: []string{"/nope/missing.wav"}}); err == nil {
+		t.Error("missing audio was accepted")
+	}
+}
+
+func TestGenerateRejectsBadStreamChunks(t *testing.T) {
+	s := stubServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Write([]byte("data: {not json}\n\n"))
+	})
+	_, err := s.Generate(context.Background(), Request{Prompt: "hi", OnToken: func(string) {}})
+	if err == nil || !strings.Contains(err.Error(), "bad stream chunk") {
+		t.Errorf("bad chunk: %v", err)
+	}
+}
+
+func TestEmbedErrors(t *testing.T) {
+	ctx := context.Background()
+	// Nothing to embed is not a request at all.
+	s := stubServer(t, func(w http.ResponseWriter, r *http.Request) { t.Error("server called for an empty batch") })
+	if v, err := s.Embed(ctx, nil); err != nil || v != nil {
+		t.Errorf("empty batch: %v %v", v, err)
+	}
+	s = stubServer(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "no embedding support", http.StatusBadRequest)
+	})
+	if _, err := s.Embed(ctx, []string{"a"}); err == nil || !strings.Contains(err.Error(), "no embedding support") {
+		t.Errorf("status: %v", err)
+	}
+	s = stubServer(t, func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("not json")) })
+	if _, err := s.Embed(ctx, []string{"a"}); err == nil {
+		t.Error("non-JSON accepted")
+	}
+	// One vector per text, or the caller cannot line them up.
+	s = stubServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"data":[{"index":0,"embedding":[1,2]}]}`))
+	})
+	if _, err := s.Embed(ctx, []string{"a", "b"}); err == nil || !strings.Contains(err.Error(), "2 texts") {
+		t.Errorf("count mismatch: %v", err)
+	}
+	s = stubServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"data":[{"index":7,"embedding":[1,2]}]}`))
+	})
+	if _, err := s.Embed(ctx, []string{"a"}); err == nil || !strings.Contains(err.Error(), "index 7") {
+		t.Errorf("bad index: %v", err)
+	}
+	dead := &server{base: "http://127.0.0.1:1", client: &http.Client{}, model: &registry.Model{ID: "m"}}
+	if _, err := dead.Embed(ctx, []string{"a"}); err == nil {
+		t.Error("unreachable server accepted")
+	}
+}
+
+func TestEmbedReordersByIndex(t *testing.T) {
+	s := stubServer(t, func(w http.ResponseWriter, r *http.Request) {
+		// Out of order on purpose: the index decides, not the position.
+		w.Write([]byte(`{"data":[{"index":1,"embedding":[9]},{"index":0,"embedding":[1]}]}`))
+	})
+	v, err := s.Embed(context.Background(), []string{"first", "second"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v[0][0] != 1 || v[1][0] != 9 {
+		t.Errorf("vectors not placed by index: %v", v)
+	}
+}
+
+func TestSpeakWithoutTheBinary(t *testing.T) {
+	l := &Llama{Dir: t.TempDir()}
+	_, err := l.Speak(context.Background(), &registry.Model{ID: "m"}, nil, "hello", filepath.Join(t.TempDir(), "o.wav"))
+	if err == nil || !strings.Contains(err.Error(), "llama-tts not found") {
+		t.Errorf("missing llama-tts: %v", err)
+	}
+}
+
+func TestCheckFlagsWithoutTheBinary(t *testing.T) {
+	l := &Llama{Dir: t.TempDir()}
+	if _, err := l.CheckFlags(); err == nil {
+		t.Error("missing llama-server accepted")
+	}
+}
+
+func TestDownloadRejectsAndRecovers(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	f := Fetcher{AllowHTTP: true}
+
+	// Only HTTPS, or HTTP to the loopback when explicitly allowed.
+	err := Fetcher{}.Download(ctx, "http://example.org/x", filepath.Join(dir, "x"), "", 1, "x")
+	if err == nil || !strings.Contains(err.Error(), "non-HTTPS") {
+		t.Errorf("plain HTTP: %v", err)
+	}
+	if err := f.Download(ctx, "://bad url", filepath.Join(dir, "x"), "", 1, "x"); err == nil {
+		t.Error("unparseable URL accepted")
+	}
+	// A 404 names the label so the user knows which file failed.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+	err = f.Download(ctx, srv.URL+"/gone", filepath.Join(dir, "gone"), "", 1, "the weights")
+	if err == nil || !strings.Contains(err.Error(), "the weights") {
+		t.Errorf("404: %v", err)
+	}
+	// A connection that dies mid-body is an error, not a truncated file.
+	body := strings.Repeat("x", 1024)
+	cut := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "2048")
+		w.Write([]byte(body))
+	}))
+	defer cut.Close()
+	dest := filepath.Join(dir, "cut")
+	if err := f.Download(ctx, cut.URL+"/f", dest, strings.Repeat("0", 64), 2048, "cut"); err == nil {
+		t.Error("a truncated download was accepted")
+	}
+	if _, err := os.Stat(dest); err == nil {
+		t.Error("a failed download left the file in place")
+	}
+}
+
+func TestExtractZipRejectsSymlinksAndMakesDirs(t *testing.T) {
+	dir := t.TempDir()
+	archive := filepath.Join(dir, "a.zip")
+
+	// A zip holding a directory entry and a file extracts both.
+	buf := &bytes.Buffer{}
+	zw := zip.NewWriter(buf)
+	if _, err := zw.Create("top/sub/"); err != nil {
+		t.Fatal(err)
+	}
+	w, _ := zw.Create("top/sub/file.txt")
+	w.Write([]byte("hello"))
+	zw.Close()
+	os.WriteFile(archive, buf.Bytes(), 0o644)
+	out := filepath.Join(dir, "out")
+	if err := Extract(archive, out); err != nil {
+		t.Fatalf("extract: %v", err)
+	}
+	if b, err := os.ReadFile(filepath.Join(out, "sub", "file.txt")); err != nil || string(b) != "hello" {
+		t.Errorf("extracted file: %q %v", b, err)
+	}
+
+	// A symlink in a zip is refused rather than followed.
+	buf2 := &bytes.Buffer{}
+	zw2 := zip.NewWriter(buf2)
+	h := &zip.FileHeader{Name: "link"}
+	h.SetMode(os.ModeSymlink | 0o777)
+	lw, err := zw2.CreateHeader(h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lw.Write([]byte("/etc/passwd"))
+	zw2.Close()
+	link := filepath.Join(dir, "link.zip")
+	os.WriteFile(link, buf2.Bytes(), 0o644)
+	err = Extract(link, filepath.Join(dir, "out2"))
+	if err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Errorf("zip symlink: %v", err)
+	}
+}
+
+func TestDownloadResumesFromAPartialFile(t *testing.T) {
+	body := []byte(strings.Repeat("abcdefgh", 256)) // 2048 bytes
+	sum := sha256.Sum256(body)
+	var ranges []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rng := r.Header.Get("Range")
+		ranges = append(ranges, rng)
+		if rng == "" {
+			w.Write(body)
+			return
+		}
+		var from int
+		fmt.Sscanf(rng, "bytes=%d-", &from)
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", from, len(body)-1, len(body)))
+		w.WriteHeader(http.StatusPartialContent)
+		w.Write(body[from:])
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "f.bin")
+	// Leave a partial file behind, as an interrupted download would.
+	os.WriteFile(dest+".part", body[:512], 0o644)
+
+	f := Fetcher{AllowHTTP: true}
+	if err := f.Download(context.Background(), srv.URL+"/f.bin", dest, hex.EncodeToString(sum[:]), int64(len(body)), "f"); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	if len(ranges) != 1 || ranges[0] != "bytes=512-" {
+		t.Errorf("did not resume: %q", ranges)
+	}
+	got, _ := os.ReadFile(dest)
+	if string(got) != string(body) {
+		t.Errorf("resumed file is %d bytes", len(got))
+	}
+	// A second call sees the finished file and does nothing.
+	before := len(ranges)
+	if err := f.Download(context.Background(), srv.URL+"/f.bin", dest, hex.EncodeToString(sum[:]), int64(len(body)), "f"); err != nil {
+		t.Fatal(err)
+	}
+	if len(ranges) != before {
+		t.Error("an already-downloaded file was fetched again")
+	}
+}
+
+func TestDownloadDiscardsAnOversizedPartial(t *testing.T) {
+	body := []byte("small body")
+	sum := sha256.Sum256(body)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Range") != "" {
+			t.Errorf("resumed from a partial larger than the file: %q", r.Header.Get("Range"))
+		}
+		w.Write(body)
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "f.bin")
+	os.WriteFile(dest+".part", []byte("this partial is far too long to be real"), 0o644)
+	err := Fetcher{AllowHTTP: true}.Download(context.Background(), srv.URL+"/f", dest,
+		hex.EncodeToString(sum[:]), int64(len(body)), "f")
+	if err != nil {
+		t.Fatalf("download: %v", err)
+	}
+	if got, _ := os.ReadFile(dest); string(got) != string(body) {
+		t.Errorf("file: %q", got)
+	}
+}
+
+func TestExtractTarGzDirectoriesAndModes(t *testing.T) {
+	dir := t.TempDir()
+	archive := filepath.Join(dir, "a.tar.gz")
+	buf := &bytes.Buffer{}
+	gz := gzip.NewWriter(buf)
+	tw := tar.NewWriter(gz)
+	tw.WriteHeader(&tar.Header{Name: "top/bin/", Typeflag: tar.TypeDir, Mode: 0o755})
+	tw.WriteHeader(&tar.Header{Name: "top/bin/tool", Typeflag: tar.TypeReg, Mode: 0o755, Size: 4})
+	tw.Write([]byte("tool"))
+	// An unusual entry type is skipped rather than failing the archive.
+	tw.WriteHeader(&tar.Header{Name: "top/fifo", Typeflag: tar.TypeFifo, Mode: 0o644})
+	tw.Close()
+	gz.Close()
+	os.WriteFile(archive, buf.Bytes(), 0o644)
+
+	out := filepath.Join(dir, "out")
+	if err := Extract(archive, out); err != nil {
+		t.Fatalf("extract: %v", err)
+	}
+	st, err := os.Stat(filepath.Join(out, "bin", "tool"))
+	if err != nil {
+		t.Fatalf("extracted tool: %v", err)
+	}
+	if st.Mode()&0o100 == 0 {
+		t.Errorf("executable bit lost: %v", st.Mode())
+	}
+	if _, err := os.Stat(filepath.Join(out, "fifo")); err == nil {
+		t.Error("an unsupported entry type was created")
+	}
+}
+
+func TestOpenFailsWhenTheServerExits(t *testing.T) {
+	dir := t.TempDir()
+	// A "llama-server" that exits immediately must be reported, not waited on.
+	script := "#!/bin/sh\necho boom >&2\nexit 1\n"
+	if goruntime.GOOS == "windows" {
+		t.Skip("the stand-in server is a shell script")
+	}
+	os.WriteFile(filepath.Join(dir, "llama-server"), []byte(script), 0o755)
+	l := &Llama{Dir: dir, LogDir: t.TempDir(), Threads: 2, StartTimeout: 5 * time.Second}
+	_, err := l.Open(context.Background(), &registry.Model{ID: "m", Context: 512}, map[string]string{"model": "m.gguf"})
+	if err == nil || !strings.Contains(err.Error(), "exited while loading") {
+		t.Errorf("server that exits: %v", err)
+	}
+}
+
+func TestOpenFailsWhenThereIsNoBinary(t *testing.T) {
+	l := &Llama{Dir: t.TempDir()}
+	_, err := l.Open(context.Background(), &registry.Model{ID: "m", Context: 512}, map[string]string{"model": "m.gguf"})
+	if err == nil || !strings.Contains(err.Error(), "start llama-server") {
+		t.Errorf("missing binary: %v", err)
 	}
 }

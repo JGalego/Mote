@@ -2,6 +2,8 @@ package ui
 
 import (
 	"bytes"
+	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -42,5 +44,123 @@ func TestBarFitsNarrowTerminal(t *testing.T) {
 func TestFit(t *testing.T) {
 	if fit("abcdef", 4) != "abc…" || fit("abc", 4) != "abc" {
 		t.Error("fit")
+	}
+}
+
+// liveUI returns a UI that believes it is a terminal, so spinners and bars
+// draw and colour is on.
+func liveUI(buf *bytes.Buffer) *UI { return &UI{w: buf, color: true, live: true} }
+
+func TestBannerPaintsWhenColoured(t *testing.T) {
+	var buf bytes.Buffer
+	b := liveUI(&buf).Banner("small models")
+	if !strings.Contains(b, "\x1b[") {
+		t.Errorf("coloured banner has no escapes: %q", b)
+	}
+	if !strings.Contains(b, "small models") {
+		t.Errorf("banner omits the tagline: %q", b)
+	}
+	// Every line of the logo is drawn.
+	if n := strings.Count(b, "\n"); n < len(bannerLines) {
+		t.Errorf("banner has %d lines, want at least %d", n, len(bannerLines))
+	}
+}
+
+func TestSpinnerDrawsAndStops(t *testing.T) {
+	var buf bytes.Buffer
+	u := liveUI(&buf)
+	s := u.Spin("thinking")
+	// Give the animation a moment to draw at least one frame.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && !strings.Contains(buf.String(), "thinking") {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !strings.Contains(buf.String(), "thinking") {
+		t.Error("spinner never drew its message")
+	}
+	if s.Elapsed() <= 0 {
+		t.Error("spinner reports no elapsed time")
+	}
+	s.Stop("done")
+	out := buf.String()
+	if !strings.Contains(out, "done") {
+		t.Errorf("final message missing: %q", out)
+	}
+	// Stopping twice must not panic or double-print.
+	s.Stop("done")
+}
+
+func TestSpinnerOnAPipePrintsOnlyTheResult(t *testing.T) {
+	var buf bytes.Buffer
+	u := Plain(&buf)
+	s := u.Spin("working")
+	if buf.Len() != 0 {
+		t.Errorf("non-live spinner drew %q", buf.String())
+	}
+	s.Stop("finished")
+	if !strings.Contains(buf.String(), "finished") {
+		t.Errorf("result not printed: %q", buf.String())
+	}
+}
+
+func TestProgressBar(t *testing.T) {
+	var buf bytes.Buffer
+	u := liveUI(&buf)
+	b := u.NewBar("model.gguf", 0, 100<<20)
+	b.Set(50 << 20)
+	if !strings.Contains(buf.String(), "model.gguf") {
+		t.Errorf("bar did not draw: %q", buf.String())
+	}
+	// Redraws are throttled, so an immediate second Set changes nothing.
+	n := buf.Len()
+	b.Set(60 << 20)
+	if buf.Len() != n {
+		t.Error("bar redrew inside the throttle window")
+	}
+	b.Finish(nil)
+	out := buf.String()
+	if !strings.Contains(out, "100 MB in") {
+		t.Errorf("finished bar: %q", out)
+	}
+	// A failed download is marked, not silently finished.
+	var buf2 bytes.Buffer
+	b2 := liveUI(&buf2).NewBar("x", 0, 1<<20)
+	b2.Finish(errors.New("boom"))
+	if !strings.Contains(buf2.String(), "x") {
+		t.Errorf("failed bar: %q", buf2.String())
+	}
+}
+
+func TestBarWithUnknownTotal(t *testing.T) {
+	var buf bytes.Buffer
+	b := liveUI(&buf).NewBar("unknown", 0, 0)
+	b.Set(1 << 20)
+	b.Finish(nil)
+	if strings.Contains(buf.String(), "NaN") || strings.Contains(buf.String(), "+Inf") {
+		t.Errorf("zero total produced %q", buf.String())
+	}
+}
+
+func TestAskAndWidth(t *testing.T) {
+	var buf bytes.Buffer
+	u := liveUI(&buf)
+	if a := u.Ask(); !strings.Contains(a, "?") {
+		t.Errorf("Ask: %q", a)
+	}
+	if a := Plain(&buf).Ask(); a != "?" {
+		t.Errorf("plain Ask: %q", a)
+	}
+	// A buffer is not a terminal, so the width falls back to 80.
+	if w := Plain(&buf).Width(); w != 80 {
+		t.Errorf("width %d", w)
+	}
+	// A real file is not a terminal either, which exercises termWidth.
+	f, err := os.CreateTemp(t.TempDir(), "w")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if w := (&UI{w: f, file: f}).Width(); w != 80 {
+		t.Errorf("file width %d", w)
 	}
 }
