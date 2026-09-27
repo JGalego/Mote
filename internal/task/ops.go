@@ -40,6 +40,7 @@ var ops = map[string]op{
 	"collect":  {fn: opCollect},
 	"rewrite":  {fn: opRewrite},
 	"exec":     {fn: opExec}, // its tool is the step's own cmd[0]
+	"draw":     {fn: opDraw, model: true},
 }
 
 func (r *run) input(s Step) (Value, error) {

@@ -104,8 +104,11 @@ var RequiredFlags = []string{"--mmproj", "--ctx-size", "--device", "--parallel",
 
 func (l *Llama) bin(name string) string { return filepath.Join(l.Dir, exe(name)) }
 
-func (l *Llama) logFile(name string) (*os.File, string) {
-	dir := l.LogDir
+func (l *Llama) logFile(name string) (*os.File, string) { return logFile(l.LogDir, name) }
+
+// logFile creates name.log in dir, the system temporary directory when dir
+// is empty. A log that cannot be created is not an error.
+func logFile(dir, name string) (*os.File, string) {
 	if dir == "" {
 		dir = os.TempDir()
 	}

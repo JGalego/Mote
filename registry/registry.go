@@ -34,12 +34,13 @@ var Capabilities = map[string]string{
 	"asr":     "audio -> text",
 	"tts":     "text -> audio",
 	"embed":   "text -> vector (routing, search)",
+	"image":   "text -> image (minutes on a CPU; downloaded only when used)",
 }
 
 // Optional capabilities are left out of setup and profile checks: their
 // models are large and slow on a CPU, so they are downloaded the first time
 // something needs them, and only on machines with room for them.
-var Optional = map[string]bool{}
+var Optional = map[string]bool{"image": true}
 
 // Backends a model can run on, and the file roles each one needs. llama.cpp
 // is the main runtime; others are pinned in Registry.Runtimes.

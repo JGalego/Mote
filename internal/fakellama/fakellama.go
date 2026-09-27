@@ -6,12 +6,16 @@ package fakellama
 import (
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"io"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -25,7 +29,7 @@ func MaybeRun() {
 	role := os.Getenv(envRole)
 	if role == "" {
 		base := strings.TrimSuffix(filepath.Base(os.Args[0]), ".exe")
-		if base == "llama-server" || base == "llama-tts" {
+		if base == "llama-server" || base == "llama-tts" || base == "sd-cli" {
 			role = base
 		}
 	}
@@ -34,7 +38,70 @@ func MaybeRun() {
 		os.Exit(server(os.Args[1:]))
 	case "llama-tts":
 		os.Exit(tts(os.Args[1:]))
+	case "sd-cli":
+		os.Exit(sdCLI(os.Args[1:]))
 	}
+}
+
+// InstallSD copies the running test binary into dir as sd-cli.
+func InstallSD(t testing.TB, dir string) {
+	t.Helper()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, err := os.ReadFile(self)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := "sd-cli"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	os.MkdirAll(dir, 0o755)
+	if err := os.WriteFile(filepath.Join(dir, name), src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// sdCLI stands in for stable-diffusion.cpp: it writes a gradient PNG of the
+// requested size to -o. MOTE_FAKE_SD_LOG gets its arguments, one per line,
+// and MOTE_FAKE_SD_FAIL makes it fail the way a real run can.
+func sdCLI(args []string) int {
+	if p := os.Getenv("MOTE_FAKE_SD_LOG"); p != "" {
+		os.WriteFile(p, []byte(strings.Join(args, "\n")+"\n"), 0o644)
+	}
+	if msg := os.Getenv("MOTE_FAKE_SD_FAIL"); msg != "" {
+		fmt.Println("[ERROR] " + msg)
+		return 1
+	}
+	for _, need := range []string{"--diffusion-model", "--vae", "--llm", "-p", "-o"} {
+		if flag(args, need) == "" {
+			fmt.Println("[ERROR] missing " + need)
+			return 2
+		}
+	}
+	w, _ := strconv.Atoi(flag(args, "-W"))
+	h, _ := strconv.Atoi(flag(args, "-H"))
+	if w <= 0 || h <= 0 {
+		w, h = 512, 512
+	}
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			img.Set(x, y, color.RGBA{uint8(x * 255 / w), uint8(y * 255 / h), 128, 255})
+		}
+	}
+	f, err := os.Create(flag(args, "-o"))
+	if err != nil {
+		fmt.Println("[ERROR]", err)
+		return 1
+	}
+	defer f.Close()
+	if err := png.Encode(f, img); err != nil {
+		return 1
+	}
+	return 0
 }
 
 // Install copies the running test binary into dir as llama-server and

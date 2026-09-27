@@ -72,6 +72,7 @@ type Step struct {
 	Width      string `json:"width,omitempty"`
 	Dir        string `json:"dir,omitempty"`
 	Optional   bool   `json:"optional,omitempty"`
+	Seed       string `json:"seed,omitempty"`
 	// Cmd is the argument vector of an exec step: a program on PATH, then
 	// its arguments, which may use {{name}} like a prompt. It never goes
 	// through a shell.
@@ -259,7 +260,7 @@ func (t Task) validate() error {
 				return fmt.Errorf("step %d: op %s needs a known capability, got %q", i+1, s.Op, s.Cap)
 			}
 		}
-		for _, ref := range []string{s.From, s.Images, s.Audio, s.JSONSchema, s.Dir} {
+		for _, ref := range []string{s.From, s.Images, s.Audio, s.JSONSchema, s.Dir, s.Seed} {
 			if ref != "" && !defined[ref] {
 				return fmt.Errorf("step %d: %q is not defined before use", i+1, ref)
 			}

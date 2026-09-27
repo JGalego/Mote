@@ -29,6 +29,7 @@ mote runs X-to-Y AI tasks (text, code, images, audio, video, files) on your CPU 
   - [describe](#describe-----)
   - [transcribe](#transcribe---)
   - [speak](#speak---)
+  - [draw](#draw---)
   - [frames](#frames---)
   - [video](#video---)
   - [convert](#convert---)
@@ -146,6 +147,17 @@ In a clone, `go install ./cmd/mote` does the same into `$(go env GOPATH)/bin`. `
 `mote run speak TEXT` — Synthesize speech to a WAV file.
 
 ![mote run speak](docs/demo/speak.gif)
+
+### draw 📝 → 🎨
+
+`mote run draw PROMPT [SIZE] [SEED]` — Generate an image from a description (`-o` names the PNG).
+
+```sh
+mote run draw "a lighthouse on a rocky coast at dusk, oil painting" -o lighthouse.png
+mote run draw "a fox in the snow" 768x512 1234   # size and seed; the same seed redraws the same picture
+```
+
+Opt-in and slow: the first run needs `mote models pull flux2-klein-4b` (FLUX.2 klein 4B with its text encoder and stable-diffusion.cpp, 4.8 GB, Apache-2.0 and MIT), a machine with about 9 GB of RAM, and minutes per picture on a CPU: about 2.5 at 256×256 and 6 at 512×512 on a 6-core laptop. Prebuilt for Linux x86-64, macOS on Apple silicon and Windows x64.
 
 ### frames 🎬 → 📷
 

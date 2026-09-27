@@ -333,6 +333,17 @@ func (a *app) choose(capability, profile string) (*registry.Model, registry.Choi
 }
 
 func (a *app) backend(m *registry.Model) (mrt.Backend, error) {
+	if m.Backend == "sd.cpp" {
+		rt, _, err := a.runtimeFor(m)
+		if err != nil {
+			return nil, err
+		}
+		dir, ok := a.store().RuntimeInstalled(rt)
+		if !ok {
+			return nil, missingf("stable-diffusion.cpp is not installed; run `mote models pull %s`", m.ID)
+		}
+		return &mrt.SD{Dir: dir, Threads: a.cfg.Threads, LogDir: filepath.Join(a.dataDir(), "logs")}, nil
+	}
 	if m.Backend != "llama.cpp" {
 		return nil, fmt.Errorf("%w: %s", mrt.ErrUnsupported, m.Backend)
 	}
@@ -343,22 +354,84 @@ func (a *app) backend(m *registry.Model) (mrt.Backend, error) {
 	return &mrt.Llama{Dir: dir, Threads: a.cfg.Threads, LogDir: filepath.Join(a.dataDir(), "logs")}, nil
 }
 
-// ensure makes sure a model's files are present, downloading them only when
-// the user allowed automatic downloads.
+// runtimeFor returns the pinned runtime a model needs and its build for
+// this machine, or says why there is none.
+func (a *app) runtimeFor(m *registry.Model) (registry.Runtime, registry.Asset, error) {
+	rt, ok := a.registry().RuntimeFor(m.Backend)
+	if !ok {
+		return rt, registry.Asset{}, fmt.Errorf("%w: no %s runtime is pinned", mrt.ErrUnsupported, m.Backend)
+	}
+	info := a.platform()
+	asset, ok := rt.Asset(info.OS, info.Arch)
+	if !ok {
+		return rt, asset, missingf("%s runs on %s, which has no prebuilt build for %s/%s", m.ID, m.Backend, info.OS, info.Arch)
+	}
+	return rt, asset, nil
+}
+
+// ready reports whether a model can run without downloading anything: its
+// files, and for other backends than llama.cpp its runtime.
+func (a *app) ready(m *registry.Model) bool {
+	if !a.store().Installed(m) {
+		return false
+	}
+	if m.Backend == "llama.cpp" {
+		return true
+	}
+	rt, ok := a.registry().RuntimeFor(m.Backend)
+	if !ok {
+		return false
+	}
+	_, ok = a.store().RuntimeInstalled(rt)
+	return ok
+}
+
+// ensure makes sure a model's files, and the runtime of a backend other
+// than llama.cpp, are present, downloading them only when the user allowed
+// automatic downloads. A platform the runtime has no build for is reported
+// before anything is fetched.
 func (a *app) ensure(ctx context.Context, m *registry.Model, allow bool) error {
+	var rt registry.Runtime
+	var asset registry.Asset
+	needRuntime := false
+	if m.Backend != "llama.cpp" {
+		var err error
+		if rt, asset, err = a.runtimeFor(m); err != nil {
+			return err
+		}
+		_, installed := a.store().RuntimeInstalled(rt)
+		needRuntime = !installed
+	}
 	missing := a.store().Missing(m)
-	if len(missing) == 0 {
+	if len(missing) == 0 && !needRuntime {
 		return nil
 	}
 	var size int64
 	for _, f := range missing {
 		size += f.Size
 	}
+	if needRuntime {
+		size += asset.Size
+	}
 	if !allow {
+		if len(missing) == 0 {
+			return missingf("%s needs stable-diffusion.cpp %s (%s), which is not installed; run `mote models pull %s`", m.ID, rt.Version, mb(size), m.ID)
+		}
 		return missingf("model %s (%s) is not downloaded; run `mote models pull %s`", m.ID, mb(size), m.ID)
 	}
-	fmt.Fprintf(a.err, "%s downloading %s %s\n", a.ue.Arrow(), a.ue.Bold(m.ID), a.ue.Dim(fmt.Sprintf("(%s, %s, from %s)", mb(size), m.License, hostOf(missing[0].URL))))
-	return a.store().Pull(ctx, a.fetcher, m)
+	if len(missing) > 0 {
+		fmt.Fprintf(a.err, "%s downloading %s %s\n", a.ue.Arrow(), a.ue.Bold(m.ID), a.ue.Dim(fmt.Sprintf("(%s, %s, from %s)", mb(size), m.License, hostOf(missing[0].URL))))
+		if err := a.store().Pull(ctx, a.fetcher, m); err != nil {
+			return err
+		}
+	}
+	if needRuntime {
+		fmt.Fprintf(a.err, "%s installing %s %s %s\n", a.ue.Arrow(), rt.Name, rt.Version, a.ue.Dim(fmt.Sprintf("(%s, %s, from %s)", mb(asset.Size), rt.License, hostOf(asset.URL))))
+		if _, err := a.store().InstallRuntime(ctx, a.fetcher, rt, asset); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (a *app) tool(name string) (string, error) {
@@ -686,7 +759,7 @@ func (a *app) models(ctx context.Context, args []string) error {
 					return err
 				}
 			}
-			if a.store().Installed(m) {
+			if a.ready(m) {
 				fmt.Fprintf(a.out, "%s %s already installed\n", a.uo.OK(), m.ID)
 				continue
 			}

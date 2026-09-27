@@ -95,6 +95,17 @@
       ]
     },
     {
+      "id": "draw",
+      "summary": "Generate an image from a description (minutes on a CPU; the model is fetched on first use)",
+      "examples": ["draw a fox sitting in the snow", "make a picture of a lighthouse at dusk", "generate an illustration of a robot reading"],
+      "in": ["text"], "out": "image",
+      "params": [{"name": "prompt", "kind": "text"}, {"name": "size", "kind": "text", "default": "512"}, {"name": "seed", "kind": "text", "optional": true}],
+      "output": "image.png",
+      "steps": [
+        {"op": "draw", "cap": "image", "prompt": "{{prompt}}", "width": "size", "seed": "seed", "as": "out"}
+      ]
+    },
+    {
       "id": "frames",
       "summary": "Extract evenly spaced frames from a video",
       "examples": ["take still images out of this video", "grab screenshots from this clip"],

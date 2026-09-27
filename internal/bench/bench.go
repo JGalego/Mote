@@ -9,6 +9,7 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -151,6 +152,9 @@ func runModel(ctx context.Context, opt Options, m *registry.Model, cases []Case,
 		return e, err
 	}
 	files := opt.Files(m)
+	if m.Has("image") {
+		return drawCases(ctx, b, m, files, cases, tmp)
+	}
 	if m.Has("tts") {
 		for _, c := range cases {
 			wav := filepath.Join(tmp, c.ID+".wav")
@@ -248,6 +252,70 @@ func runModel(ctx context.Context, opt Options, m *registry.Model, cases []Case,
 		e.PromptTPS = float64(promptTok) / promptMS * 1000
 	}
 	return e, nil
+}
+
+// benchSide is the image size benchmarks draw at: large enough to judge,
+// small enough to finish in a few minutes on a laptop CPU.
+const benchSide = 256
+
+// drawCases runs image cases. A picture passes when it is a PNG of the
+// requested size that is not one flat colour; judging what it shows would
+// need another model.
+func drawCases(ctx context.Context, b runtime.Backend, m *registry.Model, files map[string]string, cases []Case, tmp string) (Entry, error) {
+	e := Entry{Model: m.ID}
+	d, ok := b.(runtime.Drawer)
+	if !ok {
+		return e, fmt.Errorf("%s cannot generate images", m.ID)
+	}
+	for _, c := range cases {
+		out := filepath.Join(tmp, c.ID+".png")
+		start := time.Now()
+		st, err := d.Draw(ctx, m, files, runtime.ImageRequest{Prompt: c.Prompt, Width: benchSide, Height: benchSide, Seed: 42, Out: out})
+		e.LatencyMS += float64(time.Since(start).Milliseconds())
+		e.Cases++
+		if err == nil {
+			err = checkImage(out, benchSide, benchSide)
+		}
+		if err != nil {
+			e.Failures = append(e.Failures, fmt.Sprintf("%s: %v", c.ID, err))
+		} else {
+			e.Passed++
+		}
+		if st.PeakRSSMB > e.PeakRSSMB {
+			e.PeakRSSMB = st.PeakRSSMB
+		}
+	}
+	if e.Cases > 0 {
+		e.LatencyMS /= float64(e.Cases)
+	}
+	return e, nil
+}
+
+// checkImage verifies a generated picture's format, size and that it has
+// more than one colour.
+func checkImage(p string, w, h int) error {
+	f, err := os.Open(p)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	img, err := png.Decode(f)
+	if err != nil {
+		return fmt.Errorf("not a PNG: %v", err)
+	}
+	bounds := img.Bounds()
+	if bounds.Dx() != w || bounds.Dy() != h {
+		return fmt.Errorf("size %dx%d, want %dx%d", bounds.Dx(), bounds.Dy(), w, h)
+	}
+	first := img.At(bounds.Min.X, bounds.Min.Y)
+	for y := bounds.Min.Y; y < bounds.Max.Y; y += 4 {
+		for x := bounds.Min.X; x < bounds.Max.X; x += 4 {
+			if img.At(x, y) != first {
+				return nil
+			}
+		}
+	}
+	return errors.New("the image is one flat colour")
 }
 
 // embedCase checks that an embedding model places Prompt nearer to Similar

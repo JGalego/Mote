@@ -117,6 +117,21 @@
       "args": ["--embedding", "--pooling", "cls"],
       "query_prefix": "Represent this sentence for searching relevant passages: ",
       "notes": "Encoder model: one forward pass per text and no generation, so it routes requests to tasks in milliseconds on a CPU."
+    },
+    {
+      "id": "flux2-klein-4b",
+      "name": "FLUX.2 klein 4B",
+      "backend": "sd.cpp",
+      "upstream": "black-forest-labs/FLUX.2-klein-4B",
+      "repo": "leejet/FLUX.2-klein-4B-GGUF",
+      "quant": "Q4_0",
+      "files": {"model": "flux-2-klein-4b-Q4_0.gguf",
+                "vae": {"repo": "black-forest-labs/FLUX.2-klein-4B", "file": "vae/diffusion_pytorch_model.safetensors"},
+                "llm": {"repo": "unsloth/Qwen3-4B-GGUF", "file": "Qwen3-4B-Q4_K_M.gguf"}},
+      "caps": ["image"],
+      "args": ["--cfg-scale", "1.0", "--steps", "4"],
+      "ram_overhead_mb": 512,
+      "notes": "Distilled to four steps. Measured on a 6-core Ryzen 5 4650U with sd.cpp master-921: 2.5 min at 256x256 and 5.8 min at 512x512, 4.8 GB peak RSS with --mmap. The text encoder is Qwen3-4B, as upstream specifies."
     }
   ]
 }

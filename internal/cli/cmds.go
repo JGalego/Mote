@@ -189,12 +189,21 @@ func (a *app) doctor() error {
 	if a.cfgErr == nil {
 		for _, c := range capNames() {
 			m, ch, err := a.choose(c, a.cfg.Profile)
+			var noBuild error
+			if err == nil && m.Backend != "llama.cpp" {
+				_, _, noBuild = a.runtimeFor(m)
+			}
 			switch {
 			case err != nil:
 				line("warn", "model "+c, err.Error())
+			case noBuild != nil:
+				line("warn", "model "+c, "unavailable here: "+noBuild.Error())
+			case registry.Optional[c] && !a.ready(m):
+				// Large and slow on purpose; not having it is normal.
+				line("ok", "model "+c, fmt.Sprintf("%s, fetched on first use (%s); `mote models pull %s` gets it now", m.ID, mb(m.Bytes()), m.ID))
 			case !a.store().Installed(m):
 				line("warn", "model "+c, fmt.Sprintf("%s not downloaded (%s); `mote models pull %s`", m.ID, mb(m.Bytes()), m.ID))
-			case !ch.Meets:
+			case !ch.Meets && !registry.Optional[c]:
 				line("warn", "model "+c, fmt.Sprintf("%s (outside the %s profile's limits; see `mote models why %s`)", m.ID, a.cfg.Profile, c))
 			default:
 				line("ok", "model "+c, m.ID)
