@@ -163,7 +163,9 @@ func TestRunRejectsMissingAndWrongInputs(t *testing.T) {
 	e.install("qwen3.5-0.8b")
 	dir := t.TempDir()
 
-	if code, _, errs := e.mote("", "run", "doc", filepath.Join(dir, "nope.go")); code != ExitUsage || !strings.Contains(errs, "no such file") {
+	// The wording of a stat error is the operating system's, so check that
+	// mote names the file and calls it a usage problem.
+	if code, _, errs := e.mote("", "run", "doc", filepath.Join(dir, "nope.go")); code != ExitUsage || !strings.Contains(errs, "nope.go") {
 		t.Errorf("missing file: %d %s", code, errs)
 	}
 	// A directory where a file is expected, and the reverse.

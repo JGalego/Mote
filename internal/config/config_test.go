@@ -152,12 +152,16 @@ func TestDirAndDataDirFollowTheEnvironment(t *testing.T) {
 
 func TestSetEveryKey(t *testing.T) {
 	c := Default()
+	// Absolute paths are spelled differently per platform, and the config
+	// insists on absolute ones.
+	base := t.TempDir()
+	abs := func(name string) string { return filepath.Join(base, name) }
 	cases := []struct{ key, value string }{
-		{"profile", "quality"}, {"editor", "vi"}, {"workspace", "/tmp/w"},
-		{"data_dir", "/tmp/d"}, {"llama_dir", "/tmp/l"}, {"threads", "4"},
+		{"profile", "quality"}, {"editor", "vi"}, {"workspace", abs("w")},
+		{"data_dir", abs("d")}, {"llama_dir", abs("l")}, {"threads", "4"},
 		{"auto_download", "true"}, {"reuse_tools", "false"},
 		{"wake_word", "hey there"}, {"router", "embed"}, {"memory", "true"},
-		{"models.text", "some-model"}, {"tools.ffmpeg", "/usr/bin/ffmpeg"},
+		{"models.text", "some-model"}, {"tools.ffmpeg", abs("ffmpeg")},
 	}
 	for _, c2 := range cases {
 		if err := c.Set(c2.key, c2.value); err != nil {
@@ -168,7 +172,7 @@ func TestSetEveryKey(t *testing.T) {
 		c.ReuseTools || c.WakeWord != "hey there" || c.Router != "embed" || !c.Memory {
 		t.Errorf("config after sets: %+v", c)
 	}
-	if c.Models["text"] != "some-model" || c.Tools["ffmpeg"] != "/usr/bin/ffmpeg" {
+	if c.Models["text"] != "some-model" || c.Tools["ffmpeg"] != abs("ffmpeg") {
 		t.Errorf("maps: %+v %+v", c.Models, c.Tools)
 	}
 	// Clearing a map entry removes it rather than storing an empty string.
@@ -209,9 +213,11 @@ func TestDataDirPerPlatform(t *testing.T) {
 		return func(k string) string { return vals[k] }
 	}
 	none := env(nil)
+	// filepath.Join uses this machine's separator, so build the expected
+	// paths the same way rather than writing them out.
 	cases := []struct{ goos, want string }{
-		{"linux", "/home/u/.local/share/mote"},
-		{"darwin", "/home/u/Library/Application Support/mote"},
+		{"linux", filepath.Join("/home/u", ".local", "share", "mote")},
+		{"darwin", filepath.Join("/home/u", "Library", "Application Support", "mote")},
 		{"windows", filepath.Join("/home/u", "AppData", "Local", "mote")},
 	}
 	for _, c := range cases {

@@ -771,7 +771,7 @@ func TestExtractTarGzDirectoriesAndModes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("extracted tool: %v", err)
 	}
-	if st.Mode()&0o100 == 0 {
+	if goruntime.GOOS != "windows" && st.Mode()&0o100 == 0 {
 		t.Errorf("executable bit lost: %v", st.Mode())
 	}
 	if _, err := os.Stat(filepath.Join(out, "fifo")); err == nil {
