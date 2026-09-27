@@ -318,6 +318,9 @@ func (a *app) doPlan(ctx context.Context, request string, tasks []task.Task, val
 	if vals["--dry-run"] == "true" {
 		return nil
 	}
+	if err := a.confirmChosen(found, planCommand(stages), vals); err != nil {
+		return err
+	}
 	// As in `mote pipe`, remembered facts apply to every stage.
 	remembered, err := a.memoryFor(ctx, "", nil, profile, sessions)
 	if err != nil {

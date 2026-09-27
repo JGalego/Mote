@@ -205,7 +205,7 @@ mote agent "how many Go files are in this repository?" --allow-sh
 mote agent "find where retries are configured" --tools search,chat
 ```
 
-Each step is a JSON-constrained tool call, and errors come back to the model as observations. Steps go to stderr and the answer to stdout. `--tools` limits the tools and `--steps` caps the run (default 8). The shell is off unless you pass `--allow-sh`, which asks before each command unless you also pass `--yes`. Use the `balanced` profile; the 0.8B model is too small to act reliably.
+Each step is a JSON-constrained tool call, and errors come back to the model as observations. Steps go to stderr and the answer to stdout. `--tools` limits the tools and `--steps` caps the run (default 8). The shell is off unless you pass `--allow-sh`. Commands are then checked before they run: a few catastrophic ones (`rm -rf ~`, `mkfs`, `curl … | sh`) are never run, `--yes` approves only read-only ones (`ls`, `cat`, `grep`, `git log`…), and anything else is asked about. The model is also told that tool output is data, not instructions. Use the `balanced` profile; the 0.8B model is too small to act reliably.
 
 `--mcp NAME` adds the tools of a local [MCP](https://modelcontextprotocol.io) server listed in `mcp.json` in the config directory, in the `mcpServers` shape other clients use. Only servers started as a command are supported, not remote ones. Tools with arguments too complex for a grammar are skipped, and tools not marked read-only ask before each call. `mote mcp tools NAME` shows what a server offers; pick a few with `--tools server.tool`.
 
@@ -226,7 +226,7 @@ The wake word defaults to `hey mote` (`--wake` or `mote config set wake_word`). 
 
 ### your own 🧩
 
-Tasks are data: drop a file shaped like [`tasks.json`](internal/task/tasks.json) into `tasks/` under the config directory (`mote tasks` prints the path). A matching id replaces a built-in. An `exec` step wraps a local program without a shell:
+Tasks are data: drop a file shaped like [`tasks.json`](internal/task/tasks.json) into `tasks/` under the config directory (`mote tasks` prints the path). A matching id replaces a built-in. An `exec` step wraps a local program without a shell, and `"asks": true` makes `mote agent` and `mote do` confirm before running a task a model chose:
 
 ```json
 {"op": "exec", "cmd": ["rg", "--line-number", "--", "{{pattern}}", "{{dir}}"], "as": "out"}

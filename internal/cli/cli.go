@@ -66,7 +66,7 @@ Usage:
   mote setup [--yes] [--config FILE] [--profile P] [--data-dir DIR] [--auto-download] [--no-download]
   mote run TASK [ARGS...] [-o OUTPUT] [--apply] [--model ID] [--profile P]
   mote pipe "TASK ARGS | TASK ARGS | sh: COMMAND" [-o OUTPUT] [--trace] [--model ID]
-  mote do "REQUEST" [-o OUTPUT] [--apply] [--dry-run] [--plan [--trace]] [--model ID] [--profile P]
+  mote do "REQUEST" [-o OUTPUT] [--apply] [--dry-run] [--plan [--trace]] [--yes] [--model ID] [--profile P]
   mote agent "GOAL" [-o OUTPUT] [--tools a,b] [--mcp SERVER,...] [--steps N] [--allow-sh] [--yes] [--model ID]
   mote mcp [tools [NAME...]]
   mote listen [TASK] [--wake PHRASE] [--device D] [--chunk SECONDS] [--once]
@@ -133,9 +133,7 @@ func Main(args []string, in io.Reader, out, errw io.Writer) int {
 		a.regURL = u
 	}
 	if f, ok := in.(*os.File); ok {
-		if st, err := f.Stat(); err == nil && st.Mode()&os.ModeCharDevice != 0 {
-			a.tty = true
-		}
+		a.tty = ui.IsTerminal(f)
 	}
 	// MOTE_FORCE_LIVE lets the test suite walk the interactive setup
 	// wizard, which otherwise needs a terminal on stdin.

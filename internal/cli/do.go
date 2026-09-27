@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -161,7 +163,7 @@ func bindRequest(t task.Task, request string) ([]string, error) {
 func (a *app) do(ctx context.Context, args []string) error {
 	vals, pos, err := flags(args,
 		[]string{"-o", "--output", "--model", "--profile", "--router"},
-		[]string{"--apply", "--dry-run", "--continue", "--recall", "--plan", "--trace"})
+		[]string{"--apply", "--dry-run", "--continue", "--recall", "--plan", "--trace", "--yes", "-y"})
 	if err != nil {
 		return err
 	}
@@ -226,6 +228,9 @@ func (a *app) do(ctx context.Context, args []string) error {
 	if vals["--dry-run"] == "true" {
 		return nil
 	}
+	if err := a.confirmChosen([]task.Task{t}, "mote run "+t.ID+" "+strings.Join(quoteArgs(taskArgs), " "), vals); err != nil {
+		return err
+	}
 	out := firstNonEmpty(vals["-o"], vals["--output"])
 	env := a.env(profile, sessions)
 	if env.Memory, err = a.memoryFor(ctx, request, vals, profile, sessions); err != nil {
@@ -237,6 +242,31 @@ func (a *app) do(ctx context.Context, args []string) error {
 	}
 	a.record(t, request, res)
 	return a.emit(t, res, out, nil)
+}
+
+// confirmChosen asks before running what a model chose when a task in it
+// is marked "asks". Typed by the user, as with mote run, the same task
+// simply runs; chosen by a router or planner, it needs a yes.
+func (a *app) confirmChosen(chosen []task.Task, command string, vals map[string]string) error {
+	var asking []string
+	for _, t := range chosen {
+		if t.Asks {
+			asking = append(asking, t.ID)
+		}
+	}
+	if len(asking) == 0 || vals["--yes"] == "true" || vals["-y"] == "true" {
+		return nil
+	}
+	which := strings.Join(asking, ", ")
+	if !a.tty {
+		return usagef("%s can change things, so mote asks before running it, and stdin is not a terminal; pass --yes to run it", which)
+	}
+	fmt.Fprintf(a.err, "%s run %s? %s [y/N] ", a.ue.Warn(), a.ue.Bold(command), a.ue.Dim("("+which+" can change things)"))
+	line, _ := bufio.NewReader(a.in).ReadString('\n')
+	if l := strings.ToLower(strings.TrimSpace(line)); l != "y" && l != "yes" {
+		return errors.New("not run")
+	}
+	return nil
 }
 
 // quoteArgs shows the arguments the way you would have to type them.

@@ -36,7 +36,11 @@ type Task struct {
 	Out      string   `json:"out"`
 	Params   []Param  `json:"params"`
 	Output   string   `json:"output,omitempty"` // default output path, "required", or empty for stdout
-	Steps    []Step   `json:"steps"`
+	// Asks marks a task that can change things, such as one wrapping a
+	// program that writes or deletes. When a model chose it (mote agent,
+	// mote do), mote confirms before running it.
+	Asks  bool   `json:"asks,omitempty"`
+	Steps []Step `json:"steps"`
 
 	// Source is the file a user-defined task came from, empty for built-ins.
 	Source string `json:"-"`

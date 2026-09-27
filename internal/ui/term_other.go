@@ -19,3 +19,11 @@ func termWidth(f *os.File) int {
 	}
 	return int(ws.Col)
 }
+
+// IsTerminal reports whether f is a terminal someone can type into. A
+// character device is not enough: /dev/null is one too.
+func IsTerminal(f *os.File) bool {
+	var ws struct{ Row, Col, X, Y uint16 }
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), uintptr(syscall.TIOCGWINSZ), uintptr(unsafe.Pointer(&ws)))
+	return errno == 0
+}

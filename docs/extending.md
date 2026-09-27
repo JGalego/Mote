@@ -40,7 +40,17 @@ reference to an unset optional value is dropped. A value starting with `-`
 is refused unless a literal `--` comes before it in `cmd`, since it would
 otherwise reach the program as an option; put `--` before the values of any
 task a model may call. Output is capped at 1 MiB, and `mote tasks` reports
-whether the program is installed. See `examples/tools.json`.
+whether the program is installed. See `examples/tools.json`. A task that can
+change things (writes, deletes, sends) should set `"asks": true`: typed with
+`mote run` it runs as usual, but chosen by a model in `mote agent` or
+`mote do` it is confirmed first.
+
+**The agent's shell** checks each command in `internal/cli/guard.go` before
+it runs: a short list of catastrophic commands is refused outright, a list
+of read-only programs (with the options that make them write, like
+`find -delete`, excluded) runs under `--yes`, and the rest is asked about.
+It reads command lines as text, so it fails safe but is not a security
+boundary.
 
 **A tool for the agent** is a task, which is how local programs get there
 too, or an MCP server listed in `mcp.json`. `mote agent` offers each one

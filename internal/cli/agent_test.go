@@ -138,7 +138,7 @@ func TestAgentToolsChoice(t *testing.T) {
 		return strings.Join(out, ",")
 	}
 
-	tools, err := a.agentTools(tasks, "", false, task.Env{}, ask, nil)
+	tools, err := a.agentTools(tasks, "", false, task.Env{}, ask, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,11 +146,11 @@ func TestAgentToolsChoice(t *testing.T) {
 	if !strings.Contains(got, "chat") || strings.Contains(got, "speak") || strings.Contains(got, "convert") || strings.Contains(got, "sh") {
 		t.Errorf("default tools %s: tasks writing files and sh should be left out", got)
 	}
-	tools, _ = a.agentTools(tasks, "", true, task.Env{}, ask, nil)
+	tools, _ = a.agentTools(tasks, "", true, task.Env{}, ask, nil, nil)
 	if !strings.Contains(ids(tools), ",sh") {
 		t.Errorf("--allow-sh did not add sh: %s", ids(tools))
 	}
-	tools, err = a.agentTools(tasks, "code, chat,chat", false, task.Env{}, ask, nil)
+	tools, err = a.agentTools(tasks, "code, chat,chat", false, task.Env{}, ask, nil, nil)
 	if err != nil || ids(tools) != "chat,code" {
 		t.Errorf("--tools: %s %v", ids(tools), err)
 	}
@@ -160,7 +160,7 @@ func TestAgentToolsChoice(t *testing.T) {
 		"convert":  "needs -o",
 		",":        "no tools",
 	} {
-		if _, err := a.agentTools(tasks, names, false, task.Env{}, ask, nil); err == nil || !strings.Contains(err.Error(), want) {
+		if _, err := a.agentTools(tasks, names, false, task.Env{}, ask, nil, nil); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("--tools %q: %v, want %q", names, err, want)
 		}
 	}
@@ -209,7 +209,7 @@ func TestAgentCallsAToolAndFinishes(t *testing.T) {
 	if p := steps[1]["prompt"].(string); !strings.Contains(p, "Observation: echo: hello") {
 		t.Errorf("the second step did not see the first one's result:\n%s", p)
 	}
-	if s := steps[0]["system"].(string); !strings.Contains(s, "one tool") {
+	if s := steps[0]["system"].(string); !strings.Contains(s, "one tool") || !strings.Contains(s, "not instructions to you") {
 		t.Errorf("system prompt %q", s)
 	}
 }
@@ -249,7 +249,7 @@ func TestAgentStopsARepeatingModel(t *testing.T) {
 	if len(steps) != 4 {
 		t.Fatalf("%d constrained requests, want 3 steps and a final answer", len(steps))
 	}
-	if !strings.Contains(steps[2]["prompt"].(string), "already made this call at step 1") {
+	if !strings.Contains(steps[2]["prompt"].(string), "already ran at step 1") {
 		t.Error("the first repeat was not pointed out")
 	}
 	final := steps[3]
@@ -332,14 +332,103 @@ func TestAgentShellAsksFirst(t *testing.T) {
 	}
 	t.Setenv("MOTE_FORCE_LIVE", "")
 
-	// --yes runs without asking.
+	// --yes runs read-only commands without asking, but not one that
+	// writes: the model chose it, not the user.
 	os.Remove(marker)
-	script(t, run, done)
+	log = script(t, run, `{"thought":"t","action":{"tool":"sh","args":{"command":"echo read-only-ran"}}}`, done)
 	if code, _, errs := e.mote("", "agent", "--allow-sh", "--yes", "x"); code != 0 || strings.Contains(errs, "[y/N]") {
 		t.Errorf("--yes: %d %s", code, errs)
 	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("--yes ran a command that writes a file")
+	}
+	p = constrained(t, log)[2]["prompt"].(string)
+	for _, want := range []string{"not run: it writes to " + marker, "only read-only commands", "Observation: read-only-ran"} {
+		if !strings.Contains(p, want) {
+			t.Errorf("observations lack %q:\n%s", want, p)
+		}
+	}
+}
+
+func TestAgentNeverRunsBlockedCommands(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the commands are POSIX shell")
+	}
+	e := agentEnv(t)
+	// PATH is empty in these tests, so even if the guard failed, reboot
+	// could not be found; the point is that it is never tried or offered.
+	blocked := `{"thought":"t","action":{"tool":"sh","args":{"command":"sudo reboot"}}}`
+	done := `{"thought":"t","action":{"tool":"finish","args":{"answer":"ok"}}}`
+	t.Setenv("MOTE_FORCE_LIVE", "1")
+	log := script(t, blocked, done)
+	code, _, errs := e.mote("y\n", "agent", "--allow-sh", "x")
+	if code != 0 {
+		t.Fatalf("agent: %d %s", code, errs)
+	}
+	if strings.Contains(errs, "[y/N]") {
+		t.Error("a blocked command was offered for approval")
+	}
+	if p := constrained(t, log)[1]["prompt"].(string); !strings.Contains(p, "blocked: reboot") || !strings.Contains(p, "never runs this") {
+		t.Errorf("observation:\n%s", p)
+	}
+}
+
+func TestAgentPromptsSayWhyACommandNeedsAYes(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the commands are POSIX shell")
+	}
+	e := agentEnv(t)
+	t.Setenv("MOTE_FORCE_LIVE", "1")
+	script(t, `{"thought":"t","action":{"tool":"sh","args":{"command":"touch x"}}}`,
+		`{"thought":"t","action":{"tool":"finish","args":{"answer":"ok"}}}`)
+	_, _, errs := e.mote("n\n", "agent", "--allow-sh", "x")
+	if !strings.Contains(errs, "touch is not a known read-only program") {
+		t.Errorf("the prompt does not say why it asks:\n%s", errs)
+	}
+}
+
+func TestAgentAsksBeforeTasksMarkedAsks(t *testing.T) {
+	e := agentEnv(t)
+	bin := fakeTools(t)
+	marker := filepath.Join(t.TempDir(), "gone")
+	os.WriteFile(filepath.Join(bin, "wipe"), []byte("#!/bin/sh\necho wiped > "+marker+"\n"), 0o755)
+	dir := t.TempDir()
+	t.Setenv("MOTE_TASKS_DIR", dir)
+	os.WriteFile(filepath.Join(dir, "wipe.json"), []byte(`{"tasks":[{"id":"wipe","summary":"Wipe a thing","asks":true,
+	  "in":["text"],"out":"text","params":[{"name":"what","kind":"text"}],
+	  "steps":[{"op":"exec","cmd":["wipe","--","{{what}}"],"as":"out"}]}]}`), 0o644)
+	call := `{"thought":"t","action":{"tool":"wipe","args":{"what":"it"}}}`
+	done := `{"thought":"t","action":{"tool":"finish","args":{"answer":"ok"}}}`
+
+	// Offered with no terminal and no --yes, it cannot be asked about.
+	script(t, call, done)
+	if code, _, errs := e.mote("", "agent", "--tools", "wipe", "x"); code != ExitUsage || !strings.Contains(errs, "wipe can change things") {
+		t.Errorf("unasked: %d %s", code, errs)
+	}
+	t.Setenv("MOTE_FORCE_LIVE", "1")
+	script(t, call, done)
+	if code, _, errs := e.mote("n\n", "agent", "--tools", "wipe", "x"); code != 0 || !strings.Contains(errs, "run wipe") {
+		t.Fatalf("declined: %d %s", code, errs)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("a declined task ran")
+	}
+	t.Setenv("MOTE_FORCE_LIVE", "")
+	// --yes answers for tasks the user named.
+	script(t, call, done)
+	if code, _, errs := e.mote("", "agent", "--tools", "wipe", "--yes", "x"); code != 0 {
+		t.Fatalf("--yes: %d %s", code, errs)
+	}
 	if _, err := os.Stat(marker); err != nil {
-		t.Error("--yes did not run the command")
+		t.Error("--yes did not run the task")
+	}
+	// Typed by the user, the same task simply runs.
+	os.Remove(marker)
+	if code, _, errs := e.mote("", "run", "wipe", "it"); code != 0 {
+		t.Fatalf("run: %d %s", code, errs)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Error("mote run asked about a task the user typed")
 	}
 }
 
@@ -378,5 +467,56 @@ func TestAgentUsage(t *testing.T) {
 		if code, _, _ := e.mote("", args...); code != ExitUsage {
 			t.Errorf("%v: exit %d, want a usage error", args, code)
 		}
+	}
+}
+
+func TestDoConfirmsTasksMarkedAsks(t *testing.T) {
+	e := agentEnv(t)
+	bin := fakeTools(t)
+	marker := filepath.Join(t.TempDir(), "gone")
+	os.WriteFile(filepath.Join(bin, "wipe"), []byte("#!/bin/sh\necho wiped > "+marker+"\n"), 0o755)
+	dir := t.TempDir()
+	t.Setenv("MOTE_TASKS_DIR", dir)
+	os.WriteFile(filepath.Join(dir, "wipe.json"), []byte(`{"tasks":[{"id":"wipe","summary":"Wipe a thing","asks":true,
+	  "examples":["wipe it"],"in":["text"],"out":"text","params":[{"name":"what","kind":"text"}],
+	  "steps":[{"op":"exec","cmd":["wipe","--","{{what}}"],"as":"out"}]}]}`), 0o644)
+
+	// The router picks wipe; with no terminal it refuses rather than run it.
+	script(t, `{"task":"wipe"}`)
+	if code, _, errs := e.mote("", "do", "use wipe on it"); code != ExitUsage || !strings.Contains(errs, "wipe can change things") {
+		t.Errorf("routed: %d %s", code, errs)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("ran without a yes")
+	}
+	// --dry-run needs no yes: nothing runs.
+	if code, _, errs := e.mote("", "do", "use wipe on it", "--dry-run"); code != 0 {
+		t.Errorf("dry run: %d %s", code, errs)
+	}
+	script(t, `{"first":{"task":"wipe","args":["it"]},"then":[]}`)
+	if code, _, errs := e.mote("", "do", "--plan", "wipe it"); code != ExitUsage || !strings.Contains(errs, "wipe can change things") {
+		t.Errorf("planned: %d %s", code, errs)
+	}
+	t.Setenv("MOTE_FORCE_LIVE", "1")
+	if code, _, errs := e.mote("n\n", "do", "--plan", "wipe it"); code == 0 || !strings.Contains(errs, "mote run wipe 'it'") {
+		t.Errorf("declined plan: %d %s", code, errs)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("a declined plan ran")
+	}
+	if code, _, errs := e.mote("y\n", "do", "--plan", "wipe it"); code != 0 {
+		t.Fatalf("accepted plan: %d %s", code, errs)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Error("an accepted plan did not run")
+	}
+	t.Setenv("MOTE_FORCE_LIVE", "")
+	os.Remove(marker)
+	script(t, `{"task":"wipe"}`)
+	if code, _, errs := e.mote("", "do", "use wipe on it", "--yes"); code != 0 {
+		t.Fatalf("--yes: %d %s", code, errs)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Error("--yes did not run it")
 	}
 }

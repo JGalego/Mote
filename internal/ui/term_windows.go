@@ -33,3 +33,11 @@ func termWidth(f *os.File) int {
 	}
 	return int(info.Right-info.Left) + 1
 }
+
+// IsTerminal reports whether f is a console someone can type into; NUL
+// and pipes are not.
+func IsTerminal(f *os.File) bool {
+	var mode uint32
+	r, _, _ := syscall.NewLazyDLL("kernel32.dll").NewProc("GetConsoleMode").Call(f.Fd(), uintptr(unsafe.Pointer(&mode)))
+	return r != 0
+}
