@@ -84,6 +84,7 @@ In a clone, `go install ./cmd/mote` does the same into `$(go env GOPATH)/bin`. `
 | `mote pipe "A \| B \| sh: cmd"` | Chain tasks in one process, each stage receiving the last one's value: `{}` or `-` places it, `sh:` runs a shell command, `--trace` shows each step |
 | `mote do "REQUEST"` | Pick the task that fits a request written in plain words and run it; `--router embed` chooses with the encoder, `--plan` writes a pipeline of several tasks, `--dry-run` shows the choice |
 | `mote agent "GOAL"` | Work towards a goal in steps, calling tasks and local tools and reading what they return; `--tools` picks them, `--allow-sh` offers the shell |
+| `mote mcp [tools [NAME]]` | List the MCP servers in `mcp.json`, or start them and show which tools the agent can use |
 | `mote remember "FACT"` | Keep a fact in front of every model step; `mote memory` lists them, `mote forget N\|--all` removes them |
 | `mote memory [search "Q"]` | Show what mote remembers, or find a past exchange by meaning |
 | `mote listen [TASK]` | Wait for a wake word on the microphone, then run what you say next (never listens unless you start it) |
@@ -172,7 +173,7 @@ In a clone, `go install ./cmd/mote` does the same into `$(go env GOPATH)/bin`. `
 
 ### chained 🔗
 
-`mote pipe` runs several tasks in one process, so models stay loaded between stages instead of being reloaded per command:
+`mote pipe "A | B | sh: cmd"` — Chain tasks in one process, so models stay loaded between stages.
 
 ```sh
 mote pipe "transcribe meeting.m4a | chat 'Summarise in 3 bullets: {}'"
@@ -180,61 +181,23 @@ mote pipe "code 'print the first 10 Fibonacci numbers' | sh: python3 -"
 mote pipe --trace "frames clip.mp4 3 | describe | sh: tee notes.txt"
 ```
 
-Each stage receives the previous stage's value: `{}` inside an argument or a bare `-` says where it goes, and with neither it fills the first argument you left out. Several files fan out into one run per file. A stage starting with `sh:` (or `!`) is a shell command reading that value on stdin, so ordinary tools mix in.
-
-Prefer `sh:` when typing interactively: bash and zsh expand `!` inside double quotes as history before mote sees it, unless you wrap the pipeline in `'single quotes'`.
-
-Only the last stage prints. `--trace` shows what each earlier stage handed on, and a stage that produces nothing stops the pipeline instead of letting the next model answer an empty question.
-
-Plain shell pipes still work too (`mote run code "..." | python3`), at the cost of reloading a model per command.
+Each stage gets the previous value as `{}`, `-` or its first missing argument; several files run the stage once per file. `sh:` pipes the value into a shell command. `!` also works, but bash and zsh expand it inside double quotes. Only the last stage prints; `--trace` shows the others.
 
 ### chosen 🎯
 
-`mote do` reads a request in plain words, picks the task that fits and runs
-it. The text model makes the choice, constrained by a JSON schema to a real
-task id, so it cannot invent one:
+`mote do REQUEST` — Pick the task that fits a request in plain words and run it.
 
 ```sh
-mote do "explain what a mutex is"
 mote do "summarise meeting.m4a in three bullets"
 mote do "what is on the sign in photo.jpg" --dry-run
-```
-
-Words naming a file or directory that exists fill the task's file arguments;
-what is left becomes its text argument. `--dry-run` prints the `mote run`
-command it chose without running it.
-
-Two routers are available. The default asks the text model, which reasons
-about the request but costs a generation. `--router embed` (or
-`mote config set router embed`) instead compares the request with each task's
-description and examples using a 36 MB encoder: one forward pass per text,
-no tokens generated, milliseconds on a CPU.
-
-Both read the `examples` in [`tasks.json`](internal/task/tasks.json), so a
-task of your own is routable as soon as you give it a few phrasings.
-
-A request that takes several steps needs a pipeline rather than one task.
-`--plan` asks the text model to write one, shows it as the `mote pipe`
-command it amounts to, and runs it:
-
-```sh
 mote do --plan "document calc.py then translate it to French"
-# -> mote pipe 'doc calc.py | chat "Translate the documentation to French: {}"'
 ```
 
-The plan is constrained like the router's choice: only real tasks, no more
-arguments than they take, and only files the request actually names. It is
-then checked before anything runs, so a stage that would be handed text
-where it needs a file stops the plan instead of failing half way.
-`--dry-run` shows the plan without running it and `--trace` shows each
-stage's output. Planning is noticeably better with the `balanced` profile's
-2B model than with the 0.8B one.
+Existing paths in the request become file arguments and the rest becomes the text argument. The text model chooses by default; `--router embed` uses a 36 MB encoder instead, with no generation. Both match against the `examples` in [`tasks.json`](internal/task/tasks.json). `--plan` writes a `mote pipe` pipeline for requests that take several steps and checks it before running. `--dry-run` prints the command without running it.
 
 ### agent 🤖
 
-`mote agent` works on a goal in steps. At each step the text model writes a
-short thought and calls one tool, mote runs it, and the model reads the
-result before choosing the next step, until it has an answer:
+`mote agent GOAL` — Work toward a goal by calling tasks one step at a time until it has an answer.
 
 ```sh
 mote agent "what is the total due in invoice.txt?"
@@ -242,58 +205,34 @@ mote agent "how many Go files are in this repository?" --allow-sh
 mote agent "find where retries are configured" --tools search,chat
 ```
 
-The tools are your tasks, including the local programs you wrapped with
-`exec`; `--tools` narrows them, which helps a small model choose. The model
-never uses a native tool-calling format. Each step is generated under a JSON
-schema, so it always names a real tool with arguments of the right shape,
-and anything that goes wrong (a missing file, a failing command) comes back
-as an observation the model can correct. The thoughts, calls and results
-are shown on stderr as they happen; only the answer goes to stdout.
+Each step is a JSON-constrained tool call, and errors come back to the model as observations. Steps go to stderr and the answer to stdout. `--tools` limits the tools and `--steps` caps the run (default 8). The shell is off unless you pass `--allow-sh`, which asks before each command unless you also pass `--yes`. Use the `balanced` profile; the 0.8B model is too small to act reliably.
 
-Runs are bounded: `--steps` (default 8) caps them, a call the model already
-made is not run again, and a model that keeps repeating itself is asked for
-its answer. The model is told to say when the results do not contain the
-answer rather than guess.
+`--mcp NAME` adds the tools of a local [MCP](https://modelcontextprotocol.io) server listed in `mcp.json` in the config directory, in the `mcpServers` shape other clients use. Only servers started as a command are supported, not remote ones. Tools with arguments too complex for a grammar are skipped, and tools not marked read-only ask before each call. `mote mcp tools NAME` shows what a server offers; pick a few with `--tools server.tool`.
 
-The shell is off unless you pass `--allow-sh`, and then mote asks before
-every command the model writes; `--yes` stops asking, which you should only
-use somewhere you do not mind it running anything. The 0.8B model is too
-small to act reliably and mote warns when it is in use; the `balanced`
-profile's 2B model does much better.
+```json
+{"mcpServers": {"files": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "."]}}}
+```
 
 ### spoken 🎤
 
-Nothing records until you ask it to. `mote listen` captures short chunks from
-the microphone with ffmpeg, transcribes each with the `asr` model you already
-have, and when it hears the wake word runs the rest of the sentence:
+`mote listen [TASK]` — Transcribe the microphone in chunks and run what follows the wake word.
 
 ```sh
 mote listen                       # "hey mote, explain what a mutex is"
-mote listen code --wake "ok mote" # send what you say to another task
+mote listen code --wake "ok mote"
 ```
 
-The phrase comes from `--wake`, else `mote config set wake_word "..."`, else
-`hey mote`. `--chunk` sets how many seconds each recording lasts, `--device`
-picks the input (required on Windows, where dshow has no default), and
-`--once` stops after the first request. The asr model stays loaded between
-chunks, so only the first one waits for it.
+The wake word defaults to `hey mote` (`--wake` or `mote config set wake_word`). `--chunk` sets the seconds per recording, `--device` the input (required on Windows) and `--once` stops after one request.
 
 ### your own 🧩
 
-Tasks are data, not code: put a file shaped like [`tasks.json`](internal/task/tasks.json) in `tasks/*.json` under the config directory (`mote tasks` prints the path) and it is validated, listed as `custom` and run like the rest. An id that matches a built-in replaces it.
-
-A task can also wrap a program you already have. An `exec` step runs it with
-an argument list, never through a shell, and its output becomes the value:
+Tasks are data: drop a file shaped like [`tasks.json`](internal/task/tasks.json) into `tasks/` under the config directory (`mote tasks` prints the path). A matching id replaces a built-in. An `exec` step wraps a local program without a shell:
 
 ```json
 {"op": "exec", "cmd": ["rg", "--line-number", "--", "{{pattern}}", "{{dir}}"], "as": "out"}
 ```
 
-[`examples/tools.json`](examples/tools.json) wraps `rg`, `jq` and `git log`
-this way; copy it into `tasks/` and they work with `mote run`, `mote pipe` and
-`mote do`.
-
-See [extending mote](docs/extending.md).
+[`examples/tools.json`](examples/tools.json) wraps `rg`, `jq` and `git log`. See [extending mote](docs/extending.md).
 
 ## Memory
 
