@@ -42,31 +42,32 @@ func TestMain(m *testing.M) {
 
 func TestBwrapArgs(t *testing.T) {
 	s := Sandbox{Kind: Bwrap, Prog: "/usr/bin/bwrap"}
-	got := strings.Join(s.Args("/work", "/home/me", false, []string{"sh", "-c", "ls"}), " ")
+	got := strings.Join(s.Args("/work", "/home/me", "/tmp", false, []string{"sh", "-c", "ls"}), " ")
 	want := "/usr/bin/bwrap --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp --tmpfs /home/me --bind /work /work --unshare-all --die-with-parent --new-session --chdir /work -- sh -c ls"
 	if got != want {
 		t.Errorf("args\n got %s\nwant %s", got, want)
 	}
 	// The network is shared only when asked for, and a working directory
 	// that is home itself is not hidden from itself.
-	got = strings.Join(s.Args("/home/me", "/home/me", true, []string{"ls"}), " ")
+	got = strings.Join(s.Args("/home/me", "/home/me", "/tmp", true, []string{"ls"}), " ")
 	if strings.Contains(got, "--tmpfs /home/me") || !strings.Contains(got, "--unshare-all --share-net") {
 		t.Errorf("args %s", got)
 	}
 	// Without a sandbox, the command is unchanged.
-	if got := (Sandbox{}).Args("/w", "/h", false, []string{"ls", "-l"}); strings.Join(got, " ") != "ls -l" {
+	if got := (Sandbox{}).Args("/w", "/h", "", false, []string{"ls", "-l"}); strings.Join(got, " ") != "ls -l" {
 		t.Errorf("no sandbox: %q", got)
 	}
 }
 
 func TestProfile(t *testing.T) {
-	p := Profile("/Users/me/work", "/Users/me", false)
+	p := Profile("/Users/me/work", "/Users/me", "/private/var/folders/x/T/mote-sandbox-1", false)
 	order := []string{
 		"(allow default)",
 		"(deny network*)",
 		`(deny file-read* (subpath "/Users/me"))`,
 		"(deny file-write*)",
 		`(allow file-read* file-write* (subpath "/Users/me/work"))`,
+		`(allow file-read* file-write* (subpath "/private/var/folders/x/T/mote-sandbox-1"))`,
 		"(allow file-read-metadata)",
 	}
 	last := -1
@@ -77,7 +78,11 @@ func TestProfile(t *testing.T) {
 		}
 		last = i
 	}
-	if strings.Contains(Profile("/w", "/h", true), "network") {
+	// The shared temporary areas are not writable, only the command's own.
+	if strings.Contains(p, `"/private/tmp"`) || strings.Contains(p, `(subpath "/private/var/folders")`) {
+		t.Errorf("shared temporary areas are writable:\n%s", p)
+	}
+	if strings.Contains(Profile("/w", "/h", "", true), "network") {
 		t.Error("network denied although allowed")
 	}
 	if q := quote(`a "b" \c`); q != `"a \"b\" \\c"` {
@@ -123,8 +128,9 @@ func run(t *testing.T, s Sandbox, dir string, net bool, mode, arg string) (strin
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	cmd := s.Command(ctx, dir, net, self, arg)
-	cmd.Env = append(os.Environ(), "MOTE_SANDBOX_HELPER="+mode)
+	cmd, done := s.Command(ctx, dir, net, self, arg)
+	defer done()
+	cmd.Env = append(cmd.Environ(), "MOTE_SANDBOX_HELPER="+mode)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
@@ -169,7 +175,10 @@ func TestTheSandboxHolds(t *testing.T) {
 	}
 	t.Cleanup(func() { os.RemoveAll(outside) })
 	outside, _ = filepath.Abs(outside)
-	for _, escape := range []string{filepath.Join(home, "escaped"), filepath.Join(outside, "escaped")} {
+	// A shared temporary directory is outside too: on Linux the sandbox
+	// sees a private /tmp, on macOS it may write only its own.
+	shared := t.TempDir()
+	for _, escape := range []string{filepath.Join(home, "escaped"), filepath.Join(outside, "escaped"), filepath.Join(shared, "escaped")} {
 		run(t, s, dir, false, "write", escape)
 		if _, err := os.Stat(escape); err == nil {
 			t.Errorf("a write to %s reached the disk", escape)
@@ -195,5 +204,19 @@ func TestTheSandboxHolds(t *testing.T) {
 	}
 	if out, err := run(t, s, dir, true, "net", ln.Addr().String()); err != nil {
 		t.Errorf("the network was blocked although allowed: %v %s", err, out)
+	}
+}
+
+func TestSandboxedCommandsGetTheirOwnTemporaryDirectory(t *testing.T) {
+	s := Detect(context.Background(), exec.LookPath)
+	if !s.Available() {
+		t.Skip("no working sandbox on this machine")
+	}
+	dir := t.TempDir()
+	cmd, done := s.Command(context.Background(), dir, false, "/bin/sh", "-c", `echo x > "$TMPDIR/scratch" && cat "$TMPDIR/scratch"`)
+	out, err := cmd.CombinedOutput()
+	done()
+	if err != nil || strings.TrimSpace(string(out)) != "x" {
+		t.Errorf("writing to TMPDIR: %v %s", err, out)
 	}
 }

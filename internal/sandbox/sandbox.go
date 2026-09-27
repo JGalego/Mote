@@ -90,8 +90,10 @@ func realPath(p string) string {
 }
 
 // Args returns the command line that runs argv inside the sandbox, with
-// dir writable and the home directory hidden.
-func (s Sandbox) Args(dir, home string, net bool, argv []string) []string {
+// dir writable and the home directory hidden. tmp is the command's own
+// temporary directory, the only other place it may write on macOS; on
+// Linux /tmp inside the sandbox is already private and thrown away.
+func (s Sandbox) Args(dir, home, tmp string, net bool, argv []string) []string {
 	dir = realPath(dir)
 	if home != "" {
 		home = realPath(home)
@@ -116,7 +118,7 @@ func (s Sandbox) Args(dir, home string, net bool, argv []string) []string {
 		args = append(args, "--die-with-parent", "--new-session", "--chdir", dir, "--")
 		return append(args, argv...)
 	case Seatbelt:
-		return append([]string{s.Prog, "-p", Profile(dir, home, net)}, argv...)
+		return append([]string{s.Prog, "-p", Profile(dir, home, tmp, net)}, argv...)
 	}
 	return argv
 }
@@ -128,9 +130,11 @@ func quote(s string) string {
 
 // Profile is the sandbox-exec policy. Later rules win, so it allows
 // everything, then takes away writing, reading home and the network, then
-// gives back what a command needs: its working directory, temporary
-// directories and the standard devices.
-func Profile(dir, home string, net bool) string {
+// gives back what a command needs: its working directory, its own
+// temporary directory and the standard devices. The shared temporary
+// areas (/private/tmp, /private/var/folders) stay read-only, or a command
+// could leave files anywhere another program looks for them.
+func Profile(dir, home, tmp string, net bool) string {
 	var b strings.Builder
 	b.WriteString("(version 1)\n(allow default)\n")
 	if !net {
@@ -141,7 +145,10 @@ func Profile(dir, home string, net bool) string {
 	}
 	b.WriteString("(deny file-write*)\n")
 	b.WriteString("(allow file-read* file-write* (subpath " + quote(dir) + "))\n")
-	b.WriteString(`(allow file-write* (subpath "/private/tmp") (subpath "/private/var/folders") (literal "/dev/null") (literal "/dev/zero") (literal "/dev/tty") (literal "/dev/stdout") (literal "/dev/stderr") (regex #"^/dev/fd/"))` + "\n")
+	if tmp != "" {
+		b.WriteString("(allow file-read* file-write* (subpath " + quote(realPath(tmp)) + "))\n")
+	}
+	b.WriteString(`(allow file-write* (literal "/dev/null") (literal "/dev/zero") (literal "/dev/tty") (literal "/dev/stdout") (literal "/dev/stderr") (regex #"^/dev/fd/"))` + "\n")
 	// Metadata keeps getcwd and path lookups working through hidden
 	// parents of the working directory; it does not list or read them.
 	b.WriteString("(allow file-read-metadata)\n")
@@ -149,11 +156,28 @@ func Profile(dir, home string, net bool) string {
 }
 
 // Command builds an exec.Cmd for argv, sandboxed when a sandbox is
-// available, running in dir either way.
-func (s Sandbox) Command(ctx context.Context, dir string, net bool, argv ...string) *exec.Cmd {
+// available, running in dir either way. A sandboxed command gets its own
+// temporary directory in TMPDIR; call done once it has finished to remove
+// it.
+func (s Sandbox) Command(ctx context.Context, dir string, net bool, argv ...string) (cmd *exec.Cmd, done func()) {
+	done = func() {}
 	home, _ := os.UserHomeDir()
-	full := s.Args(dir, home, net, argv)
-	cmd := exec.CommandContext(ctx, full[0], full[1:]...)
+	tmp := ""
+	switch s.Kind {
+	case Seatbelt:
+		if t, err := os.MkdirTemp("", "mote-sandbox-"); err == nil {
+			tmp = t
+			done = func() { os.RemoveAll(t) }
+		}
+	case Bwrap:
+		// The host's TMPDIR may lie under the /tmp the sandbox replaces.
+		tmp = "/tmp"
+	}
+	full := s.Args(dir, home, tmp, net, argv)
+	cmd = exec.CommandContext(ctx, full[0], full[1:]...)
 	cmd.Dir = dir
-	return cmd
+	if tmp != "" {
+		cmd.Env = append(os.Environ(), "TMPDIR="+tmp)
+	}
+	return cmd, done
 }

@@ -210,7 +210,8 @@ func (a *app) shellTool(gate func(cmd string) error, box shellBox) agentTool {
 			if runtime.GOOS == "windows" {
 				shell, flag = "cmd", "/c"
 			}
-			cmd := box.sb.Command(ctx, box.dir, box.net, shell, flag, args.Command)
+			cmd, cleanup := box.sb.Command(ctx, box.dir, box.net, shell, flag, args.Command)
+			defer cleanup()
 			out := &cappedBuffer{max: 64 << 10}
 			cmd.Stdout, cmd.Stderr = out, out
 			err := cmd.Run()
