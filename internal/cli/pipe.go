@@ -20,9 +20,14 @@ import (
 //
 // Each stage receives the previous stage's value. {} in an argument is
 // replaced by it (the text, or a file's path), a bare - means the same, and
-// with neither the value fills the stage's first unset parameter. A stage
-// beginning with ! is a shell command: it reads the value on stdin and its
-// output becomes the next value, so mote and ordinary tools can be mixed.
+// with neither the value fills the stage's first unset parameter.
+//
+// A stage beginning with ! or sh: is a shell command: it reads the value on
+// stdin and its output becomes the next value, so mote and ordinary tools
+// can be mixed. Both spellings mean the same thing; sh: exists because an
+// interactive bash or zsh expands ! inside double quotes as history, so
+// "… | !python3 -" can turn into something else entirely before mote sees
+// it. Single quotes around the pipeline also prevent that.
 type stage struct {
 	text  string   // the stage as written, for error messages
 	shell string   // command line after '!', empty for a task stage
@@ -31,6 +36,16 @@ type stage struct {
 }
 
 const pipeMarker = "{}"
+
+// shellMarker reports which prefix marks a stage as a shell command.
+func shellMarker(text string) string {
+	for _, m := range []string{"!", "sh:"} {
+		if strings.HasPrefix(text, m) {
+			return m
+		}
+	}
+	return ""
+}
 
 // splitOutsideQuotes splits s on sep, ignoring separators inside single or
 // double quotes so a prompt may contain them.
@@ -101,9 +116,10 @@ func parsePipeline(expr string) ([]stage, error) {
 		if text == "" {
 			return nil, usagef("empty stage in pipeline; stages are separated by a single |")
 		}
-		if cmd := strings.TrimSpace(strings.TrimPrefix(text, "!")); strings.HasPrefix(text, "!") {
+		if marker := shellMarker(text); marker != "" {
+			cmd := strings.TrimSpace(strings.TrimPrefix(text, marker))
 			if cmd == "" {
-				return nil, usagef("empty shell command after !")
+				return nil, usagef("empty shell command after %s", marker)
 			}
 			stages = append(stages, stage{text: text, shell: cmd})
 			continue
@@ -196,7 +212,7 @@ func (a *app) runShell(ctx context.Context, s stage, in task.Value) (task.Value,
 // pipe runs several tasks in one process, passing each stage's value to the
 // next and keeping models loaded across stages.
 func (a *app) pipe(ctx context.Context, args []string) error {
-	vals, pos, err := flags(args, []string{"-o", "--output", "--model", "--profile"}, []string{"--apply"})
+	vals, pos, err := flags(args, []string{"-o", "--output", "--model", "--profile"}, []string{"--apply", "--trace"})
 	if err != nil {
 		return err
 	}
@@ -246,6 +262,20 @@ func (a *app) pipe(ctx context.Context, args []string) error {
 	last := len(stages) - 1
 	var val task.Value
 	var res task.Result
+	// trace shows what a stage handed on, which is otherwise invisible:
+	// only the last stage's output reaches stdout. It goes to stderr so a
+	// redirected pipeline still captures the result alone.
+	trace := func(i int, name string, v task.Value) {
+		if vals["--trace"] != "true" || i == last {
+			return
+		}
+		body := strings.TrimRight(v.Text, "\n")
+		if len(v.Files) > 0 {
+			body = strings.Join(v.Files, "\n")
+		}
+		fmt.Fprintf(a.err, "%s\n%s\n", a.ue.Dim(fmt.Sprintf("── stage %d (%s) ──", i+1, name)), body)
+	}
+
 	// empty reports a stage that produced nothing to pass on. Sending an
 	// empty value to the next task would have it answer a question nobody
 	// asked, so the pipeline stops and says which stage ran dry.
@@ -264,6 +294,7 @@ func (a *app) pipe(ctx context.Context, args []string) error {
 			if err := empty(i, s.shell, val); err != nil {
 				return err
 			}
+			trace(i, s.shell, val)
 			res = task.Result{Value: val}
 			continue
 		}
@@ -310,6 +341,7 @@ func (a *app) pipe(ctx context.Context, args []string) error {
 		if err := empty(i, t.ID, val); err != nil {
 			return err
 		}
+		trace(i, t.ID, val)
 		if i == last {
 			a.record(t, strings.Join(pos, " "), res)
 			return a.emit(t, res, out, code)

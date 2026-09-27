@@ -211,3 +211,54 @@ func TestPipeStopsWhenAStageProducesNothing(t *testing.T) {
 		t.Errorf("empty final stage: %d %s", code, errs)
 	}
 }
+
+func TestShellStagesAcceptBothMarkers(t *testing.T) {
+	// An interactive bash or zsh eats ! inside double quotes, so sh: means
+	// the same thing and survives any shell.
+	for _, expr := range []string{`chat hi | !tr a-z A-Z`, `chat hi | sh: tr a-z A-Z`} {
+		stages, err := parsePipeline(expr)
+		if err != nil {
+			t.Fatalf("%s: %v", expr, err)
+		}
+		if len(stages) != 2 || stages[1].shell != "tr a-z A-Z" {
+			t.Errorf("%s parsed as %+v", expr, stages)
+		}
+	}
+	for _, bad := range []string{`chat hi | !`, `chat hi | sh:`, `chat hi | sh:   `} {
+		if _, err := parsePipeline(bad); err == nil {
+			t.Errorf("%q accepted an empty command", bad)
+		}
+	}
+	// A task whose name merely starts with "sh" is still a task.
+	stages, err := parsePipeline(`chat hi | shout -`)
+	if err != nil || stages[1].id != "shout" || stages[1].shell != "" {
+		t.Errorf("shout parsed as %+v (%v)", stages, err)
+	}
+}
+
+func TestPipeTraceShowsIntermediateValues(t *testing.T) {
+	e := newEnv(t)
+	e.setup()
+	e.install("qwen3.5-0.8b")
+
+	code, out, errs := e.mote("", "pipe", "--trace", `chat first | chat "second: {}"`)
+	if code != 0 {
+		t.Fatalf("pipe --trace: %d %s", code, errs)
+	}
+	// The intermediate value goes to stderr, labelled by stage.
+	if !strings.Contains(errs, "stage 1 (chat)") || !strings.Contains(errs, "echo: first") {
+		t.Errorf("no trace of stage 1: %s", errs)
+	}
+	// stdout still carries only the result, so redirecting it stays clean.
+	if strings.Contains(out, "stage 1") {
+		t.Errorf("trace leaked into stdout: %q", out)
+	}
+	if !strings.Contains(out, "second: echo: first") {
+		t.Errorf("result: %q", out)
+	}
+	// Without the flag, nothing intermediate is shown.
+	_, _, quiet := e.mote("", "pipe", `chat first | chat "second: {}"`)
+	if strings.Contains(quiet, "stage 1") {
+		t.Errorf("traced without the flag: %s", quiet)
+	}
+}
