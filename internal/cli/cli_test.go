@@ -12,12 +12,14 @@ import (
 	"testing"
 
 	"github.com/jgalego/mote/internal/fakellama"
+	"github.com/jgalego/mote/internal/fakemcp"
 	"github.com/jgalego/mote/internal/ui"
 	"github.com/jgalego/mote/registry"
 )
 
 func TestMain(m *testing.M) {
 	fakellama.MaybeRun()
+	fakemcp.MaybeRun()
 	os.Exit(m.Run())
 }
 

@@ -10,6 +10,7 @@ internal/runtime      downloads, archive extraction, llama.cpp backend
 internal/task         tasks.json pipelines and the ops they use
 internal/bench        local benchmark cases, results, tuning proposals
 internal/memory       facts, history and search over past exchanges
+internal/mcp          a client for local MCP servers (stdio JSON-RPC)
 internal/cli          commands and the setup wizard
 install/              install.sh (Linux/macOS), install.ps1 (Windows)
 ```
@@ -40,6 +41,13 @@ is refused unless a literal `--` comes before it in `cmd`, since it would
 otherwise reach the program as an option; put `--` before the values of any
 task a model may call. Output is capped at 1 MiB, and `mote tasks` reports
 whether the program is installed. See `examples/tools.json`.
+
+**A tool for the agent** is a task, which is how local programs get there
+too, or an MCP server listed in `mcp.json`. `mote agent` offers each one
+under a JSON schema built by `stepSchema` in `internal/cli/agent.go`, so a
+small model can only name a real tool with arguments of the right shape.
+`internal/fakemcp` is a fake server for tests, run by re-executing the test
+binary.
 
 **A local tool or modality** is an op: a Go function in
 `internal/task/ops.go` registered in the `ops` map, with the executables it

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jgalego/mote/internal/mcp"
 	mrt "github.com/jgalego/mote/internal/runtime"
 	"github.com/jgalego/mote/internal/task"
 )
@@ -33,6 +34,9 @@ const (
 	// maxThought keeps the reasoning short: on a CPU every token counts,
 	// and a small model that writes at length tends to wander.
 	maxThought = 200
+	// maxAnswer bounds the final answer. A model that has lost its way can
+	// otherwise fill its whole token budget with it, minutes on a CPU.
+	maxAnswer = 2000
 	// Observations are cut to fit an 8k context: the latest ones in full,
 	// up to maxObservation, and older ones to a glimpse.
 	maxObservation = 1500
@@ -58,7 +62,8 @@ type agentTool struct {
 	signature string // how the prompt shows it, e.g. chat(prompt)
 	summary   string
 	examples  []string
-	schema    any // the args object schema
+	schema    any  // the args object schema
+	asks      bool // asks the user before each call
 	run       func(ctx context.Context, args json.RawMessage) (string, error)
 }
 
@@ -157,6 +162,7 @@ func (a *app) shellTool(ask func(cmd string) bool) agentTool {
 		summary:   "Run a shell command and read its output",
 		examples:  []string{"list the files here", "count the lines in a file"},
 		schema:    object(prop{"command", map[string]any{"type": "string"}}),
+		asks:      true,
 		run: func(ctx context.Context, raw json.RawMessage) (string, error) {
 			var args struct {
 				Command string `json:"command"`
@@ -226,7 +232,7 @@ func stepSchema(tools []agentTool, finishOnly bool) string {
 	}
 	branches = append(branches, object(
 		prop{"tool", map[string]any{"const": finishID}},
-		prop{"args", object(prop{"answer", map[string]any{"type": "string"}})},
+		prop{"args", object(prop{"answer", map[string]any{"type": "string", "maxLength": maxAnswer}})},
 	))
 	return mustJSON(object(
 		prop{"thought", map[string]any{"type": "string", "maxLength": maxThought}},
@@ -313,18 +319,20 @@ func canonical(raw json.RawMessage) string {
 	return string(b)
 }
 
-// agentTools picks the tools for a run: the tasks named with --tools, or
-// every task that answers in the terminal (those that write files are left
-// out unless named), plus sh when --allow-sh is given.
-func (a *app) agentTools(tasks []task.Task, names string, allowSh bool, env task.Env, ask func(string) bool) ([]agentTool, error) {
+// agentTools picks the tools for a run. With no --tools, that is every
+// task that answers in the terminal (those that write files are left out
+// unless named) and every tool of the MCP servers started with --mcp. A
+// --tools list names tasks, MCP tools (server.tool) or whole servers, and
+// sh, which also needs --allow-sh; --allow-sh alone adds it.
+func (a *app) agentTools(tasks []task.Task, names string, allowSh bool, env task.Env, ask func(string) bool, external []agentTool) ([]agentTool, error) {
 	var tools []agentTool
-	wantSh := allowSh
 	if names == "" {
 		for _, t := range routable(tasks) {
 			if t.Output == "" {
 				tools = append(tools, a.taskTool(t, env))
 			}
 		}
+		tools = append(tools, external...)
 	} else {
 		seen := map[string]bool{}
 		for _, n := range strings.Split(names, ",") {
@@ -339,9 +347,19 @@ func (a *app) agentTools(tasks []task.Task, names string, allowSh bool, env task
 				}
 				continue
 			}
+			var matched []agentTool
+			for _, x := range external {
+				if x.id == n || strings.HasPrefix(x.id, n+".") {
+					matched = append(matched, x)
+				}
+			}
+			if len(matched) > 0 {
+				tools = append(tools, matched...)
+				continue
+			}
 			t, ok := task.Find(tasks, n)
 			if !ok {
-				return nil, usagef("unknown tool %q; tools are task ids (see `mote tasks`) and sh", n)
+				return nil, usagef("unknown tool %q; tools are task ids (see `mote tasks`), sh, and the tools of servers started with --mcp", n)
 			}
 			if t.Output == "required" {
 				return nil, usagef("%s needs -o for every run, so an agent cannot call it", n)
@@ -349,27 +367,37 @@ func (a *app) agentTools(tasks []task.Task, names string, allowSh bool, env task
 			tools = append(tools, a.taskTool(t, env))
 		}
 	}
-	if wantSh {
+	if allowSh {
 		tools = append(tools, a.shellTool(ask))
 	}
-	if len(tools) == 0 {
+	// The same tool named twice, as itself and through its server, is
+	// offered once.
+	var unique []agentTool
+	have := map[string]bool{}
+	for _, t := range tools {
+		if !have[t.id] {
+			have[t.id] = true
+			unique = append(unique, t)
+		}
+	}
+	if len(unique) == 0 {
 		return nil, usagef("no tools to offer")
 	}
-	sort.SliceStable(tools, func(i, j int) bool { return tools[i].id < tools[j].id })
-	return tools, nil
+	sort.SliceStable(unique, func(i, j int) bool { return unique[i].id < unique[j].id })
+	return unique, nil
 }
 
 // agent implements `mote agent`.
 func (a *app) agent(ctx context.Context, args []string) error {
 	vals, pos, err := flags(args,
-		[]string{"-o", "--output", "--model", "--profile", "--tools", "--steps"},
+		[]string{"-o", "--output", "--model", "--profile", "--tools", "--steps", "--mcp"},
 		[]string{"--allow-sh", "--yes", "-y"})
 	if err != nil {
 		return err
 	}
 	goal := strings.TrimSpace(strings.Join(pos, " "))
 	if goal == "" {
-		return usagef(`usage: mote agent "GOAL" [--tools a,b] [--steps N] [--allow-sh [--yes]]`)
+		return usagef(`usage: mote agent "GOAL" [--tools a,b] [--mcp SERVER,...] [--steps N] [--allow-sh] [--yes]`)
 	}
 	steps := defaultAgentSteps
 	if v := vals["--steps"]; v != "" {
@@ -417,9 +445,28 @@ func (a *app) agent(ctx context.Context, args []string) error {
 		line = strings.ToLower(strings.TrimSpace(line))
 		return line == "y" || line == "yes"
 	}
-	tools, err := a.agentTools(tasks, vals["--tools"], allowSh, env, ask)
+	var external []agentTool
+	if names := vals["--mcp"]; names != "" {
+		var clients []*mcp.Client
+		if external, clients, err = a.startMCP(ctx, names, ask); err != nil {
+			return err
+		}
+		defer func() {
+			for _, c := range clients {
+				c.Close()
+			}
+		}()
+	}
+	tools, err := a.agentTools(tasks, vals["--tools"], allowSh, env, ask, external)
 	if err != nil {
 		return err
+	}
+	if !yes && !a.tty {
+		for _, t := range tools {
+			if t.asks {
+				return usagef("%s can change things, so mote asks before each call, and stdin is not a terminal; pass --yes to call it without asking, or leave it out with --tools", t.id)
+			}
+		}
 	}
 	byID := map[string]agentTool{}
 	for _, t := range tools {

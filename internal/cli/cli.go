@@ -67,7 +67,8 @@ Usage:
   mote run TASK [ARGS...] [-o OUTPUT] [--apply] [--model ID] [--profile P]
   mote pipe "TASK ARGS | TASK ARGS | sh: COMMAND" [-o OUTPUT] [--trace] [--model ID]
   mote do "REQUEST" [-o OUTPUT] [--apply] [--dry-run] [--plan [--trace]] [--model ID] [--profile P]
-  mote agent "GOAL" [-o OUTPUT] [--tools a,b] [--steps N] [--allow-sh [--yes]] [--model ID]
+  mote agent "GOAL" [-o OUTPUT] [--tools a,b] [--mcp SERVER,...] [--steps N] [--allow-sh] [--yes] [--model ID]
+  mote mcp [tools [NAME...]]
   mote listen [TASK] [--wake PHRASE] [--device D] [--chunk SECONDS] [--once]
   mote remember "FACT" | mote forget N|--all|--history | mote memory [search "Q"]
   mote tasks
@@ -188,6 +189,8 @@ func (a *app) dispatch(ctx context.Context, args []string) error {
 		return a.doctor()
 	case "tasks":
 		return a.tasks()
+	case "mcp":
+		return a.mcpCmd(ctx, rest)
 	case "update":
 		return a.update(ctx, rest)
 	}

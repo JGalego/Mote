@@ -63,7 +63,7 @@ func TestStepSchemaAsksForAThoughtFirst(t *testing.T) {
 	if strings.Index(schema, `"tool"`) > strings.Index(schema, `"args"`) {
 		t.Error("args come before the tool")
 	}
-	for _, want := range []string{`"const":"chat"`, `"const":"finish"`, `"maxLength":200`, `"prompt"`} {
+	for _, want := range []string{`"const":"chat"`, `"const":"finish"`, `"maxLength":200`, `"maxLength":2000`, `"prompt"`} {
 		if !strings.Contains(schema, want) {
 			t.Errorf("schema lacks %s: %s", want, schema)
 		}
@@ -138,7 +138,7 @@ func TestAgentToolsChoice(t *testing.T) {
 		return strings.Join(out, ",")
 	}
 
-	tools, err := a.agentTools(tasks, "", false, task.Env{}, ask)
+	tools, err := a.agentTools(tasks, "", false, task.Env{}, ask, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,11 +146,11 @@ func TestAgentToolsChoice(t *testing.T) {
 	if !strings.Contains(got, "chat") || strings.Contains(got, "speak") || strings.Contains(got, "convert") || strings.Contains(got, "sh") {
 		t.Errorf("default tools %s: tasks writing files and sh should be left out", got)
 	}
-	tools, _ = a.agentTools(tasks, "", true, task.Env{}, ask)
+	tools, _ = a.agentTools(tasks, "", true, task.Env{}, ask, nil)
 	if !strings.Contains(ids(tools), ",sh") {
 		t.Errorf("--allow-sh did not add sh: %s", ids(tools))
 	}
-	tools, err = a.agentTools(tasks, "code, chat,chat", false, task.Env{}, ask)
+	tools, err = a.agentTools(tasks, "code, chat,chat", false, task.Env{}, ask, nil)
 	if err != nil || ids(tools) != "chat,code" {
 		t.Errorf("--tools: %s %v", ids(tools), err)
 	}
@@ -160,7 +160,7 @@ func TestAgentToolsChoice(t *testing.T) {
 		"convert":  "needs -o",
 		",":        "no tools",
 	} {
-		if _, err := a.agentTools(tasks, names, false, task.Env{}, ask); err == nil || !strings.Contains(err.Error(), want) {
+		if _, err := a.agentTools(tasks, names, false, task.Env{}, ask, nil); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("--tools %q: %v, want %q", names, err, want)
 		}
 	}
