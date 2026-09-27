@@ -134,6 +134,11 @@ func Main(args []string, in io.Reader, out, errw io.Writer) int {
 			a.tty = true
 		}
 	}
+	// MOTE_FORCE_LIVE lets the test suite walk the interactive setup
+	// wizard, which otherwise needs a terminal on stdin.
+	if os.Getenv("MOTE_FORCE_LIVE") == "1" {
+		a.tty = true
+	}
 	a.ue, a.uo = ui.New(errw), ui.New(out)
 	a.fetcher = mrt.Fetcher{Progress: barProgress{a.ue}}
 	a.cfg, a.cfgErr = config.Load(a.cfgDir)
@@ -362,12 +367,16 @@ func (a *app) tool(name string) (string, error) {
 	return "", missingf("%s is needed for this task but was not found on PATH; %s", name, installHint(name))
 }
 
-func installHint(tool string) string {
+func installHint(tool string) string { return installHintOn(tool, runtime.GOOS) }
+
+// installHintOn takes the operating system as an argument so the advice for
+// every platform can be checked from any of them.
+func installHintOn(tool, goos string) string {
 	pkg := tool
 	if tool == "ffprobe" {
 		pkg = "ffmpeg"
 	}
-	switch runtime.GOOS {
+	switch goos {
 	case "darwin":
 		return "install it with `brew install " + pkg + "`"
 	case "windows":

@@ -56,7 +56,13 @@ func run(dir string, withRuntime, discover, check bool) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
-	src := &registry.HF{GitHubToken: os.Getenv("GITHUB_TOKEN")}
+	// MOTE_HF_BASE and MOTE_GITHUB_BASE point the refresh at a stub in
+	// tests; empty means the real APIs.
+	src := &registry.HF{
+		GitHubToken: os.Getenv("GITHUB_TOKEN"),
+		HFBase:      os.Getenv("MOTE_HF_BASE"),
+		GitHubBase:  os.Getenv("MOTE_GITHUB_BASE"),
+	}
 	next, warns, err := registry.Refresh(ctx, &prev, pol, cands, src, registry.RefreshOptions{Now: time.Now(), Runtime: withRuntime})
 	for _, w := range warns {
 		fmt.Fprintln(os.Stderr, "warning:", w)

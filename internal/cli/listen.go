@@ -64,8 +64,14 @@ func wake(transcript, phrase string) (string, bool) {
 // means the platform's default input, which Windows does not have: there,
 // dshow needs the device's name.
 func captureArgs(device string, seconds int, dst string) ([]string, error) {
+	return captureArgsOn(runtime.GOOS, device, seconds, dst)
+}
+
+// captureArgsOn takes the operating system as an argument so each
+// platform's recording command can be checked from any of them.
+func captureArgsOn(goos, device string, seconds int, dst string) ([]string, error) {
 	format := ""
-	switch runtime.GOOS {
+	switch goos {
 	case "linux":
 		format = "pulse"
 		if device == "" {
@@ -87,7 +93,7 @@ func captureArgs(device string, seconds int, dst string) ([]string, error) {
 			device = "audio=" + device
 		}
 	default:
-		return nil, fmt.Errorf("recording is not supported on %s", runtime.GOOS)
+		return nil, fmt.Errorf("recording is not supported on %s", goos)
 	}
 	return []string{
 		"-v", "error", "-y", "-f", format, "-i", device,

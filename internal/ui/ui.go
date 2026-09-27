@@ -57,7 +57,9 @@ func New(w io.Writer) *UI {
 	if !enableVT(f) {
 		return u
 	}
-	u.live = tty
+	// MOTE_FORCE_LIVE lets the test suite exercise spinners, progress bars
+	// and streamed output, which otherwise need a real terminal.
+	u.live = tty || os.Getenv("MOTE_FORCE_LIVE") == "1"
 	u.file = f
 	u.color = os.Getenv("NO_COLOR") == ""
 	return u

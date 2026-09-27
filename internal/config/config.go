@@ -60,20 +60,26 @@ func Dir() string {
 // DefaultDataDir returns where models, the runtime and local benchmark
 // results are stored unless the config says otherwise.
 func DefaultDataDir() string {
-	if d := os.Getenv("MOTE_HOME"); d != "" {
+	home, _ := os.UserHomeDir()
+	return dataDirOn(runtime.GOOS, home, os.Getenv)
+}
+
+// dataDirOn takes the operating system and the environment as arguments so
+// each platform's location can be checked from any of them.
+func dataDirOn(goos, home string, getenv func(string) string) string {
+	if d := getenv("MOTE_HOME"); d != "" {
 		return d
 	}
-	home, _ := os.UserHomeDir()
-	switch runtime.GOOS {
+	switch goos {
 	case "windows":
-		if d := os.Getenv("LOCALAPPDATA"); d != "" {
+		if d := getenv("LOCALAPPDATA"); d != "" {
 			return filepath.Join(d, "mote")
 		}
 		return filepath.Join(home, "AppData", "Local", "mote")
 	case "darwin":
 		return filepath.Join(home, "Library", "Application Support", "mote")
 	default:
-		if d := os.Getenv("XDG_DATA_HOME"); d != "" {
+		if d := getenv("XDG_DATA_HOME"); d != "" {
 			return filepath.Join(d, "mote")
 		}
 		return filepath.Join(home, ".local", "share", "mote")

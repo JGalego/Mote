@@ -138,6 +138,11 @@ func server(args []string) int {
 		if len(req.ResponseFormat) > 0 {
 			reply = schemaReply(req.ResponseFormat, strings.Join(text, " "))
 		}
+		// MOTE_FAKE_REPLY lets a test force an awkward answer, such as a
+		// router reply that is not the JSON the caller expects.
+		if v := os.Getenv("MOTE_FAKE_REPLY"); v != "" {
+			reply = v
+		}
 		if os.Getenv("MOTE_FAKE_ASR") != "" {
 			reply = "language English<asr_text>" + reply
 		}
