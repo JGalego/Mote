@@ -2,20 +2,19 @@ package cli
 
 import (
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 )
 
 func TestClassifyShellBlocksCatastrophes(t *testing.T) {
-	home, _ := os.UserHomeDir()
-	for _, cmd := range []string{
+	cmds := []string{
 		"rm -rf /",
 		"rm -rf /*",
 		"rm -fr ~",
 		"rm -r -f ~/",
 		"rm --recursive --force $HOME",
 		`rm -rf "${HOME}"`,
-		"rm -rf " + home,
 		"cd /tmp && sudo rm -rf / --no-preserve-root",
 		"rm --no-preserve-root -rf /tmp/x",
 		"echo hi; rm -Rf /etc",
@@ -35,7 +34,14 @@ func TestClassifyShellBlocksCatastrophes(t *testing.T) {
 		"reboot",
 		"timeout 5 rm -rf /",
 		"env FOO=1 rm -rf ~",
-	} {
+	}
+	// The home directory by its real path too. The classifier reads POSIX
+	// shell, where a Windows path's backslashes are escapes; the agent's
+	// shell there is cmd, which it does not claim to understand.
+	if home, _ := os.UserHomeDir(); home != "" && runtime.GOOS != "windows" {
+		cmds = append(cmds, "rm -rf "+home)
+	}
+	for _, cmd := range cmds {
 		if v := classifyShell(cmd); !v.blocked {
 			t.Errorf("%q not blocked (%+v)", cmd, v)
 		}

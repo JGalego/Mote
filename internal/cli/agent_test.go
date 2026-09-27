@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/jgalego/mote/internal/sandbox"
 	"github.com/jgalego/mote/internal/task"
 )
 
@@ -227,7 +229,7 @@ func TestAgentTurnsErrorsIntoObservations(t *testing.T) {
 		t.Fatalf("agent: %d %q %s", code, out, errs)
 	}
 	last := constrained(t, log)[3]["prompt"].(string)
-	for _, want := range []string{"Observation: error: ", "stat ghost.txt", `no tool named "teleport"`, "chat needs prompt"} {
+	for _, want := range []string{"Observation: error: ", "ghost.txt", `no tool named "teleport"`, "chat needs prompt"} {
 		if !strings.Contains(last, want) {
 			t.Errorf("observations lack %q:\n%s", want, last)
 		}
@@ -288,13 +290,15 @@ func TestAgentShellAsksFirst(t *testing.T) {
 		t.Skip("the commands are POSIX shell")
 	}
 	e := agentEnv(t)
+	// Every run says --sandbox off: this test is about the unsandboxed
+	// shell, and on macOS sandbox-exec is found even with PATH empty.
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "ran")
 	run := `{"thought":"t","action":{"tool":"sh","args":{"command":"echo out; echo oops >&2; echo x > ` + marker + `; exit 3"}}}`
 	done := `{"thought":"t","action":{"tool":"finish","args":{"answer":"ok"}}}`
 
 	// Without a terminal to ask on, sh needs --yes.
-	if code, _, errs := e.mote("", "agent", "--allow-sh", "x"); code != ExitUsage || !strings.Contains(errs, "--yes") {
+	if code, _, errs := e.mote("", "agent", "--sandbox", "off", "--allow-sh", "x"); code != ExitUsage || !strings.Contains(errs, "--yes") {
 		t.Errorf("sh without a way to ask: %d %s", code, errs)
 	}
 	// Offered only when allowed.
@@ -306,7 +310,7 @@ func TestAgentShellAsksFirst(t *testing.T) {
 	// Declined at the prompt: nothing runs and the model is told why.
 	t.Setenv("MOTE_FORCE_LIVE", "1")
 	log := script(t, run, done)
-	code, _, errs := e.mote("n\n", "agent", "--allow-sh", "x")
+	code, _, errs := e.mote("n\n", "agent", "--sandbox", "off", "--allow-sh", "x")
 	if code != 0 || !strings.Contains(errs, "[y/N]") {
 		t.Fatalf("declined: %d %s", code, errs)
 	}
@@ -319,7 +323,7 @@ func TestAgentShellAsksFirst(t *testing.T) {
 
 	// Accepted: it runs, and the model sees output, errors and exit status.
 	log = script(t, run, done)
-	if code, _, errs := e.mote("y\n", "agent", "--allow-sh", "x"); code != 0 {
+	if code, _, errs := e.mote("y\n", "agent", "--sandbox", "off", "--allow-sh", "x"); code != 0 {
 		t.Fatalf("accepted: %d %s", code, errs)
 	}
 	if _, err := os.Stat(marker); err != nil {
@@ -337,7 +341,7 @@ func TestAgentShellAsksFirst(t *testing.T) {
 	// writes: the model chose it, not the user.
 	os.Remove(marker)
 	log = script(t, run, `{"thought":"t","action":{"tool":"sh","args":{"command":"echo read-only-ran"}}}`, done)
-	if code, _, errs := e.mote("", "agent", "--allow-sh", "--yes", "x"); code != 0 || strings.Contains(errs, "[y/N]") {
+	if code, _, errs := e.mote("", "agent", "--sandbox", "off", "--allow-sh", "--yes", "x"); code != 0 || strings.Contains(errs, "[y/N]") {
 		t.Errorf("--yes: %d %s", code, errs)
 	}
 	if _, err := os.Stat(marker); err == nil {
@@ -523,15 +527,28 @@ func TestDoConfirmsTasksMarkedAsks(t *testing.T) {
 }
 
 func TestAgentSaysWhetherTheShellIsSandboxed(t *testing.T) {
-	e := agentEnv(t) // PATH is empty, so no sandbox can be found
+	e := agentEnv(t)
+	// PATH is empty, which hides bwrap; macOS keeps sandbox-exec at a
+	// fixed path, so ask what this machine really has.
+	have := sandbox.Detect(context.Background(), exec.LookPath)
 	done := `{"thought":"t","action":{"tool":"finish","args":{"answer":"ok"}}}`
 	script(t, done)
 	_, _, errs := e.mote("", "agent", "--allow-sh", "--yes", "x")
-	if !strings.Contains(errs, "sh: not sandboxed; commands that are not read-only are asked about") {
-		t.Errorf("no sandbox note:\n%s", errs)
+	if have.Available() {
+		if !strings.Contains(errs, "sh: sandboxed with "+string(have.Kind)) {
+			t.Errorf("no sandbox note:\n%s", errs)
+		}
+	} else {
+		if !strings.Contains(errs, "sh: not sandboxed; commands that are not read-only are asked about") {
+			t.Errorf("no sandbox note:\n%s", errs)
+		}
+		if code, _, errs := e.mote("", "agent", "--allow-sh", "--yes", "--sandbox", "on", "x"); code != ExitMissing || !strings.Contains(errs, "bwrap") {
+			t.Errorf("--sandbox on without one: %d %s", code, errs)
+		}
 	}
-	if code, _, errs := e.mote("", "agent", "--allow-sh", "--yes", "--sandbox", "on", "x"); code != ExitMissing || !strings.Contains(errs, "bwrap") {
-		t.Errorf("--sandbox on without one: %d %s", code, errs)
+	// off is honoured wherever a sandbox exists.
+	if _, _, errs := e.mote("", "agent", "--allow-sh", "--yes", "--sandbox", "off", "x"); !strings.Contains(errs, "sh: not sandboxed") {
+		t.Errorf("--sandbox off:\n%s", errs)
 	}
 	if code, _, _ := e.mote("", "agent", "--allow-sh", "--sandbox", "maybe", "x"); code != ExitUsage {
 		t.Errorf("bad --sandbox: %d", code)

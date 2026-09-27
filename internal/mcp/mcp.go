@@ -107,6 +107,8 @@ type Client struct {
 	stdin  io.WriteCloser
 	stderr *tailBuffer
 
+	waitOnce sync.Once // Wait may be called once; failed and Close both need it
+
 	mu      sync.Mutex
 	nextID  int64
 	pending map[int64]chan response
@@ -360,9 +362,20 @@ func (c *Client) call(ctx context.Context, method string, params, out any) error
 	}
 }
 
+// wait reaps the server process once it has exited, which also finishes
+// copying its stderr; WaitDelay bounds how long that can take.
+func (c *Client) wait() { c.waitOnce.Do(func() { c.cmd.Wait() }) }
+
 // failed describes a server that stopped answering, with what it last
-// wrote to stderr, which is usually why.
+// wrote to stderr, which is usually why. Its output ending can be noticed
+// before the last of its stderr has been copied, so the process is waited
+// for first.
 func (c *Client) failed(method string, err error) error {
+	select {
+	case <-c.done:
+		c.wait()
+	default:
+	}
 	msg := fmt.Sprintf("mcp %s: %s: %v", c.name, method, err)
 	if tail := strings.TrimSpace(c.stderr.String()); tail != "" {
 		msg += ": " + tail
@@ -459,7 +472,7 @@ func (c *Client) Close() {
 			// A child of the server still holds its stdout; stop waiting.
 		}
 	}
-	c.cmd.Wait()
+	c.wait()
 }
 
 // tailBuffer keeps the last max bytes written to it.
