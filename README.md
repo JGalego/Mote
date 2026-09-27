@@ -188,9 +188,11 @@ Opt-in and slow: the first run needs `mote models pull flux2-klein-4b` (FLUX.2 k
 
 `mote pipe "A | B | sh: cmd"` — Chain tasks in one process, so models stay loaded between stages.
 
+![mote pipe](docs/demo/pipe.gif)
+
 ```sh
 mote pipe "transcribe meeting.m4a | chat 'Summarise in 3 bullets: {}'"
-mote pipe "code 'print the first 10 Fibonacci numbers' | sh: python3 -"
+mote pipe "code 'Python script that prints the squares of 1 to 5' | sh: python3 -"
 mote pipe --trace "frames clip.mp4 3 | describe | sh: tee notes.txt"
 ```
 
@@ -199,6 +201,8 @@ Each stage gets the previous value as `{}`, `-` or its first missing argument; s
 ### chosen 🎯
 
 `mote do REQUEST` — Pick the task that fits a request in plain words and run it.
+
+![mote do --plan](docs/demo/plan.gif)
 
 ```sh
 mote do "summarise meeting.m4a in three bullets"
@@ -211,6 +215,8 @@ Existing paths in the request become file arguments and the rest becomes the tex
 ### agent 🤖
 
 `mote agent GOAL` — Work toward a goal by calling tasks one step at a time until it has an answer.
+
+![mote agent](docs/demo/agent.gif)
 
 ```sh
 mote agent "what is the total due in invoice.txt?"
