@@ -605,3 +605,19 @@ func TestAgentShellInARealSandbox(t *testing.T) {
 		t.Errorf("the failed escape did not come back:\n%s", steps[2]["prompt"])
 	}
 }
+
+func TestAgentErrorsNameTheCauseNotInternalSteps(t *testing.T) {
+	e := agentEnv(t) // only the small profile's model is installed
+	for _, args := range [][]string{
+		{"agent", "--profile", "balanced", "x"},
+		{"do", "--plan", "--profile", "balanced", "x"},
+	} {
+		code, _, errs := e.mote("", args...)
+		if code != ExitMissing || !strings.Contains(errs, "mote models pull qwen3.5-2b") {
+			t.Errorf("%v: %d %s", args, code, errs)
+		}
+		if strings.Contains(errs, "json step") {
+			t.Errorf("%v leaks an internal step: %s", args, errs)
+		}
+	}
+}

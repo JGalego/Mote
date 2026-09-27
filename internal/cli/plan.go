@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -169,6 +170,12 @@ func (a *app) generateJSON(ctx context.Context, profile string, sessions map[str
 	}
 	res, err := t.Run(ctx, a.env(profile, sessions), []string{prompt, schema}, task.Options{})
 	if err != nil {
+		// The task's "json step 1 (generate)" wrapper names an internal
+		// detail; the cause, such as a model that is not downloaded, is
+		// what the user needs.
+		if inner := errors.Unwrap(err); inner != nil {
+			return inner
+		}
 		return err
 	}
 	if err := json.Unmarshal([]byte(res.Text), out); err != nil {
