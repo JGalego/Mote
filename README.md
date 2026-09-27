@@ -35,6 +35,7 @@ mote runs X-to-Y AI tasks (text, code, images, audio, video, files) on your CPU 
   - [patch](#patch---)
   - [chained](#chained-)
   - [chosen](#chosen-)
+  - [agent](#agent-)
   - [spoken](#spoken-)
   - [your own](#your-own-)
 - [Memory](#memory)
@@ -82,6 +83,7 @@ In a clone, `go install ./cmd/mote` does the same into `$(go env GOPATH)/bin`. `
 | `mote run TASK [ARGS...]` | Run a task, e.g. `mote run chat "Explain what a mutex is"`; `-o FILE` writes the output, `--model ID` overrides the model, `--apply` writes `patch` changes |
 | `mote pipe "A \| B \| sh: cmd"` | Chain tasks in one process, each stage receiving the last one's value: `{}` or `-` places it, `sh:` runs a shell command, `--trace` shows each step |
 | `mote do "REQUEST"` | Pick the task that fits a request written in plain words and run it; `--router embed` chooses with the encoder, `--plan` writes a pipeline of several tasks, `--dry-run` shows the choice |
+| `mote agent "GOAL"` | Work towards a goal in steps, calling tasks and local tools and reading what they return; `--tools` picks them, `--allow-sh` offers the shell |
 | `mote remember "FACT"` | Keep a fact in front of every model step; `mote memory` lists them, `mote forget N\|--all` removes them |
 | `mote memory [search "Q"]` | Show what mote remembers, or find a past exchange by meaning |
 | `mote listen [TASK]` | Wait for a wake word on the microphone, then run what you say next (never listens unless you start it) |
@@ -227,6 +229,37 @@ where it needs a file stops the plan instead of failing half way.
 `--dry-run` shows the plan without running it and `--trace` shows each
 stage's output. Planning is noticeably better with the `balanced` profile's
 2B model than with the 0.8B one.
+
+### agent 🤖
+
+`mote agent` works on a goal in steps. At each step the text model writes a
+short thought and calls one tool, mote runs it, and the model reads the
+result before choosing the next step, until it has an answer:
+
+```sh
+mote agent "what is the total due in invoice.txt?"
+mote agent "how many Go files are in this repository?" --allow-sh
+mote agent "find where retries are configured" --tools search,chat
+```
+
+The tools are your tasks, including the local programs you wrapped with
+`exec`; `--tools` narrows them, which helps a small model choose. The model
+never uses a native tool-calling format. Each step is generated under a JSON
+schema, so it always names a real tool with arguments of the right shape,
+and anything that goes wrong (a missing file, a failing command) comes back
+as an observation the model can correct. The thoughts, calls and results
+are shown on stderr as they happen; only the answer goes to stdout.
+
+Runs are bounded: `--steps` (default 8) caps them, a call the model already
+made is not run again, and a model that keeps repeating itself is asked for
+its answer. The model is told to say when the results do not contain the
+answer rather than guess.
+
+The shell is off unless you pass `--allow-sh`, and then mote asks before
+every command the model writes; `--yes` stops asking, which you should only
+use somewhere you do not mind it running anything. The 0.8B model is too
+small to act reliably and mote warns when it is in use; the `balanced`
+profile's 2B model does much better.
 
 ### spoken 🎤
 

@@ -67,6 +67,7 @@ Usage:
   mote run TASK [ARGS...] [-o OUTPUT] [--apply] [--model ID] [--profile P]
   mote pipe "TASK ARGS | TASK ARGS | sh: COMMAND" [-o OUTPUT] [--trace] [--model ID]
   mote do "REQUEST" [-o OUTPUT] [--apply] [--dry-run] [--plan [--trace]] [--model ID] [--profile P]
+  mote agent "GOAL" [-o OUTPUT] [--tools a,b] [--steps N] [--allow-sh [--yes]] [--model ID]
   mote listen [TASK] [--wake PHRASE] [--device D] [--chunk SECONDS] [--once]
   mote remember "FACT" | mote forget N|--all|--history | mote memory [search "Q"]
   mote tasks
@@ -90,6 +91,7 @@ Examples:
   mote pipe "frames clip.mp4 3 | describe | !tee notes.txt"
   mote listen --wake "hey mote"
   mote do "summarise meeting.m4a in three bullets"
+  mote agent "how many Go files are in this repository?" --allow-sh
   mote remember "I write Go, and prefer short answers"
   mote run chat "and in Python?" --continue
 `
@@ -190,7 +192,7 @@ func (a *app) dispatch(ctx context.Context, args []string) error {
 		return a.update(ctx, rest)
 	}
 	switch cmd {
-	case "run", "pipe", "listen", "do", "memory", "remember", "forget", "models", "bench", "tune":
+	case "run", "pipe", "listen", "do", "agent", "memory", "remember", "forget", "models", "bench", "tune":
 	default:
 		return usagef("unknown command %q; see `mote help`", cmd)
 	}
@@ -207,6 +209,8 @@ func (a *app) dispatch(ctx context.Context, args []string) error {
 		return a.listen(ctx, rest)
 	case "do":
 		return a.do(ctx, rest)
+	case "agent":
+		return a.agent(ctx, rest)
 	case "remember":
 		return a.remember(rest)
 	case "forget":
