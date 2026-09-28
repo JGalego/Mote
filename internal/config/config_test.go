@@ -108,6 +108,29 @@ func TestSet(t *testing.T) {
 	}
 }
 
+func TestGPUSetting(t *testing.T) {
+	c := Default()
+	if c.GPU != "" {
+		t.Errorf("gpu is not off by default: %q", c.GPU)
+	}
+	if err := c.Set("gpu", "on"); err != nil || c.GPU != "on" {
+		t.Errorf("gpu=on: %v %q", err, c.GPU)
+	}
+	if err := c.Validate(); err != nil {
+		t.Errorf("gpu=on should validate: %v", err)
+	}
+	if err := c.Set("gpu", "off"); err != nil || c.GPU != "" {
+		t.Errorf("gpu=off: %v %q", err, c.GPU)
+	}
+	if err := c.Set("gpu", "maybe"); err == nil {
+		t.Error("gpu=maybe accepted")
+	}
+	c.GPU = "maybe"
+	if err := c.Validate(); err == nil {
+		t.Error("Validate accepted an invalid gpu value")
+	}
+}
+
 func TestDirs(t *testing.T) {
 	t.Setenv("MOTE_CONFIG_DIR", "/tmp/x")
 	if Dir() != "/tmp/x" {

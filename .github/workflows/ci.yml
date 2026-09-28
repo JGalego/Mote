@@ -132,3 +132,44 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & $mote doctor
           exit $LASTEXITCODE
+
+  # Proves GPU offload actually works, not just that it builds: macos-latest
+  # is real Apple Silicon, so its default build (which already includes
+  # Metal) runs a real prompt on the real GPU; ubuntu-latest has none, so a
+  # software Vulkan driver (lavapipe) stands in to prove the separate
+  # Vulkan build loads and infers correctly. Neither proves Windows' Vulkan
+  # build works, since GitHub gives it no GPU and no equivalent software
+  # driver; setup there still proves the pinned build downloads and
+  # verifies, in the installer job above.
+  gpu:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Install a software Vulkan driver
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -y -q mesa-vulkan-drivers
+      - name: Build mote
+        run: go build -o "$RUNNER_TEMP/mote" ./cmd/mote
+      - name: Set up the text model with GPU offload on
+        env:
+          MOTE_HOME: ${{ runner.temp }}/home
+          MOTE_CONFIG_DIR: ${{ runner.temp }}/cfg
+        run: |
+          "$RUNNER_TEMP/mote" setup --yes --profile small --gpu
+          "$RUNNER_TEMP/mote" models pull text --yes
+          "$RUNNER_TEMP/mote" doctor || true
+      - name: Run a real prompt through the GPU build
+        env:
+          MOTE_HOME: ${{ runner.temp }}/home
+          MOTE_CONFIG_DIR: ${{ runner.temp }}/cfg
+        run: |
+          out="$("$RUNNER_TEMP/mote" run chat "What is 5 + 7? Reply with the number only, nothing else.")"
+          echo "$out"
+          echo "$out" | grep -q 12

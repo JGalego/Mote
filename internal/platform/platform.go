@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"os"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
@@ -15,14 +16,19 @@ import (
 
 // Info describes the machine mote is running on.
 type Info struct {
-	OS       string          `json:"os"`
-	Arch     string          `json:"arch"`
-	Distro   string          `json:"distro,omitempty"`
-	CPU      string          `json:"cpu,omitempty"`
-	Cores    int             `json:"cores"`
-	Features []string        `json:"features,omitempty"`
-	RAMMB    int             `json:"ram_mb"`
-	Tools    map[string]Tool `json:"tools"`
+	OS       string   `json:"os"`
+	Arch     string   `json:"arch"`
+	Distro   string   `json:"distro,omitempty"`
+	CPU      string   `json:"cpu,omitempty"`
+	Cores    int      `json:"cores"`
+	Features []string `json:"features,omitempty"`
+	RAMMB    int      `json:"ram_mb"`
+	// GPU is the name of a GPU mote could offload inference to, or empty
+	// when none was detected. Detection is best-effort: presence here is
+	// not a guarantee `mote config set gpu on` will find a matching
+	// runtime build for it.
+	GPU   string          `json:"gpu,omitempty"`
+	Tools map[string]Tool `json:"tools"`
 }
 
 // Tool is an executable found on PATH.
@@ -54,6 +60,7 @@ func Detect() Info {
 	}
 	info.RAMMB = totalRAMMB()
 	info.CPU, info.Features = cpuInfo()
+	info.GPU = gpuInfo()
 	if info.OS == "linux" {
 		if b, err := os.ReadFile("/etc/os-release"); err == nil {
 			info.Distro = ParseOSRelease(string(b))
@@ -170,4 +177,23 @@ func filterFeatures(raw []string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+var quotedField = regexp.MustCompile(`"([^"]*)"`)
+
+// ParseLspciVGA returns the vendor and model of the first display
+// controller (VGA or 3D) in `lspci -mm` output, or "" if there is none.
+func ParseLspciVGA(s string) string {
+	for _, line := range strings.Split(s, "\n") {
+		f := quotedField.FindAllStringSubmatch(line, -1)
+		if len(f) < 3 {
+			continue
+		}
+		class := f[0][1]
+		if class != "VGA compatible controller" && class != "3D controller" {
+			continue
+		}
+		return strings.TrimSpace(f[1][1] + " " + f[2][1])
+	}
+	return ""
 }

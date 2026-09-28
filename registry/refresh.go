@@ -24,6 +24,11 @@ type RuntimeSource struct {
 	// release tag, and * for any text (sd.cpp names its macOS build after
 	// the macOS version it was built on). Exactly one asset must match.
 	Assets map[string]string `json:"assets"`
+	// GPUAssets is Assets for the build that can offload to a GPU, on the
+	// platforms that need a different one from the default (Vulkan, on
+	// Linux and Windows). A platform with none, such as macOS, offloads
+	// under the default build instead.
+	GPUAssets map[string]string `json:"gpu_assets,omitempty"`
 }
 
 // Candidates is the human-maintained input to Refresh.
@@ -351,18 +356,27 @@ func refreshRuntime(ctx context.Context, name string, prev Runtime, spec Runtime
 		Published: rel.Published.UTC().Format("2006-01-02"),
 		Source:    "https://github.com/" + spec.Repo + "/releases/tag/" + rel.Tag,
 	}
-	keys := make([]string, 0, len(spec.Assets))
-	for k := range spec.Assets {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		a, err := matchAsset(rel, strings.ReplaceAll(spec.Assets[k], "{tag}", rel.Tag))
-		if err != nil {
-			return prev, nil, err
+	add := func(patterns map[string]string, variant string) error {
+		keys := make([]string, 0, len(patterns))
+		for k := range patterns {
+			keys = append(keys, k)
 		}
-		goos, arch, _ := strings.Cut(k, "/")
-		rt.Assets = append(rt.Assets, Asset{OS: goos, Arch: arch, URL: a.URL, SHA256: a.SHA256, Size: a.Size})
+		sort.Strings(keys)
+		for _, k := range keys {
+			a, err := matchAsset(rel, strings.ReplaceAll(patterns[k], "{tag}", rel.Tag))
+			if err != nil {
+				return err
+			}
+			goos, arch, _ := strings.Cut(k, "/")
+			rt.Assets = append(rt.Assets, Asset{OS: goos, Arch: arch, Variant: variant, URL: a.URL, SHA256: a.SHA256, Size: a.Size})
+		}
+		return nil
+	}
+	if err := add(spec.Assets, ""); err != nil {
+		return prev, nil, err
+	}
+	if err := add(spec.GPUAssets, "gpu"); err != nil {
+		return prev, nil, err
 	}
 	was := prev.Version
 	if was == "" {

@@ -2,7 +2,9 @@ package platform
 
 import (
 	"os"
+	"os/exec"
 	"sort"
+	"strings"
 	"unsafe"
 
 	"syscall"
@@ -42,6 +44,17 @@ func cpuInfo() (string, []string) {
 	}
 	sort.Strings(feats)
 	return os.Getenv("PROCESSOR_IDENTIFIER"), feats
+}
+
+// gpuInfo asks PowerShell for the first video controller's name. Detecting
+// a GPU here does not mean a Vulkan driver for it is installed.
+func gpuInfo() string {
+	out, err := exec.Command("powershell", "-NoProfile", "-Command",
+		"(Get-CimInstance Win32_VideoController | Select-Object -First 1 -ExpandProperty Name)").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // DiskFreeMB returns free space available to the user at path, or 0.

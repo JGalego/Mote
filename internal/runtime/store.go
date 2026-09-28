@@ -85,14 +85,20 @@ func runtimeName(rt registry.Runtime) string {
 }
 
 // RuntimeDir is where a pinned runtime release is unpacked, one directory
-// per backend and version.
-func (s Store) RuntimeDir(rt registry.Runtime) string {
-	return filepath.Join(s.Dir, "runtime", runtimeName(rt)+"-"+rt.Version)
+// per backend, version and build variant (a GPU-offloading build, when this
+// OS/arch needs a different one from the default, shares neither files nor
+// a directory with the default build).
+func (s Store) RuntimeDir(rt registry.Runtime, variant string) string {
+	name := runtimeName(rt) + "-" + rt.Version
+	if variant != "" {
+		name += "-" + variant
+	}
+	return filepath.Join(s.Dir, "runtime", name)
 }
 
 // RuntimeInstalled reports whether rt is unpacked, returning its directory.
-func (s Store) RuntimeInstalled(rt registry.Runtime) (string, bool) {
-	dir := s.RuntimeDir(rt)
+func (s Store) RuntimeInstalled(rt registry.Runtime, variant string) (string, bool) {
+	dir := s.RuntimeDir(rt, variant)
 	_, err := os.Stat(filepath.Join(dir, exe(MainBinary[runtimeName(rt)])))
 	return dir, err == nil
 }
@@ -102,7 +108,7 @@ func (s Store) RuntimeInstalled(rt registry.Runtime) (string, bool) {
 func (s Store) InstallRuntime(ctx context.Context, f Fetcher, rt registry.Runtime, a registry.Asset) (string, error) {
 	name := runtimeName(rt)
 	main := exe(MainBinary[name])
-	dir := s.RuntimeDir(rt)
+	dir := s.RuntimeDir(rt, a.Variant)
 	if _, err := os.Stat(filepath.Join(dir, main)); err == nil {
 		return dir, nil
 	}
@@ -132,9 +138,11 @@ func (s Store) InstallRuntime(ctx context.Context, f Fetcher, rt registry.Runtim
 var ErrNoRuntime = errors.New("llama.cpp runtime not installed; run `mote setup` (or `mote update`)")
 
 // FindLlama locates the directory holding llama-server: an explicitly
-// configured directory first, then the managed install.
-func FindLlama(configured string, s Store, rt registry.Runtime) (string, error) {
-	for _, d := range []string{configured, s.RuntimeDir(rt)} {
+// configured directory first, then the managed install. variant is "" for
+// the default CPU-only build, or "gpu" for the one that offloads to a GPU,
+// on the platforms that pin a separate build for it.
+func FindLlama(configured string, s Store, rt registry.Runtime, variant string) (string, error) {
+	for _, d := range []string{configured, s.RuntimeDir(rt, variant)} {
 		if d == "" {
 			continue
 		}

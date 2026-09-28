@@ -111,6 +111,10 @@ func TestValidateRejects(t *testing.T) {
 		"asset os":      func(r *Registry) { r.Runtime.Assets[0].OS = "plan9" },
 		"asset arch":    func(r *Registry) { r.Runtime.Assets[0].Arch = "vax" },
 		"asset hash":    func(r *Registry) { r.Runtime.Assets[0].SHA256 = "" },
+		"asset variant": func(r *Registry) { r.Runtime.Assets[0].Variant = "quantum" },
+		"asset twice": func(r *Registry) {
+			r.Runtime.Assets = append(r.Runtime.Assets, r.Runtime.Assets[0])
+		},
 		"gate cap":      func(r *Registry) { r.Policy.Gates["telepathy"] = r.Policy.Gates["text"] },
 		"gate fields":   func(r *Registry) { g := r.Policy.Gates["text"]; g.Dataset = ""; r.Policy.Gates["text"] = g },
 		"bad model id":  func(r *Registry) { r.Models[0].ID = "Not An Id!" },
@@ -399,6 +403,33 @@ func TestRefreshRuntime(t *testing.T) {
 	next, warns, _ := Refresh(context.Background(), prev, pol, cands, src, RefreshOptions{Now: now, Runtime: true})
 	if next.Runtime.Version != "b1" || len(warns) == 0 {
 		t.Error("runtime without digest must not be pinned")
+	}
+}
+
+func TestRefreshRuntimePinsAGPUBuildWhereOneIsGiven(t *testing.T) {
+	prev, pol, cands, src := refreshFixture()
+	prev.Runtime.Published = "2026-08-01"
+	cands.Runtime.GPUAssets = map[string]string{"linux/amd64": "llama-{tag}-linux-vulkan.tar.gz"}
+	src.release.Assets["llama-b2-linux-vulkan.tar.gz"] = RemoteAsset{URL: "https://example.org/b2-vulkan.tar.gz", SHA256: sha('f'), Size: 9}
+	now := time.Date(2026, 9, 26, 0, 0, 0, 0, time.UTC)
+
+	next, _, err := Refresh(context.Background(), prev, pol, cands, src, RefreshOptions{Now: now, Runtime: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cpu, ok := next.Runtime.Asset("linux", "amd64")
+	if !ok || cpu.Variant != "" {
+		t.Errorf("cpu asset: %+v %v", cpu, ok)
+	}
+	gpu, ok := next.Runtime.GPUAsset("linux", "amd64")
+	if !ok || gpu.Variant != "gpu" || gpu.URL != "https://example.org/b2-vulkan.tar.gz" {
+		t.Errorf("gpu asset: %+v %v", gpu, ok)
+	}
+	if _, ok := next.Runtime.GPUAsset("darwin", "arm64"); ok {
+		t.Error("gpu asset pinned for a platform that was not given one")
+	}
+	if err := next.Validate(); err != nil {
+		t.Errorf("registry with a gpu asset should validate: %v", err)
 	}
 }
 

@@ -137,7 +137,7 @@ func flag(args []string, name string) string {
 
 func server(args []string) int {
 	if len(args) > 0 && args[0] == "--help" {
-		fmt.Println("-m --mmproj --ctx-size --device --parallel --threads --host --port --fit --no-repack")
+		fmt.Println("-m --mmproj --ctx-size --device --gpu-layers --parallel --threads --host --port --fit --no-repack")
 		return 0
 	}
 	if _, err := os.Stat(flag(args, "-m")); err != nil {

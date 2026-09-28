@@ -64,7 +64,7 @@ func (a *app) keepAlive() time.Duration {
 // this command would.
 func (a *app) fingerprint() string {
 	h := sha256.New()
-	fmt.Fprintln(h, version(), a.registry().Version, a.dataDir(), a.cfg.LlamaDir, a.cfg.Threads, a.cfg.Repack)
+	fmt.Fprintln(h, version(), a.registry().Version, a.dataDir(), a.cfg.LlamaDir, a.cfg.Threads, a.cfg.Repack, a.cfg.GPU)
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }
 
@@ -431,13 +431,25 @@ func (a *app) serveStatus() error {
 	return nil
 }
 
-// llama returns the local llama.cpp backend.
+// llama returns the local llama.cpp backend. When gpu is on, it prefers a
+// build that offloads to the GPU: a separate one on the platforms that need
+// it (Vulkan, on Linux and Windows), or, on one that does not (macOS, whose
+// default build already includes Metal), the same build under different
+// runtime flags.
 func (a *app) llama() (*mrt.Llama, error) {
-	dir, err := mrt.FindLlama(a.cfg.LlamaDir, a.store(), a.registry().Runtime)
+	gpu := a.cfg.GPU == "on"
+	variant := ""
+	if gpu {
+		info := a.platform()
+		if _, ok := a.registry().Runtime.GPUAsset(info.OS, info.Arch); ok {
+			variant = "gpu"
+		}
+	}
+	dir, err := mrt.FindLlama(a.cfg.LlamaDir, a.store(), a.registry().Runtime, variant)
 	if err != nil {
 		return nil, err
 	}
-	return &mrt.Llama{Dir: dir, Threads: a.cfg.Threads, LogDir: filepath.Join(a.dataDir(), "logs"), Repack: a.cfg.Repack == "on"}, nil
+	return &mrt.Llama{Dir: dir, Threads: a.cfg.Threads, LogDir: filepath.Join(a.dataDir(), "logs"), Repack: a.cfg.Repack == "on", GPU: gpu}, nil
 }
 
 // servedBackend wraps the local backend so models load in the resident

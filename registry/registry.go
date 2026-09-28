@@ -22,8 +22,9 @@ var embeddedModels []byte
 
 // Schema is the registry format version understood by this binary. 2 added
 // runtimes other than llama.cpp (Runtimes) and models built from files in
-// several repositories.
-const Schema = 2
+// several repositories. 3 added a GPU-offloading build of a runtime
+// (Asset.Variant).
+const Schema = 3
 
 // Capabilities a model can provide. Tasks request capabilities, not models.
 var Capabilities = map[string]string{
@@ -90,11 +91,16 @@ type Runtime struct {
 }
 
 type Asset struct {
-	OS     string `json:"os"`
-	Arch   string `json:"arch"`
-	URL    string `json:"url"`
-	SHA256 string `json:"sha256"`
-	Size   int64  `json:"size"`
+	OS   string `json:"os"`
+	Arch string `json:"arch"`
+	// Variant is empty for the default CPU-only build, or "gpu" for one
+	// that can offload inference to a GPU (Vulkan on Linux and Windows;
+	// macOS needs none of its own, since the default build already
+	// includes Metal).
+	Variant string `json:"variant,omitempty"`
+	URL     string `json:"url"`
+	SHA256  string `json:"sha256"`
+	Size    int64  `json:"size"`
 }
 
 type Model struct {
@@ -249,10 +255,25 @@ func (r *Registry) Model(id string) (*Model, bool) {
 // Asset returns the runtime archive for an OS/arch pair.
 func (r *Registry) Asset(goos, arch string) (Asset, bool) { return r.Runtime.Asset(goos, arch) }
 
-// Asset returns the build of rt for an OS and architecture.
+// Asset returns the default (CPU-only) build of rt for an OS and
+// architecture.
 func (rt Runtime) Asset(goos, arch string) (Asset, bool) {
 	for _, a := range rt.Assets {
-		if a.OS == goos && a.Arch == arch {
+		if a.OS == goos && a.Arch == arch && a.Variant == "" {
+			return a, true
+		}
+	}
+	return Asset{}, false
+}
+
+// GPUAsset returns the build of rt for an OS and architecture that can
+// offload to a GPU, when one is pinned. Most GPU-capable platforms need a
+// separate build (Linux and Windows, for Vulkan); one that does not, such
+// as macOS, has no entry here and uses Asset instead, under different
+// runtime flags.
+func (rt Runtime) GPUAsset(goos, arch string) (Asset, bool) {
+	for _, a := range rt.Assets {
+		if a.OS == goos && a.Arch == arch && a.Variant == "gpu" {
 			return a, true
 		}
 	}
@@ -358,14 +379,26 @@ func (r *Registry) Validate() error {
 		bad("runtime must be a pinned llama.cpp release")
 	}
 	checkAssets := func(rt Runtime) {
+		seen := map[string]bool{}
 		for _, a := range rt.Assets {
 			where := fmt.Sprintf("%s asset %s/%s", rt.Name, a.OS, a.Arch)
+			if a.Variant != "" {
+				where = fmt.Sprintf("%s (%s)", where, a.Variant)
+			}
 			if a.OS != "linux" && a.OS != "darwin" && a.OS != "windows" {
 				bad("%s: unknown os", where)
 			}
 			if a.Arch != "amd64" && a.Arch != "arm64" {
 				bad("%s: unknown arch", where)
 			}
+			if a.Variant != "" && a.Variant != "gpu" {
+				bad("%s: unknown variant", where)
+			}
+			key := a.OS + "/" + a.Arch + "/" + a.Variant
+			if seen[key] {
+				bad("%s: pinned twice", where)
+			}
+			seen[key] = true
 			if err := httpsURL(a.URL); err != nil {
 				bad("%s: %v", where, err)
 			}

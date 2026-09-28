@@ -269,15 +269,15 @@ func TestSpeak(t *testing.T) {
 func TestStoreAndFindLlama(t *testing.T) {
 	s := Store{Dir: t.TempDir()}
 	rt := registry.Runtime{Version: "b1"}
-	if _, err := FindLlama("", s, rt); !errors.Is(err, ErrNoRuntime) {
+	if _, err := FindLlama("", s, rt, ""); !errors.Is(err, ErrNoRuntime) {
 		t.Errorf("got %v", err)
 	}
-	if _, err := FindLlama(t.TempDir(), s, rt); err == nil {
+	if _, err := FindLlama(t.TempDir(), s, rt, ""); err == nil {
 		t.Error("configured dir without binary accepted")
 	}
-	os.MkdirAll(s.RuntimeDir(rt), 0o755)
-	os.WriteFile(filepath.Join(s.RuntimeDir(rt), exe("llama-server")), nil, 0o755)
-	if d, err := FindLlama("", s, rt); err != nil || d != s.RuntimeDir(rt) {
+	os.MkdirAll(s.RuntimeDir(rt, ""), 0o755)
+	os.WriteFile(filepath.Join(s.RuntimeDir(rt, ""), exe("llama-server")), nil, 0o755)
+	if d, err := FindLlama("", s, rt, ""); err != nil || d != s.RuntimeDir(rt, "") {
 		t.Errorf("managed runtime not found: %s %v", d, err)
 	}
 
@@ -335,14 +335,14 @@ func TestInstallAnotherBackendsRuntime(t *testing.T) {
 	sd := registry.Runtime{Name: "sd.cpp", Version: "master-1"}
 	llama := registry.Runtime{Name: "llama.cpp", Version: "master-1"}
 	// Each backend has its own directory, even at the same version.
-	if s.RuntimeDir(sd) == s.RuntimeDir(llama) {
+	if s.RuntimeDir(sd, "") == s.RuntimeDir(llama, "") {
 		t.Fatal("runtimes share a directory")
 	}
 	// A runtime with no name is llama.cpp's, as older registries wrote it.
-	if s.RuntimeDir(registry.Runtime{Version: "b1"}) != filepath.Join(s.Dir, "runtime", "llama.cpp-b1") {
+	if s.RuntimeDir(registry.Runtime{Version: "b1"}, "") != filepath.Join(s.Dir, "runtime", "llama.cpp-b1") {
 		t.Error("unnamed runtime moved")
 	}
-	if _, ok := s.RuntimeInstalled(sd); ok {
+	if _, ok := s.RuntimeInstalled(sd, ""); ok {
 		t.Error("installed before installing")
 	}
 	a := registry.Asset{URL: srv.URL + "/sd.tar.gz", SHA256: hash(body), Size: int64(len(body))}
@@ -350,13 +350,66 @@ func TestInstallAnotherBackendsRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d, ok := s.RuntimeInstalled(sd); !ok || d != got {
+	if d, ok := s.RuntimeInstalled(sd, ""); !ok || d != got {
 		t.Errorf("installed at %s, found %s %v", got, d, ok)
 	}
 	// An archive without the backend's program is refused.
 	s2 := Store{Dir: filepath.Join(dir, "data2")}
 	if _, err := s2.InstallRuntime(context.Background(), Fetcher{AllowHTTP: true}, llama, a); err == nil || !strings.Contains(err.Error(), "llama-server") {
 		t.Errorf("wrong archive: %v", err)
+	}
+}
+
+func TestGPUBuildGetsItsOwnDirectory(t *testing.T) {
+	dir := t.TempDir()
+	cpuArc := filepath.Join(dir, "cpu.tar.gz")
+	writeTarGz(t, cpuArc, []entry{{name: exe("llama-server"), body: "cpu-bin", mode: 0o755}})
+	cpuBody, _ := os.ReadFile(cpuArc)
+	gpuArc := filepath.Join(dir, "gpu.tar.gz")
+	writeTarGz(t, gpuArc, []entry{{name: exe("llama-server"), body: "gpu-bin", mode: 0o755}})
+	gpuBody, _ := os.ReadFile(gpuArc)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "gpu") {
+			w.Write(gpuBody)
+		} else {
+			w.Write(cpuBody)
+		}
+	}))
+	defer srv.Close()
+
+	s := Store{Dir: filepath.Join(dir, "data")}
+	rt := registry.Runtime{Name: "llama.cpp", Version: "b1"}
+	cpuAsset := registry.Asset{URL: srv.URL + "/cpu.tar.gz", SHA256: hash(cpuBody), Size: int64(len(cpuBody))}
+	gpuAsset := registry.Asset{Variant: "gpu", URL: srv.URL + "/gpu.tar.gz", SHA256: hash(gpuBody), Size: int64(len(gpuBody))}
+
+	cpuDir, err := s.InstallRuntime(context.Background(), Fetcher{AllowHTTP: true}, rt, cpuAsset)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gpuDir, err := s.InstallRuntime(context.Background(), Fetcher{AllowHTTP: true}, rt, gpuAsset)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cpuDir == gpuDir {
+		t.Fatal("the CPU and GPU builds share a directory")
+	}
+	if gpuDir != s.RuntimeDir(rt, "gpu") {
+		t.Errorf("gpu dir %s, want %s", gpuDir, s.RuntimeDir(rt, "gpu"))
+	}
+	// Both remain installed independently; neither overwrote the other.
+	if _, ok := s.RuntimeInstalled(rt, ""); !ok {
+		t.Error("cpu build missing after installing the gpu one")
+	}
+	if d, ok := s.RuntimeInstalled(rt, "gpu"); !ok || d != gpuDir {
+		t.Errorf("gpu build not found: %s %v", d, ok)
+	}
+	cb, _ := os.ReadFile(filepath.Join(cpuDir, exe("llama-server")))
+	gb, _ := os.ReadFile(filepath.Join(gpuDir, exe("llama-server")))
+	if string(cb) != "cpu-bin" || string(gb) != "gpu-bin" {
+		t.Errorf("wrong binaries: cpu=%q gpu=%q", cb, gb)
+	}
+	if d, err := FindLlama("", s, rt, "gpu"); err != nil || d != gpuDir {
+		t.Errorf("FindLlama gpu: %s %v", d, err)
 	}
 }
 
@@ -855,6 +908,34 @@ func TestLoadArgsSkipWorkMoteDoesNotNeed(t *testing.T) {
 		t.Errorf("repacking: %q", kept)
 	}
 	for _, f := range []string{"--fit", "--no-repack"} {
+		if !has(RequiredFlags, f) {
+			t.Errorf("doctor does not check %s", f)
+		}
+	}
+}
+
+func TestCommonArgsChooseCPUOrGPU(t *testing.T) {
+	has := func(args []string, flag string) bool {
+		for _, a := range args {
+			if a == flag {
+				return true
+			}
+		}
+		return false
+	}
+	m, files := testModel(t, t.TempDir())
+	cpu := (&Llama{}).commonArgs(m, files)
+	if !has(cpu, "--device") || has(cpu, "--gpu-layers") {
+		t.Errorf("cpu: %q", cpu)
+	}
+	gpu := (&Llama{GPU: true}).commonArgs(m, files)
+	if has(gpu, "--device") {
+		t.Errorf("gpu: --device forced the runtime's own choice off: %q", gpu)
+	}
+	if !has(gpu, "--gpu-layers") {
+		t.Errorf("gpu: no --gpu-layers: %q", gpu)
+	}
+	for _, f := range []string{"--device", "--gpu-layers"} {
 		if !has(RequiredFlags, f) {
 			t.Errorf("doctor does not check %s", f)
 		}

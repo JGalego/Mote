@@ -186,6 +186,18 @@ func TestACommandStartsTheServerAndLaterOnesReuseIt(t *testing.T) {
 		t.Error("the old server still runs")
 	}
 
+	// Turning GPU offload on is also a change in how models load.
+	if code, _, errs := e.mote("", "config", "set", "gpu", "on"); code != 0 {
+		t.Fatal(errs)
+	}
+	if code, out, _ := e.mote("", "run", "chat", "fourth"); code != 0 || strings.TrimSpace(out) != "echo: fourth" {
+		t.Fatalf("fourth: %d %q", code, out)
+	}
+	last, _ := e.state()
+	if last.PID == next.PID || last.Fingerprint == next.Fingerprint {
+		t.Errorf("the server from before gpu was kept: %+v", last)
+	}
+
 	// Speech runs in the command, with or without a server.
 	e.install("qwen3-tts-1.7b")
 	wav := filepath.Join(t.TempDir(), "s.wav")

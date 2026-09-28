@@ -90,7 +90,7 @@ func (a *app) downloadSize(m *registry.Model, counted map[string]bool) int64 {
 	}
 	if m.Backend != "llama.cpp" && !counted[m.Backend] {
 		if rt, asset, err := a.runtimeFor(m); err == nil {
-			if _, ok := a.store().RuntimeInstalled(rt); !ok {
+			if _, ok := a.store().RuntimeInstalled(rt, ""); !ok {
 				n += asset.Size
 			}
 		}

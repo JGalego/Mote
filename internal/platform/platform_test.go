@@ -63,6 +63,23 @@ func TestParseCPUInfoARM(t *testing.T) {
 	}
 }
 
+func TestParseLspciVGA(t *testing.T) {
+	s := `00:02.0 "VGA compatible controller" "Intel Corporation" "TigerLake-LP GT2 [Iris Xe Graphics]" -ra01 "Dell" "Device 0000"
+03:00.0 "Non-VGA unclassified device" "Advanced Micro Devices, Inc. [AMD/ATI]" "Renoir"
+`
+	if got, want := ParseLspciVGA(s), "Intel Corporation TigerLake-LP GT2 [Iris Xe Graphics]"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	if got := ParseLspciVGA("no gpu here"); got != "" {
+		t.Errorf("no controller: got %q", got)
+	}
+	d3d := `03:00.0 "3D controller" "NVIDIA Corporation" "GA104M [GeForce RTX 3070 Mobile]"
+`
+	if got, want := ParseLspciVGA(d3d), "NVIDIA Corporation GA104M [GeForce RTX 3070 Mobile]"; got != want {
+		t.Errorf("3D controller: got %q, want %q", got, want)
+	}
+}
+
 func TestLookTools(t *testing.T) {
 	have := map[string]string{"nvim": "/usr/bin/nvim", "git": "/usr/bin/git", "ffmpeg": "/opt/bin/ffmpeg", "code": "/snap/bin/code"}
 	look := func(n string) (string, error) {

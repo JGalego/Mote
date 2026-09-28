@@ -88,7 +88,7 @@ In a clone, `go install ./cmd/mote` does the same into `$(go env GOPATH)/bin`. `
 
 | Command | What it does |
 | --- | --- |
-| `mote setup [--profile P] [--yes]` | Install the runtime and the models for a profile (`small`, `balanced`, `quality`) |
+| `mote setup [--profile P] [--yes] [--gpu\|--no-gpu]` | Install the runtime and the models for a profile (`small`, `balanced`, `quality`); asks about GPU offload when one is detected |
 | `mote run TASK [ARGS...]` | Run a task, e.g. `mote run chat "Explain what a mutex is"`; `-o FILE` writes the output, `--model ID` overrides the model, `--apply` writes `patch` changes |
 | `mote chat [--system "..."]` | Talk with the text model; it sees the earlier turns. `/new` starts over, `/exit` or Ctrl-D ends, a line ending in `\` continues |
 | `mote pipe "A \| B \| sh: cmd"` | Chain tasks in one process, each stage receiving the last one's value: `{}` or `-` places it, `sh:` runs a shell command, `--trace` shows each step |
@@ -357,7 +357,7 @@ different words.
 
 ## Serving
 
-Loading a model takes a few seconds, so mote keeps the ones a command used loaded for five minutes, in a small background server that the next command reuses. A second `mote run chat` answers in a fraction of a second instead of reloading. The server stops itself once nothing has been used for that long, unloads the least recently used model when another would not fit in memory, and is replaced if you change how models load (`threads`, `repack`, the runtime, or mote itself).
+Loading a model takes a few seconds, so mote keeps the ones a command used loaded for five minutes, in a small background server that the next command reuses. A second `mote run chat` answers in a fraction of a second instead of reloading. The server stops itself once nothing has been used for that long, unloads the least recently used model when another would not fit in memory, and is replaced if you change how models load (`threads`, `repack`, `gpu`, the runtime, or mote itself).
 
 ```sh
 mote serve status                  # what is loaded, and for how long
@@ -417,7 +417,7 @@ flowchart TD
   SD --> OUT
 ```
 
-Inference runs in llama.cpp servers bound to `127.0.0.1` with GPU offload disabled (`--device none`), held by `mote serve` between commands. GGUF weights come from Hugging Face only when you allow it, pinned to a commit and verified by SHA-256.
+Inference runs in llama.cpp servers bound to `127.0.0.1`, held by `mote serve` between commands, on the CPU alone (`--device none`) unless you turn GPU offload on. GGUF weights come from Hugging Face only when you allow it, pinned to a commit and verified by SHA-256.
 
 Models, logs, benchmark results and the file index (`index.json`) live in the data directory (`~/.local/share/mote`, `~/Library/Application Support/mote`, `%LOCALAPPDATA%\mote`), configuration in the OS config directory. After setup, mote itself touches the network only for `mote update` and explicit pulls; MCP servers you add are programs of their own and may do more.
 
@@ -450,6 +450,8 @@ flowchart LR
 Scores come from Hugging Face `evalResults`, stored with source, date and verification flag; RAM figures are labelled estimates. A [daily workflow](.github/workflows/refresh.yml) re-reads them and commits only what changed; `mote models upgrade --check` shows whether that changed your picks, and `mote models upgrade` downloads the new ones. A [nightly workflow](.github/workflows/quality.yml) then runs mote's own task checks (`mote bench --full --strict`) against whatever the registry now picks for the default profile, on real CPU inference, so a bad swap is caught the morning after it lands. Locally, `mote bench` measures installed models, `mote tune --apply` turns the results into config, and `mote config rollback` undoes it.
 
 Loading skips work mote does not need: llama.cpp's memory fitting (`--fit off`, since mote sets the device and context itself) and, for a server that answers a single command, repacking the weights for faster CPU kernels (`--no-repack`), which roughly halves load time and costs some prompt speed. `mote bench --full` times loading both ways on your machine, and `mote tune` sets `repack` to `on` when repacking pays for itself within a typical prompt.
+
+mote stays CPU-only by default; `mote config set gpu on` (or `mote setup --gpu`, which asks when it finds one) offloads inference to a GPU instead. On Linux and Windows this downloads a second, separate llama.cpp build (Vulkan, one that works across NVIDIA, AMD and Intel GPUs alike, since a CUDA build would need matching driver and toolkit versions mote cannot pin reliably); on macOS nothing more downloads, since the default build already includes Metal. `mote doctor` reports what was detected and which build is in use; `mote config set gpu off` goes back to the CPU.
 
 ## License
 

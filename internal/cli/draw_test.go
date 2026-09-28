@@ -31,7 +31,7 @@ func sdAvailable() bool {
 func (e *env) installSD() string {
 	e.t.Helper()
 	rt, _ := registry.Default().RuntimeFor("sd.cpp")
-	fakellama.InstallSD(e.t, mrt.Store{Dir: e.home}.RuntimeDir(rt))
+	fakellama.InstallSD(e.t, mrt.Store{Dir: e.home}.RuntimeDir(rt, ""))
 	log := filepath.Join(e.t.TempDir(), "sd-args")
 	e.t.Setenv("MOTE_FAKE_SD_LOG", log)
 	return log

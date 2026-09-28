@@ -63,7 +63,7 @@ const (
 const usage = `mote - local, CPU-only X-to-Y AI tasks
 
 Usage:
-  mote setup [--yes] [--config FILE] [--profile P] [--data-dir DIR] [--auto-download] [--no-download]
+  mote setup [--yes] [--config FILE] [--profile P] [--data-dir DIR] [--auto-download] [--no-download] [--gpu|--no-gpu]
   mote run TASK [ARGS...] [-o OUTPUT] [--apply] [--model ID] [--profile P]
   mote chat [--system "INSTRUCTIONS"] [--model ID]
   mote index [DIR...] | status | rm DIR|--all
@@ -366,7 +366,7 @@ func (a *app) localBackend(m *registry.Model) (mrt.Backend, error) {
 		if err != nil {
 			return nil, err
 		}
-		dir, ok := a.store().RuntimeInstalled(rt)
+		dir, ok := a.store().RuntimeInstalled(rt, "")
 		if !ok {
 			return nil, missingf("stable-diffusion.cpp is not installed; run `mote models pull %s`", m.ID)
 		}
@@ -406,7 +406,7 @@ func (a *app) ready(m *registry.Model) bool {
 	if !ok {
 		return false
 	}
-	_, ok = a.store().RuntimeInstalled(rt)
+	_, ok = a.store().RuntimeInstalled(rt, "")
 	return ok
 }
 
@@ -423,7 +423,7 @@ func (a *app) ensure(ctx context.Context, m *registry.Model, allow bool) error {
 		if rt, asset, err = a.runtimeFor(m); err != nil {
 			return err
 		}
-		_, installed := a.store().RuntimeInstalled(rt)
+		_, installed := a.store().RuntimeInstalled(rt, "")
 		needRuntime = !installed
 	}
 	missing := a.store().Missing(m)

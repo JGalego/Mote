@@ -82,7 +82,7 @@ func (p *prompter) choose(q string, opts []string, def int) int {
 
 func (a *app) setup(ctx context.Context, args []string) error {
 	vals, pos, err := flags(args, []string{"--config", "--profile", "--data-dir"},
-		[]string{"--yes", "-y", "--auto-download", "--no-download"})
+		[]string{"--yes", "-y", "--auto-download", "--no-download", "--gpu", "--no-gpu"})
 	if err != nil {
 		return err
 	}
@@ -123,6 +123,12 @@ func (a *app) setup(ctx context.Context, args []string) error {
 	}
 	if vals["--auto-download"] == "true" {
 		cfg.AutoDownload = true
+	}
+	if vals["--gpu"] == "true" {
+		cfg.GPU = "on"
+	}
+	if vals["--no-gpu"] == "true" {
+		cfg.GPU = ""
 	}
 	if _, ok := reg.Policy.Profiles[cfg.Profile]; !ok {
 		return usagef("unknown profile %q (have %s)", cfg.Profile, strings.Join(reg.ProfileNames(), ", "))
@@ -188,6 +194,13 @@ func (a *app) setup(ctx context.Context, args []string) error {
 	if vals["--auto-download"] == "" && vals["--config"] == "" {
 		cfg.AutoDownload = p.yesNo("Download models automatically the first time a task needs them?", cfg.AutoDownload)
 	}
+	if vals["--gpu"] == "" && vals["--no-gpu"] == "" && vals["--config"] == "" && info.GPU != "" {
+		if p.yesNo(fmt.Sprintf("GPU detected (%s). Offload inference to it when possible?", info.GPU), cfg.GPU == "on") {
+			cfg.GPU = "on"
+		} else {
+			cfg.GPU = ""
+		}
+	}
 
 	if changed, err := config.Save(a.cfgDir, cfg, "setup"); err != nil {
 		return err
@@ -202,10 +215,21 @@ func (a *app) setup(ctx context.Context, args []string) error {
 			return missingf("no prebuilt llama.cpp for %s/%s; build llama.cpp yourself and run `mote config set llama_dir /path/to/bin`", info.OS, info.Arch)
 		}
 		st := a.store()
-		if _, err := mrt.FindLlama("", st, reg.Runtime); err != nil {
+		if _, err := mrt.FindLlama("", st, reg.Runtime, ""); err != nil {
 			fmt.Fprintf(a.out, "%s Installing llama.cpp %s %s\n", a.uo.Arrow(), reg.Runtime.Version, a.uo.Dim(fmt.Sprintf("(%s, MIT, from %s)", mb(asset.Size), hostOf(asset.URL))))
 			if _, err := st.InstallRuntime(ctx, a.fetcher, reg.Runtime, asset); err != nil {
 				return err
+			}
+		}
+	}
+	if cfg.GPU == "on" {
+		if gasset, ok := reg.Runtime.GPUAsset(info.OS, info.Arch); ok {
+			st := a.store()
+			if _, ok := st.RuntimeInstalled(reg.Runtime, "gpu"); !ok {
+				fmt.Fprintf(a.out, "%s Installing llama.cpp %s (GPU) %s\n", a.uo.Arrow(), reg.Runtime.Version, a.uo.Dim(fmt.Sprintf("(%s, MIT, from %s)", mb(gasset.Size), hostOf(gasset.URL))))
+				if _, err := st.InstallRuntime(ctx, a.fetcher, reg.Runtime, gasset); err != nil {
+					return err
+				}
 			}
 		}
 	}

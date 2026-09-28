@@ -97,7 +97,8 @@ type Backend interface {
 }
 
 // Llama runs GGUF models with llama.cpp's llama-server (chat, vision, audio
-// input) and llama-tts (speech output). Inference is pinned to the CPU.
+// input) and llama-tts (speech output). Inference runs on the CPU unless
+// GPU is set.
 type Llama struct {
 	Dir     string // directory containing the binaries
 	Threads int
@@ -109,11 +110,17 @@ type Llama struct {
 	// 10-25% faster, which pays off for a server that stays loaded or a
 	// long prompt, not for a short one-shot request.
 	Repack bool
+	// GPU offloads inference to a GPU when Dir's build can: llama.cpp
+	// picks whichever device it was built with support for, so this only
+	// helps when Dir holds a build with a GPU backend compiled in
+	// (Vulkan on Linux and Windows, or the default macOS build, which
+	// always includes Metal). It is silently a no-op on a CPU-only build.
+	GPU bool
 }
 
 // RequiredFlags are llama-server flags mote relies on; `mote doctor` checks
 // them so a runtime bump that renames one is caught early.
-var RequiredFlags = []string{"--mmproj", "--ctx-size", "--device", "--parallel", "--threads", "--host", "--port", "--fit", "--no-repack"}
+var RequiredFlags = []string{"--mmproj", "--ctx-size", "--device", "--gpu-layers", "--parallel", "--threads", "--host", "--port", "--fit", "--no-repack"}
 
 func (l *Llama) bin(name string) string { return filepath.Join(l.Dir, exe(name)) }
 
@@ -135,7 +142,15 @@ func logFile(dir, name string) (*os.File, string) {
 }
 
 func (l *Llama) commonArgs(m *registry.Model, files map[string]string) []string {
-	args := []string{"-m", files["model"], "--device", "none"}
+	args := []string{"-m", files["model"]}
+	if l.GPU {
+		// No --device: llama.cpp picks whichever GPU backend the build
+		// has, falling back to the CPU when it has none. 999 offloads
+		// every layer the model has; llama.cpp clamps to its actual count.
+		args = append(args, "--gpu-layers", "999")
+	} else {
+		args = append(args, "--device", "none")
+	}
 	if p, ok := files["mmproj"]; ok {
 		args = append(args, "--mmproj", p)
 	}

@@ -184,6 +184,24 @@ func (a *app) doctor() error {
 			line("ok", "runtime", "llama.cpp in "+l.Dir)
 		}
 	}
+	switch {
+	case a.cfgErr == nil && a.cfg.GPU != "on":
+		if info.GPU != "" {
+			line("ok", "gpu", info.GPU+" detected; off (`mote config set gpu on` to use it)")
+		} else {
+			line("ok", "gpu", "none detected; inference runs on the CPU")
+		}
+	case a.cfgErr == nil && info.GPU == "":
+		line("warn", "gpu", "on, but no GPU was detected; falling back to the CPU")
+	case a.cfgErr == nil:
+		if _, ok := reg.Runtime.GPUAsset(info.OS, info.Arch); !ok {
+			line("ok", "gpu", info.GPU+", using the default build's Metal support")
+		} else if _, installed := a.store().RuntimeInstalled(reg.Runtime, "gpu"); installed {
+			line("ok", "gpu", info.GPU+", Vulkan build installed")
+		} else {
+			line("warn", "gpu", info.GPU+"; the Vulkan build is not installed yet; `mote setup` installs it")
+		}
+	}
 
 	if a.cfgErr == nil {
 		for _, c := range capNames() {

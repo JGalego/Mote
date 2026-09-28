@@ -4,7 +4,7 @@
 cmd/mote              CLI entry point
 cmd/mote-refresh      regenerates registry/models.json (daily CI)
 registry/             candidates.json, policy.json -> models.json; selection
-internal/platform     OS/CPU/RAM/tool detection
+internal/platform     OS/CPU/GPU/RAM/tool detection
 internal/config       user config, history, rollback
 internal/runtime      downloads, archive extraction, llama.cpp backend
 internal/task         tasks.json pipelines and the ops they use
@@ -113,6 +113,21 @@ used, not at setup.
 **A backend** implements `runtime.Backend` (`Open` a session that can
 `Generate`, and `Speak`) and is chosen in `cli.app.backend` from the model's
 `backend` field, which `registry.Validate` must also accept.
+
+**GPU offload** pins a second build of a runtime under `gpu_assets` in
+`candidates.json`, resolved by `refreshRuntime` exactly like the default one
+but recorded with `Asset.Variant = "gpu"`; `Runtime.Asset` and
+`Runtime.GPUAsset` tell the two apart. A platform that needs no separate
+build for it, such as macOS (whose default build already includes Metal),
+simply has no entry. `Store.RuntimeDir` takes the variant too, so the two
+builds live and are installed side by side; `cli.app.llama` picks between
+them from `cfg.GPU` and whichever `GPUAsset` (if any) is pinned for the
+platform, and `runtime.Llama.GPU` then swaps `--device none` for
+`--gpu-layers 999`, letting llama.cpp use whatever GPU backend that
+directory's build was compiled with, or fall back to the CPU silently if it
+has none. Detection (`internal/platform`, `Info.GPU`) only drives whether
+`mote setup` offers to turn it on; it plays no part in which build a command
+actually uses.
 
 **The resident server** (`internal/serve`) owns every llama-server a
 command would otherwise start and stop. `cli.app.backend` wraps the local

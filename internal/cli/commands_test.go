@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jgalego/mote/internal/platform"
 	"github.com/jgalego/mote/internal/ui"
 	"github.com/jgalego/mote/registry"
 )
@@ -448,17 +449,27 @@ func wizardEnv(t *testing.T) *env {
 
 // seedRuntime puts a stand-in llama-server where the managed install would
 // be, so setup finds a runtime instead of downloading one.
-func (e *env) seedRuntime() {
+func (e *env) seedRuntime() { e.seedRuntimeVariant("") }
+
+// seedGPURuntime fakes an already-installed GPU build, so a test can enable
+// gpu without mote trying to download the real pinned Vulkan build.
+func (e *env) seedGPURuntime() { e.seedRuntimeVariant("gpu") }
+
+func (e *env) seedRuntimeVariant(variant string) {
 	e.t.Helper()
-	dir := filepath.Join(e.home, "runtime", "llama.cpp-"+registry.Default().Runtime.Version)
+	name := "llama.cpp-" + registry.Default().Runtime.Version
+	if variant != "" {
+		name += "-" + variant
+	}
+	dir := filepath.Join(e.home, "runtime", name)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		e.t.Fatal(err)
 	}
-	name := "llama-server"
+	bin := "llama-server"
 	if runtime.GOOS == "windows" {
-		name += ".exe"
+		bin += ".exe"
 	}
-	if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, bin), []byte("#!/bin/sh\n"), 0o755); err != nil {
 		e.t.Fatal(err)
 	}
 }
@@ -664,6 +675,33 @@ func TestDoctorSeesToolsThatArePresent(t *testing.T) {
 	}
 }
 
+// Doctor's gpu line depends on real hardware for whether one was detected,
+// so only what does not - the label always appearing, and gpu=on with an
+// installed build being reported ok - is checked here.
+func TestDoctorReportsGPU(t *testing.T) {
+	e := newEnv(t)
+	e.setup()
+	e.seedRuntime()
+	if _, out, _ := e.mote("", "doctor"); !strings.Contains(out, "gpu") {
+		t.Errorf("doctor does not report gpu: %s", out)
+	}
+
+	if code, _, errs := e.mote("", "config", "set", "gpu", "on"); code != 0 {
+		t.Fatalf("config set gpu on: %s", errs)
+	}
+	reg := registry.Default()
+	info := platform.Detect()
+	if info.GPU == "" {
+		t.Skip("this machine has no GPU to detect; the happy path needs real hardware")
+	}
+	if _, ok := reg.Runtime.GPUAsset(info.OS, info.Arch); ok {
+		e.seedGPURuntime()
+		if code, out, _ := e.mote("", "doctor"); code != 0 || !strings.Contains(out, "Vulkan build installed") {
+			t.Errorf("gpu on with an installed build: %d %s", code, out)
+		}
+	}
+}
+
 func TestDiffOutputIsColouredInATerminal(t *testing.T) {
 	e := newEnv(t)
 	e.setup()
@@ -781,6 +819,25 @@ func TestSetupAutoDownloadFlag(t *testing.T) {
 	}
 	if _, out, _ := e.mote("", "config", "show"); !strings.Contains(out, `"auto_download": true`) {
 		t.Errorf("auto_download not saved: %s", out)
+	}
+}
+
+func TestSetupGPUFlags(t *testing.T) {
+	e := newEnv(t)
+	e.setup() // seeds llama_dir so no runtime is downloaded
+	e.seedRuntime()
+	e.seedGPURuntime()
+	if code, _, errs := e.mote("", "setup", "--yes", "--no-download", "--gpu"); code != 0 {
+		t.Fatalf("setup --gpu: %s", errs)
+	}
+	if _, out, _ := e.mote("", "config", "show"); !strings.Contains(out, `"gpu": "on"`) {
+		t.Errorf("gpu not saved: %s", out)
+	}
+	if code, _, errs := e.mote("", "setup", "--yes", "--no-download", "--no-gpu"); code != 0 {
+		t.Fatalf("setup --no-gpu: %s", errs)
+	}
+	if _, out, _ := e.mote("", "config", "show"); strings.Contains(out, `"gpu"`) {
+		t.Errorf("gpu still set after --no-gpu: %s", out)
 	}
 }
 

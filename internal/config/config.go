@@ -39,6 +39,10 @@ type Config struct {
 	// Repack is on, off, or empty for auto: skip repacking weights for a
 	// server that answers one command, keep it for one that stays loaded.
 	Repack string `json:"repack,omitempty"`
+	// GPU is on or empty (off, the default): offload inference to the
+	// GPU (Vulkan on Linux and Windows, Metal on macOS) instead of
+	// running on the CPU alone.
+	GPU string `json:"gpu,omitempty"`
 	// KeepAlive is how long a resident server keeps a model loaded after
 	// a command used it, as a duration ("5m"); "0" turns it off, empty
 	// means DefaultKeepAlive.
@@ -144,6 +148,9 @@ func (c Config) Validate() error {
 	}
 	if c.Repack != "" && c.Repack != "on" && c.Repack != "off" {
 		errs = append(errs, "repack must be auto, on or off")
+	}
+	if c.GPU != "" && c.GPU != "on" {
+		errs = append(errs, "gpu must be on or off")
 	}
 	if c.ServePort < 0 || c.ServePort > 65535 {
 		errs = append(errs, "serve_port must be between 1 and 65535, or 0 for the default")
@@ -274,7 +281,7 @@ func (c Config) Port() int {
 }
 
 // Keys lists settable keys for `mote config set`.
-var Keys = []string{"profile", "editor", "workspace", "data_dir", "auto_download", "reuse_tools", "llama_dir", "threads", "repack", "keep_alive", "serve_port", "wake_word", "router", "memory", "models.<capability>", "tools.<name>"}
+var Keys = []string{"profile", "editor", "workspace", "data_dir", "auto_download", "reuse_tools", "llama_dir", "threads", "repack", "gpu", "keep_alive", "serve_port", "wake_word", "router", "memory", "models.<capability>", "tools.<name>"}
 
 // Set changes one key. An empty value clears optional keys.
 func (c *Config) Set(key, value string) error {
@@ -329,6 +336,15 @@ func (c *Config) Set(key, value string) error {
 			c.Repack = value
 		default:
 			return fmt.Errorf("repack expects auto, on or off")
+		}
+	case key == "gpu":
+		switch value {
+		case "", "off":
+			c.GPU = ""
+		case "on":
+			c.GPU = value
+		default:
+			return fmt.Errorf("gpu expects on or off")
 		}
 	case key == "keep_alive":
 		if value != "" {

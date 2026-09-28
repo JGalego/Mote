@@ -38,3 +38,8 @@ func cpuInfo() (string, []string) {
 	raw := strings.Fields(sysctl("machdep.cpu.features") + " " + sysctl("machdep.cpu.leaf7_features"))
 	return name, filterFeatures(raw)
 }
+
+// gpuInfo reports Metal, which every Mac mote runs on has had built into
+// its GPU driver since OS X 10.11 (2015): there is no separate build to
+// pin, so detection here does not need a real device name.
+func gpuInfo() string { return "Metal" }

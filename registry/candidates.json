@@ -10,6 +10,11 @@
       "darwin/arm64": "llama-{tag}-bin-macos-arm64.tar.gz",
       "windows/amd64": "llama-{tag}-bin-win-cpu-x64.zip",
       "windows/arm64": "llama-{tag}-bin-win-cpu-arm64.zip"
+    },
+    "gpu_assets": {
+      "linux/amd64": "llama-{tag}-bin-ubuntu-vulkan-x64.tar.gz",
+      "linux/arm64": "llama-{tag}-bin-ubuntu-vulkan-arm64.tar.gz",
+      "windows/amd64": "llama-{tag}-bin-win-vulkan-x64.zip"
     }
   },
   "runtimes": {
