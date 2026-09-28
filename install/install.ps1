@@ -47,9 +47,17 @@ try {
         # Go's module proxy caches what a branch points at for a few
         # minutes, so fetch straight from the repository unless a proxy is
         # already configured.
+        # The checksum database has to fetch a commit it has not seen
+        # itself, which fails often enough for one pushed a minute ago; mote
+        # comes straight from GitHub over TLS anyway, so only its
+        # dependencies are checked there.
         $proxy = $env:GOPROXY
+        $nosum = $env:GONOSUMDB
         $env:GOBIN = $tmp
-        if (-not $proxy) { $env:GOPROXY = 'direct' }
+        if (-not $proxy) {
+            $env:GOPROXY = 'direct'
+            $env:GONOSUMDB = if ($nosum) { "$nosum,github.com/$Repo" } else { "github.com/$Repo" }
+        }
         # A direct fetch looks the module up under several paths at once,
         # sharing one git clone, and one lookup can unshallow it while
         # another reads it ("shallow file has changed"). A second try finds
@@ -63,7 +71,10 @@ try {
         }
         finally {
             Remove-Item Env:GOBIN -ErrorAction SilentlyContinue
-            if (-not $proxy) { Remove-Item Env:GOPROXY -ErrorAction SilentlyContinue }
+            if (-not $proxy) {
+                Remove-Item Env:GOPROXY -ErrorAction SilentlyContinue
+                if ($nosum) { $env:GONOSUMDB = $nosum } else { Remove-Item Env:GONOSUMDB -ErrorAction SilentlyContinue }
+            }
         }
         if ($LASTEXITCODE -ne 0) { Die "build failed; check that $ref exists in https://github.com/$Repo" }
         Copy-Item -Force (Join-Path $tmp 'mote.exe') (Join-Path $Prefix 'mote.exe')

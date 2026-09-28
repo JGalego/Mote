@@ -70,8 +70,13 @@ if [ "${MOTE_SOURCE:-0}" = 1 ]; then
   trap 'rm -rf "$tmp"' EXIT INT TERM
   say "building github.com/$REPO/cmd/mote@$ref with $(go version | cut -d" " -f3)"
   # Go's module proxy caches what a branch points at for a few minutes, so
-  # fetch straight from the repository unless a proxy is configured.
-  build() { GOBIN="$tmp" GOPROXY="${GOPROXY:-direct}" go install "github.com/$REPO/cmd/mote@$ref"; }
+  # fetch straight from the repository unless a proxy is configured. The
+  # checksum database has to fetch a commit it has not seen itself, which
+  # fails often enough for one pushed a minute ago; mote comes straight
+  # from GitHub over TLS anyway, so only its dependencies are checked there.
+  nosum="${GONOSUMDB:-}"
+  [ -z "${GOPROXY:-}" ] && nosum="${GONOSUMDB:+$GONOSUMDB,}github.com/$REPO"
+  build() { GOBIN="$tmp" GOPROXY="${GOPROXY:-direct}" GONOSUMDB="$nosum" go install "github.com/$REPO/cmd/mote@$ref"; }
   # A direct fetch looks the module up under several paths at once, sharing
   # one git clone, and one lookup can unshallow it while another reads it
   # ("shallow file has changed"). A second try finds the clone complete.
