@@ -209,9 +209,9 @@ func (a *app) setup(ctx context.Context, args []string) error {
 			}
 		}
 	}
-	if b, err := a.backend(&registry.Model{Backend: "llama.cpp"}); err == nil {
-		if missing, err := b.(*mrt.Llama).CheckFlags(); err != nil || len(missing) > 0 {
-			fmt.Fprintf(a.err, "warning: llama.cpp at %s lacks flags %v (%v); `mote doctor` has details\n", b.(*mrt.Llama).Dir, missing, err)
+	if l, err := a.llama(); err == nil {
+		if missing, err := l.CheckFlags(); err != nil || len(missing) > 0 {
+			fmt.Fprintf(a.err, "warning: llama.cpp at %s lacks flags %v (%v); `mote doctor` has details\n", l.Dir, missing, err)
 		}
 	}
 

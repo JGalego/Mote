@@ -206,6 +206,20 @@ func TestAServerThatIsGoneMeansLoadingLocally(t *testing.T) {
 	}
 }
 
+// Setup and doctor check the runtime itself; with keep_alive on they must
+// neither start a server nor mistake one for the runtime.
+func TestSetupAndDoctorWithKeepAliveOn(t *testing.T) {
+	e := newEnv(t)
+	t.Setenv("MOTE_KEEP_ALIVE", "5m")
+	e.setup()
+	if code, out, errs := e.mote("", "doctor"); !strings.Contains(out, "llama.cpp in") || !strings.Contains(out, "the next command starts it") {
+		t.Errorf("doctor: %d %s %s", code, out, errs)
+	}
+	if _, ok := e.state(); ok {
+		t.Error("setup or doctor started a server")
+	}
+}
+
 func TestKeepAliveSettings(t *testing.T) {
 	e := newEnv(t)
 	e.setup()

@@ -171,10 +171,9 @@ func (a *app) doctor() error {
 		line("ok", "config", fmt.Sprintf("%s (profile %s)", config.Path(a.cfgDir), a.cfg.Profile))
 	}
 
-	if b, err := a.backend(&registry.Model{Backend: "llama.cpp"}); err != nil {
+	if l, err := a.llama(); err != nil {
 		line("FAIL", "runtime", err.Error())
 	} else {
-		l := b.(*mrt.Llama)
 		missing, err := l.CheckFlags()
 		switch {
 		case err != nil:
