@@ -497,7 +497,7 @@ func (r *Registry) Validate() error {
 			if !fileRoles[m.Backend][f.Role] {
 				bad("%s: unknown file role %q for %s", where, f.Role, m.Backend)
 			}
-			if !fileRe.MatchString(f.Name) {
+			if !fileRe.MatchString(f.Name) || f.Name == "." || f.Name == ".." {
 				bad("%s: unsafe file name %q", where, f.Name)
 			}
 			if err := httpsURL(f.URL); err != nil {

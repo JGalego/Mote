@@ -97,6 +97,7 @@ func TestValidateRejects(t *testing.T) {
 		"http url":      func(r *Registry) { r.Models[0].Files[0].URL = "http://example.org/x" },
 		"bad sha":       func(r *Registry) { r.Models[0].Files[0].SHA256 = "abc" },
 		"path in name":  func(r *Registry) { r.Models[0].Files[0].Name = "../evil" },
+		"bare parent":   func(r *Registry) { r.Models[0].Files[0].Name = ".." },
 		"dup id":        func(r *Registry) { r.Models[1].ID = "tiny" },
 		"unknown cap":   func(r *Registry) { r.Models[0].Caps = []string{"telepathy"} },
 		"no mmproj":     func(r *Registry) { r.Models[1].Files = r.Models[1].Files[:1] },
