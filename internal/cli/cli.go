@@ -65,6 +65,7 @@ const usage = `mote - local, CPU-only X-to-Y AI tasks
 Usage:
   mote setup [--yes] [--config FILE] [--profile P] [--data-dir DIR] [--auto-download] [--no-download]
   mote run TASK [ARGS...] [-o OUTPUT] [--apply] [--model ID] [--profile P]
+  mote chat [--system "INSTRUCTIONS"] [--model ID]
   mote pipe "TASK ARGS | TASK ARGS | sh: COMMAND" [-o OUTPUT] [--trace] [--model ID]
   mote do "REQUEST" [-o OUTPUT] [--apply] [--dry-run] [--plan [--trace]] [--yes] [--model ID] [--profile P]
   mote agent "GOAL" [-o OUTPUT] [--tools a,b] [--mcp SERVER,...] [--steps N] [--allow-sh [--sandbox auto|on|off] [--sandbox-net]] [--yes] [--model ID]
@@ -198,7 +199,7 @@ func (a *app) dispatch(ctx context.Context, args []string) error {
 		return a.update(ctx, rest)
 	}
 	switch cmd {
-	case "run", "pipe", "listen", "do", "agent", "memory", "remember", "forget", "models", "bench", "tune", "serve":
+	case "run", "pipe", "listen", "do", "agent", "memory", "remember", "forget", "models", "bench", "tune", "serve", "chat":
 	default:
 		return usagef("unknown command %q; see `mote help`", cmd)
 	}
@@ -231,6 +232,8 @@ func (a *app) dispatch(ctx context.Context, args []string) error {
 		return a.tune(rest)
 	case "serve":
 		return a.serveCmd(ctx, rest)
+	case "chat":
+		return a.chatCmd(ctx, rest)
 	}
 	return usagef("unknown command %q; see `mote help`", cmd)
 }

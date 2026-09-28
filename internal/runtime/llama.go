@@ -22,9 +22,17 @@ import (
 	"github.com/jgalego/mote/registry"
 )
 
+// Turn is one message of an earlier exchange in a conversation.
+type Turn struct {
+	Role string // "user" or "assistant"
+	Text string
+}
+
 // Request is a single generation request. Images and Audio are local paths.
 type Request struct {
-	System      string
+	System string
+	// History is the conversation so far, oldest first, before Prompt.
+	History     []Turn
 	Prompt      string
 	Images      []string
 	Audio       []string
@@ -272,6 +280,9 @@ func (s *server) Generate(ctx context.Context, req Request) (Result, error) {
 	var msgs []map[string]any
 	if req.System != "" {
 		msgs = append(msgs, map[string]any{"role": "system", "content": req.System})
+	}
+	for _, t := range req.History {
+		msgs = append(msgs, map[string]any{"role": t.Role, "content": t.Text})
 	}
 	msgs = append(msgs, map[string]any{"role": "user", "content": parts})
 	body := map[string]any{"messages": msgs, "temperature": req.Temperature, "stream": req.OnToken != nil}

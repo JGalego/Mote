@@ -289,7 +289,7 @@ func logRequest(msgs []struct {
 	if len(msgs) > 1 && msgs[0].Role == "system" {
 		json.Unmarshal(msgs[0].Content, &system)
 	}
-	entry := map[string]any{"system": system, "prompt": prompt}
+	entry := map[string]any{"system": system, "prompt": prompt, "messages": len(msgs)}
 	if len(format) > 0 {
 		entry["format"] = format
 	}
