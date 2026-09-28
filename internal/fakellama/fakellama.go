@@ -150,7 +150,16 @@ func server(args []string) int {
 		return 1
 	}
 	mux := http.NewServeMux()
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, `{"status":"ok"}`) })
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		// A real server can accept the connection but stall before
+		// answering (a wedged load); this stands in for that so a test can
+		// check Open does not wait on it forever.
+		if os.Getenv("MOTE_FAKE_LLAMA_HANG_HEALTH") != "" {
+			<-r.Context().Done()
+			return
+		}
+		io.WriteString(w, `{"status":"ok"}`)
+	})
 	// Embeddings: a deterministic bag-of-words vector, so similarity
 	// between texts sharing words is real without loading a model.
 	mux.HandleFunc("/v1/embeddings", func(w http.ResponseWriter, r *http.Request) {

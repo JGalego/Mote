@@ -883,6 +883,28 @@ func TestOpenFailsWhenTheServerExits(t *testing.T) {
 	}
 }
 
+// TestOpenDoesNotHangOnAStalledHealthCheck guards against a llama-server
+// that accepts the health connection but never answers: Open must still
+// respect StartTimeout instead of blocking inside healthy() forever.
+func TestOpenDoesNotHangOnAStalledHealthCheck(t *testing.T) {
+	dir := t.TempDir()
+	fakellama.Install(t, dir)
+	t.Setenv("MOTE_FAKE_LLAMA_HANG_HEALTH", "1")
+	l := &Llama{Dir: dir, LogDir: t.TempDir(), StartTimeout: 300 * time.Millisecond}
+	m, files := testModel(t, dir)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	start := time.Now()
+	_, err := l.Open(ctx, m, files)
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("Open took %s to fail; a stalled health check is not bounded", elapsed)
+	}
+	if err == nil || !strings.Contains(err.Error(), "did not become ready") {
+		t.Fatalf("expected a start-timeout error, got %v", err)
+	}
+}
+
 func TestOpenFailsWhenThereIsNoBinary(t *testing.T) {
 	l := &Llama{Dir: t.TempDir()}
 	_, err := l.Open(context.Background(), &registry.Model{ID: "m", Context: 512}, map[string]string{"model": "m.gguf"})

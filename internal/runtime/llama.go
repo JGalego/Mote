@@ -219,7 +219,7 @@ func (l *Llama) Open(ctx context.Context, m *registry.Model, files map[string]st
 			return nil, ctx.Err()
 		case <-time.After(100 * time.Millisecond):
 		}
-		if s.healthy() {
+		if s.healthy(ctx) {
 			s.startup = time.Since(start)
 			return s, nil
 		}
@@ -254,8 +254,18 @@ type server struct {
 
 func (s *server) URL() string { return s.base }
 
-func (s *server) healthy() bool {
-	resp, err := s.client.Get(s.base + "/health")
+// healthy polls /health with a bounded request: llama-server can accept the
+// connection but stall before answering (a wedged load, memory pressure),
+// and an unbounded call here would defeat both ctx and Open's own deadline,
+// which are only checked between calls to healthy, not inside one.
+func (s *server) healthy(ctx context.Context) bool {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.base+"/health", nil)
+	if err != nil {
+		return false
+	}
+	resp, err := s.client.Do(req)
 	if err != nil {
 		return false
 	}
