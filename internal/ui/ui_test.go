@@ -69,20 +69,27 @@ func TestBannerPaintsWhenColoured(t *testing.T) {
 func TestSpinnerDrawsAndStops(t *testing.T) {
 	var buf bytes.Buffer
 	u := liveUI(&buf)
+	// The spinner goroutine writes to buf under u.mu, so every read of it
+	// here must take the same lock or race with those writes.
+	snapshot := func() string {
+		u.mu.Lock()
+		defer u.mu.Unlock()
+		return buf.String()
+	}
 	s := u.Spin("thinking")
 	// Give the animation a moment to draw at least one frame.
 	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) && !strings.Contains(buf.String(), "thinking") {
+	for time.Now().Before(deadline) && !strings.Contains(snapshot(), "thinking") {
 		time.Sleep(10 * time.Millisecond)
 	}
-	if !strings.Contains(buf.String(), "thinking") {
+	if !strings.Contains(snapshot(), "thinking") {
 		t.Error("spinner never drew its message")
 	}
 	if s.Elapsed() <= 0 {
 		t.Error("spinner reports no elapsed time")
 	}
 	s.Stop("done")
-	out := buf.String()
+	out := snapshot()
 	if !strings.Contains(out, "done") {
 		t.Errorf("final message missing: %q", out)
 	}
