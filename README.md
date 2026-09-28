@@ -104,7 +104,7 @@ In a clone, `go install ./cmd/mote` does the same into `$(go env GOPATH)/bin`. `
 | `mote tasks` | List the tasks, their arguments and what each one needs |
 | `mote models [pull\|rm\|why\|verify]` | Show models, sizes and which are in use; fetch, remove, explain or re-verify them. `pull --missing` fetches the ones your profile uses, `pull --all` every one |
 | `mote models upgrade [--check] [--prune]` | Fetch the newest registry and the best models it picks for your profile and RAM; `--prune` removes the ones no longer used |
-| `mote bench [--full]` | Measure installed models locally: startup, tokens/s, peak RSS, small pass/fail checks |
+| `mote bench [--full] [--strict]` | Measure installed models locally: startup, tokens/s, peak RSS, small pass/fail checks; `--strict` exits non-zero if any check failed |
 | `mote tune [--apply]` | Propose config changes from those measurements, and record them with `--apply` |
 | `mote doctor` | Check the installation: runtime, models, tools, data directory |
 | `mote config [show\|set\|history\|rollback\|edit]` | Show or change the configuration; every version is kept |
@@ -447,7 +447,7 @@ flowchart LR
 
 [`registry/models.json`](registry/models.json) is generated from [`candidates.json`](registry/candidates.json) (the models and quantizations we consider) and [`policy.json`](registry/policy.json) (per-capability thresholds for the `small`, `balanced` and `quality` profiles): mote picks the smallest model that fits your RAM and meets the threshold, and `mote models why text` prints the reasoning and sources.
 
-Scores come from Hugging Face `evalResults`, stored with source, date and verification flag; RAM figures are labelled estimates. A [daily workflow](.github/workflows/refresh.yml) re-reads them and commits only what changed; `mote models upgrade --check` shows whether that changed your picks, and `mote models upgrade` downloads the new ones. Locally, `mote bench` measures installed models, `mote tune --apply` turns the results into config, and `mote config rollback` undoes it.
+Scores come from Hugging Face `evalResults`, stored with source, date and verification flag; RAM figures are labelled estimates. A [daily workflow](.github/workflows/refresh.yml) re-reads them and commits only what changed; `mote models upgrade --check` shows whether that changed your picks, and `mote models upgrade` downloads the new ones. A [nightly workflow](.github/workflows/quality.yml) then runs mote's own task checks (`mote bench --full --strict`) against whatever the registry now picks for the default profile, on real CPU inference, so a bad swap is caught the morning after it lands. Locally, `mote bench` measures installed models, `mote tune --apply` turns the results into config, and `mote config rollback` undoes it.
 
 Loading skips work mote does not need: llama.cpp's memory fitting (`--fit off`, since mote sets the device and context itself) and, for a server that answers a single command, repacking the weights for faster CPU kernels (`--no-repack`), which roughly halves load time and costs some prompt speed. `mote bench --full` times loading both ways on your machine, and `mote tune` sets `repack` to `on` when repacking pays for itself within a typical prompt.
 

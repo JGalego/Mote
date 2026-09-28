@@ -1,0 +1,48 @@
+name: quality
+
+# The registry can pick a different model for a capability any day (see
+# refresh.yml). This runs mote's own task checks against whatever is
+# actually picked for the default profile, on real CPU inference, so a
+# regression is caught the morning after it lands rather than by a user.
+on:
+  schedule:
+    - cron: "47 4 * * *" # 30 minutes after the daily registry refresh
+  workflow_run:
+    workflows: [refresh]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality
+  cancel-in-progress: false
+
+jobs:
+  quality:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Install ffmpeg
+        run: sudo apt-get install -y -q ffmpeg
+      - name: Build mote
+        run: go build -o "$RUNNER_TEMP/mote" ./cmd/mote
+      - name: Set up the small profile with real models
+        env:
+          MOTE_HOME: ${{ runner.temp }}/home
+          MOTE_CONFIG_DIR: ${{ runner.temp }}/cfg
+        run: |
+          "$RUNNER_TEMP/mote" setup --yes --profile small
+          "$RUNNER_TEMP/mote" models pull --missing --yes
+      - name: Check real models against mote's own tasks
+        env:
+          MOTE_HOME: ${{ runner.temp }}/home
+          MOTE_CONFIG_DIR: ${{ runner.temp }}/cfg
+        run: '"$RUNNER_TEMP/mote" bench --full --strict'

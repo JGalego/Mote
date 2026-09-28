@@ -77,7 +77,7 @@ Usage:
   mote serve [--port N] [--keep-alive DURATION] | status | stop
   mote tasks
   mote models [list | pull ID|CAP...|--all|--missing | upgrade [--check] [--prune] | rm ID | why CAP | verify]
-  mote bench [--full] [--model ID]
+  mote bench [--full] [--model ID] [--strict]
   mote tune [--apply]
   mote doctor
   mote config [show | path | set KEY VALUE | history | rollback [N] | edit]

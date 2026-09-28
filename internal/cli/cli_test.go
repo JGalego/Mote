@@ -242,6 +242,10 @@ func TestBenchAndTune(t *testing.T) {
 	if code != 0 || !strings.Contains(out, "qwen3.5-0.8b") {
 		t.Fatalf("bench: %d %s %s", code, out, errs)
 	}
+	// --strict turns those same failing checks into a non-zero exit, for CI.
+	if code, _, errs := e.mote("", "bench", "--strict"); code == 0 || !strings.Contains(errs, "qwen3.5-0.8b") {
+		t.Errorf("bench --strict: %d %s", code, errs)
+	}
 	code, out, _ = e.mote("", "tune", "--apply")
 	if code != 0 {
 		t.Fatalf("tune: %s", out)

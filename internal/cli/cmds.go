@@ -263,12 +263,12 @@ func (a *app) doctor() error {
 }
 
 func (a *app) bench(ctx context.Context, args []string) error {
-	vals, pos, err := flags(args, []string{"--model"}, []string{"--full"})
+	vals, pos, err := flags(args, []string{"--model"}, []string{"--full", "--strict"})
 	if err != nil {
 		return err
 	}
 	if len(pos) > 0 {
-		return usagef("usage: mote bench [--full] [--model ID]")
+		return usagef("usage: mote bench [--full] [--model ID] [--strict]")
 	}
 	reg := a.registry()
 	var models []*registry.Model
@@ -359,7 +359,21 @@ func (a *app) bench(ctx context.Context, args []string) error {
 		}
 		fmt.Fprintln(a.out, o.Dim(fmt.Sprintf("saved to %s; `mote tune` proposes config changes from these results", filepath.Join(a.dataDir(), "bench"))))
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	if vals["--strict"] == "true" {
+		var failed []string
+		for _, e := range entries {
+			if e.Passed < e.Cases {
+				failed = append(failed, fmt.Sprintf("%s (%d/%d)", e.Model, e.Passed, e.Cases))
+			}
+		}
+		if len(failed) > 0 {
+			return fmt.Errorf("checks failed for %s", strings.Join(failed, ", "))
+		}
+	}
+	return nil
 }
 
 func (a *app) tune(args []string) error {
