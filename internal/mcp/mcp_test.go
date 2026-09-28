@@ -138,6 +138,23 @@ func TestCall(t *testing.T) {
 	}
 }
 
+// TestAFailedSendDoesNotLeakPending guards against a call that never got its
+// request written still leaving a channel in c.pending forever.
+func TestAFailedSendDoesNotLeakPending(t *testing.T) {
+	c, _ := start(t, "ok")
+	c.stdin.Close() // the next write fails, as if the pipe had broken
+	ctx := deadline(t)
+	if _, err := c.Call(ctx, "echo", nil); err == nil {
+		t.Fatal("call over a closed pipe should fail")
+	}
+	c.mu.Lock()
+	n := len(c.pending)
+	c.mu.Unlock()
+	if n != 0 {
+		t.Errorf("pending has %d entries after a failed send, want 0", n)
+	}
+}
+
 func TestAReplyTooLargeFailsOnlyThatCall(t *testing.T) {
 	old := maxMessage
 	maxMessage = 64 << 10

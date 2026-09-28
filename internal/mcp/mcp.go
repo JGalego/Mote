@@ -333,6 +333,9 @@ func (c *Client) call(ctx context.Context, method string, params, out any) error
 		req["params"] = params
 	}
 	if err := c.send(req); err != nil {
+		c.mu.Lock()
+		delete(c.pending, id)
+		c.mu.Unlock()
 		return c.failed(method, err)
 	}
 	select {
