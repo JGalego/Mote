@@ -102,7 +102,8 @@ func lexShell(cmd string) (words []shWord, complex string, ok bool) {
 			i++
 		case (c == '<' || c == '>') && next == '(':
 			note("it uses process substitution")
-			cur.WriteString(string(c) + "(")
+			cur.WriteByte(c)
+			cur.WriteByte('(')
 			held = true
 			i++
 		case c == '(' || c == ')' || c == '{' || c == '}':
