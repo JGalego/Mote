@@ -85,6 +85,7 @@ type entry struct {
 }
 
 func writeTarGz(t *testing.T, p string, entries []entry) {
+	t.Helper()
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gz)
@@ -93,12 +94,22 @@ func writeTarGz(t *testing.T, p string, entries []entry) {
 		if e.link != "" {
 			h.Typeflag, h.Linkname, h.Size = tar.TypeSymlink, e.link, 0
 		}
-		tw.WriteHeader(h)
-		tw.Write([]byte(e.body))
+		if err := tw.WriteHeader(h); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write([]byte(e.body)); err != nil {
+			t.Fatal(err)
+		}
 	}
-	tw.Close()
-	gz.Close()
-	os.WriteFile(p, buf.Bytes(), 0o644)
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, buf.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestExtractTarGz(t *testing.T) {
@@ -188,9 +199,12 @@ func TestClean(t *testing.T) {
 }
 
 func testModel(t *testing.T, dir string) (*registry.Model, map[string]string) {
+	t.Helper()
 	m := &registry.Model{ID: "fake", Backend: "llama.cpp", Context: 512, OutputAfter: "<asr_text>"}
 	p := filepath.Join(dir, "fake.gguf")
-	os.WriteFile(p, []byte("gguf"), 0o644)
+	if err := os.WriteFile(p, []byte("gguf"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	return m, map[string]string{"model": p}
 }
 
@@ -945,12 +959,12 @@ func TestCommonArgsChooseCPUOrGPU(t *testing.T) {
 		}
 		return false
 	}
-	m, files := testModel(t, t.TempDir())
-	cpu := (&Llama{}).commonArgs(m, files)
+	_, files := testModel(t, t.TempDir())
+	cpu := (&Llama{}).commonArgs(files)
 	if !has(cpu, "--device") || has(cpu, "--gpu-layers") {
 		t.Errorf("cpu: %q", cpu)
 	}
-	gpu := (&Llama{GPU: true}).commonArgs(m, files)
+	gpu := (&Llama{GPU: true}).commonArgs(files)
 	if has(gpu, "--device") {
 		t.Errorf("gpu: --device forced the runtime's own choice off: %q", gpu)
 	}

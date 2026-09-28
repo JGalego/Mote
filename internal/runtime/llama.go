@@ -141,7 +141,7 @@ func logFile(dir, name string) (*os.File, string) {
 	return f, p
 }
 
-func (l *Llama) commonArgs(m *registry.Model, files map[string]string) []string {
+func (l *Llama) commonArgs(files map[string]string) []string {
 	args := []string{"-m", files["model"]}
 	if l.GPU {
 		// No --device: llama.cpp picks whichever GPU backend the build
@@ -179,7 +179,7 @@ func (l *Llama) Open(ctx context.Context, m *registry.Model, files map[string]st
 	if err != nil {
 		return nil, err
 	}
-	args := l.commonArgs(m, files)
+	args := l.commonArgs(files)
 	args = append(args, "--host", "127.0.0.1", "--port", strconv.Itoa(port),
 		"--ctx-size", strconv.Itoa(m.Context), "--parallel", "1")
 	args = append(args, l.loadArgs()...)
@@ -515,7 +515,7 @@ func (l *Llama) Speak(ctx context.Context, m *registry.Model, files map[string]s
 	if _, err := os.Stat(l.bin("llama-tts")); err != nil {
 		return Stats{}, fmt.Errorf("llama-tts not found in %s", l.Dir)
 	}
-	args := append(l.commonArgs(m, files), "--ctx-size", strconv.Itoa(m.Context), "-p", text, "--output", out)
+	args := append(l.commonArgs(files), "--ctx-size", strconv.Itoa(m.Context), "-p", text, "--output", out)
 	args = append(args, m.Args...)
 	cmd := exec.CommandContext(ctx, l.bin("llama-tts"), args...)
 	logf, logPath := l.logFile("llama-tts")
