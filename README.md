@@ -44,6 +44,7 @@ mote runs X-to-Y AI tasks (text, code, images, audio, video, files) on your CPU 
   - [chosen](#chosen-)
   - [agent](#agent-)
   - [spoken](#spoken-)
+  - [files](#files-)
   - [your own](#your-own-)
 - [Memory](#memory)
 - [Serving](#serving)
@@ -96,6 +97,8 @@ In a clone, `go install ./cmd/mote` does the same into `$(go env GOPATH)/bin`. `
 | `mote mcp [tools [NAME]]` | List the MCP servers in `mcp.json`, or start them and show which tools the agent can use |
 | `mote remember "FACT"` | Keep a fact in front of every model step; `mote memory` lists them, `mote forget N\|--all` removes them |
 | `mote memory [search "Q"]` | Show what mote remembers, or find a past exchange by meaning |
+| `mote index DIR... [status\|rm]` | Index files under a folder for `mote ask`; re-run to refresh, `status` shows what's indexed, `rm DIR\|--all` forgets it |
+| `mote ask "QUESTION" [--in DIR]` | Answer from the indexed files closest to the question, with the sources it used; `--sources` shows only the passages |
 | `mote listen [TASK]` | Wait for a wake word on the microphone, then run what you say next (never listens unless you start it) |
 | `mote serve [status\|stop]` | Keep models loaded and serve them to editors through an OpenAI-compatible API on `127.0.0.1:11435` |
 | `mote tasks` | List the tasks, their arguments and what each one needs |
@@ -309,6 +312,19 @@ mote listen code --wake "ok mote"
 
 The wake word defaults to `hey mote` (`--wake` or `mote config set wake_word`). `--chunk` sets the seconds per recording, `--device` the input (required on Windows) and `--once` stops after one request.
 
+### files 🔍
+
+`mote index DIR...` then `mote ask "QUESTION"` — Answer questions from your own files instead of the model's memory.
+
+```sh
+mote index ~/notes ~/projects/mote/docs   # embeds every file under both folders
+mote ask "what did we decide about retries"
+mote ask "how does the logo get generated" --in ~/projects/mote/docs --sources
+mote index                                # re-run with no folders to refresh what's indexed
+```
+
+Each file is split into passages, embedded, and kept in `index.json` in the data directory; `mote index` again only re-embeds files that changed. `mote ask` embeds the question, finds the closest passages (`--top`, default 6) and answers from them alone, citing each one like `[2]`; `--sources` prints the passages instead of asking a model to answer. A passage too dense for the embedding model's batch size is skipped, not the whole file or run; `mote index status` lists anything unreadable. `mote index rm DIR` forgets one folder, `--all` clears the index. When something is indexed, `mote agent` also gets a `files` tool to search it mid-task.
+
 ### your own 🧩
 
 Tasks are data: drop a file shaped like [`tasks.json`](internal/task/tasks.json) into `tasks/` under the config directory (`mote tasks` prints the path). A matching id replaces a built-in. An `exec` step wraps a local program without a shell, and `"asks": true` makes `mote agent` and `mote do` confirm before running a task a model chose:
@@ -371,6 +387,7 @@ flowchart TD
     RUN["⌨️ <code>mote run</code> · <code>mote pipe</code>"]
     DO["🎯 <code>mote do</code><br/>picks a task · <code>--plan</code> writes a pipeline"]
     AGENT["🤖 <code>mote agent</code><br/>thought → call → observation"]
+    ASK["🔍 <code>mote ask</code><br/>closest passages → answer"]
   end
 
   RUN --> PIPE["🧩 task pipeline<br/><code>tasks.json</code> · your own tasks"]
@@ -378,6 +395,10 @@ flowchart TD
   AGENT -- "task calls" --> PIPE
   AGENT -- "<code>--allow-sh</code>" --> SH["🐚 shell<br/>checked · asks · 🔒 bwrap / sandbox-exec"]
   AGENT -- "<code>--mcp</code>" --> MCP["🔌 local MCP servers<br/>stdio · <code>mcp.json</code>"]
+  AGENT -- "<code>files</code> tool" --> INDEX
+  ASK --> INDEX["📁 <code>mote index</code><br/>your files, embedded · <code>index.json</code>"]
+  INDEX -- "embed" --> SERVE
+  ASK -- "answer" --> PIPE
 
   PIPE -- "model step<br/><code>text · code · extract</code><br/><code>vision · asr</code><br/><code>tts · embed</code>" --> SERVE["♻️ <code>mote serve</code><br/>keeps models loaded · OpenAI API"]
   EDITOR(["🧑‍💻 editors · other tools"]) -. "<code>/v1</code>" .-> SERVE
@@ -398,7 +419,7 @@ flowchart TD
 
 Inference runs in llama.cpp servers bound to `127.0.0.1` with GPU offload disabled (`--device none`), held by `mote serve` between commands. GGUF weights come from Hugging Face only when you allow it, pinned to a commit and verified by SHA-256.
 
-Models, logs and benchmark results live in the data directory (`~/.local/share/mote`, `~/Library/Application Support/mote`, `%LOCALAPPDATA%\mote`), configuration in the OS config directory. After setup, mote itself touches the network only for `mote update` and explicit pulls; MCP servers you add are programs of their own and may do more.
+Models, logs, benchmark results and the file index (`index.json`) live in the data directory (`~/.local/share/mote`, `~/Library/Application Support/mote`, `%LOCALAPPDATA%\mote`), configuration in the OS config directory. After setup, mote itself touches the network only for `mote update` and explicit pulls; MCP servers you add are programs of their own and may do more.
 
 Tasks are short pipelines in [`internal/task/tasks.json`](internal/task/tasks.json): each step calls a model capability (`text`, `code`, `extract`, `vision`, `asr`, `tts`, `embed`, and the opt-in `image`, which runs on stable-diffusion.cpp) or a local program (`ffmpeg`, `git`, or any other through `exec`), and every capability has its own specialized model.
 

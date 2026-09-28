@@ -402,7 +402,7 @@ func (a *app) agentTools(tasks []task.Task, names string, allowSh bool, env task
 			}
 			t, ok := task.Find(tasks, n)
 			if !ok {
-				return nil, usagef("unknown tool %q; tools are task ids (see `mote tasks`), sh, and the tools of servers started with --mcp", n)
+				return nil, usagef("unknown tool %q; tools are task ids (see `mote tasks`), sh, files (after `mote index`), and the tools of servers started with --mcp", n)
 			}
 			if t.Output == "required" {
 				return nil, usagef("%s needs -o for every run, so an agent cannot call it", n)
@@ -545,6 +545,10 @@ func (a *app) agent(ctx context.Context, args []string) error {
 				c.Close()
 			}
 		}()
+	}
+	// The user's indexed files, when there are any, are a tool too.
+	if t, ok := a.indexTool(profile, sessions); ok {
+		external = append(external, t)
 	}
 	tools, err := a.agentTools(tasks, vals["--tools"], allowSh, env, ask, gate, box, external)
 	if err != nil {

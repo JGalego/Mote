@@ -364,6 +364,7 @@ type run struct {
 	calls    []Call
 	streamed bool
 	lang     string
+	noOCR    bool // read scanned PDFs as an error, not with the vision model
 }
 
 // Run executes t with positional args.

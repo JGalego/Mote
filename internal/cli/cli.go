@@ -66,6 +66,8 @@ Usage:
   mote setup [--yes] [--config FILE] [--profile P] [--data-dir DIR] [--auto-download] [--no-download]
   mote run TASK [ARGS...] [-o OUTPUT] [--apply] [--model ID] [--profile P]
   mote chat [--system "INSTRUCTIONS"] [--model ID]
+  mote index [DIR...] | status | rm DIR|--all
+  mote ask "QUESTION" [--in DIR] [--top N] [--sources]
   mote pipe "TASK ARGS | TASK ARGS | sh: COMMAND" [-o OUTPUT] [--trace] [--model ID]
   mote do "REQUEST" [-o OUTPUT] [--apply] [--dry-run] [--plan [--trace]] [--yes] [--model ID] [--profile P]
   mote agent "GOAL" [-o OUTPUT] [--tools a,b] [--mcp SERVER,...] [--steps N] [--allow-sh [--sandbox auto|on|off] [--sandbox-net]] [--yes] [--model ID]
@@ -199,7 +201,7 @@ func (a *app) dispatch(ctx context.Context, args []string) error {
 		return a.update(ctx, rest)
 	}
 	switch cmd {
-	case "run", "pipe", "listen", "do", "agent", "memory", "remember", "forget", "models", "bench", "tune", "serve", "chat":
+	case "run", "pipe", "listen", "do", "agent", "memory", "remember", "forget", "models", "bench", "tune", "serve", "chat", "index", "ask":
 	default:
 		return usagef("unknown command %q; see `mote help`", cmd)
 	}
@@ -234,6 +236,10 @@ func (a *app) dispatch(ctx context.Context, args []string) error {
 		return a.serveCmd(ctx, rest)
 	case "chat":
 		return a.chatCmd(ctx, rest)
+	case "index":
+		return a.indexCmd(ctx, rest)
+	case "ask":
+		return a.askCmd(ctx, rest)
 	}
 	return usagef("unknown command %q; see `mote help`", cmd)
 }

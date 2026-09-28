@@ -13,6 +13,7 @@ internal/memory       facts, history and search over past exchanges
 internal/mcp          a client for local MCP servers (stdio JSON-RPC)
 internal/sandbox      runs the agent's shell commands under bwrap or sandbox-exec
 internal/serve        the resident server: keeps models loaded, OpenAI API
+internal/index        mote index/ask: embeds files, searches by meaning
 internal/cli          commands and the setup wizard
 install/              install.sh (Linux/macOS), install.ps1 (Windows)
 ```
@@ -124,3 +125,16 @@ command's is replaced if a command started it, and left alone if someone did.
 Measurements (`mote bench`) use `localBackend`, never the server. Tests pin
 `MOTE_KEEP_ALIVE=0`; the ones about the server set `MOTE_TEST_AS_MOTE=1` so
 the test binary can stand in for the `mote` a command starts.
+
+**The file index** (`internal/index`) is a JSON file (`index.json` in the
+data directory) of files split into passages (`task.Chunk`, capped by
+`ChunkSize` so a passage fits the embedding model's batch size) and their
+embeddings, one per root folder `mote index` was given. `Update` re-embeds
+only files whose size or mtime changed, lists files itself or through `git
+ls-files` when `Options.Git` is set (so `.gitignore` is respected), and
+records a file as skipped, not fatal, on a read error or a passage the
+embedding model refuses as too large — one bad file should not abort an
+otherwise good run. `Search` ranks stored passages against a query vector by
+cosine similarity, optionally scoped under a directory. `cli.ask.go` builds
+on this for `mote index`/`mote ask` and offers the same search to `mote
+agent` as a `files` tool once something is indexed.

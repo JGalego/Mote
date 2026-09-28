@@ -183,6 +183,13 @@ func (u *UI) Spin(msg string) *Spinner {
 	return s
 }
 
+// Set changes the spinner's message, for work that reports its progress.
+func (s *Spinner) Set(msg string) {
+	s.u.mu.Lock()
+	s.msg = msg
+	s.u.mu.Unlock()
+}
+
 // Elapsed is the time since the spinner started.
 func (s *Spinner) Elapsed() time.Duration { return time.Since(s.start) }
 

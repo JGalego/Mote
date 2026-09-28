@@ -2,6 +2,7 @@ package task
 
 import (
 	"archive/zip"
+	"context"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -66,6 +67,19 @@ func (r *run) readDoc(p string, plain bool) (string, error) {
 	return txt, nil
 }
 
+// ExtractText returns the text of a file as the read op would see it with
+// plain set: documents reduced to their text, HTML to what a reader sees.
+// Without ocr a PDF with no text layer is an error rather than pages sent
+// to the vision model, which is too slow for indexing a folder.
+func ExtractText(ctx context.Context, env Env, p string, ocr bool) (string, error) {
+	r := &run{ctx: ctx, env: env, vars: map[string]Value{}, sessions: env.Sessions, noOCR: !ocr}
+	if r.sessions == nil {
+		r.sessions = map[string]runtime.Session{}
+		defer r.close()
+	}
+	return r.readDoc(p, true)
+}
+
 // readLimited reads a file that must fit in memory as a prompt source.
 func readLimited(p string) ([]byte, error) {
 	st, err := os.Stat(p)
@@ -93,6 +107,9 @@ func (r *run) readPDF(p string) (string, error) {
 	}
 	if strings.TrimSpace(out) != "" {
 		return out, nil
+	}
+	if r.noOCR {
+		return "", errors.New("has no text layer (a scan); `mote run summarize` reads it with the vision model")
 	}
 	pdftoppm, err := r.tool("pdftoppm")
 	if err != nil {
