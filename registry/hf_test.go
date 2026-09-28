@@ -150,15 +150,24 @@ func TestHFUpstreamNeedsALicense(t *testing.T) {
 	}
 }
 
+// The newest release first, a draft, then an older one: llama.cpp tags
+// every nightly build a prerelease, so GitHub's own "latest" (the newest
+// non-prerelease, non-draft release) is not always among them; the list,
+// which GitHub returns newest first, is used instead, skipping only drafts.
 func TestHFLatestRelease(t *testing.T) {
 	srv := hfServer(t, map[string]any{
-		"/repos/ggml-org/llama.cpp/releases/latest": map[string]any{
-			"tag_name":     "b9999",
-			"published_at": "2026-09-01T00:00:00Z",
-			"assets": []map[string]any{
-				{"name": "llama-b9999-bin-ubuntu-x64.zip", "browser_download_url": "https://example.org/a.zip",
-					"size": 42, "digest": "sha256:deadbeef"},
+		"/repos/ggml-org/llama.cpp/releases?per_page=5": []map[string]any{
+			{
+				"tag_name":     "b9999",
+				"published_at": "2026-09-01T00:00:00Z",
+				"prerelease":   true,
+				"assets": []map[string]any{
+					{"name": "llama-b9999-bin-ubuntu-x64.zip", "browser_download_url": "https://example.org/a.zip",
+						"size": 42, "digest": "sha256:deadbeef"},
+				},
 			},
+			{"tag_name": "b10000-draft", "published_at": "2026-09-02T00:00:00Z", "draft": true, "assets": []map[string]any{}},
+			{"tag_name": "b9998", "published_at": "2026-08-01T00:00:00Z", "assets": []map[string]any{}},
 		},
 	})
 	rel, err := (&HF{GitHubBase: srv.URL}).LatestRelease(context.Background(), "ggml-org/llama.cpp")
@@ -171,6 +180,17 @@ func TestHFLatestRelease(t *testing.T) {
 	a := rel.Assets["llama-b9999-bin-ubuntu-x64.zip"]
 	if a.SHA256 != "deadbeef" || a.Size != 42 {
 		t.Errorf("asset digest not unwrapped: %+v", a)
+	}
+}
+
+func TestHFLatestReleaseSkipsDraftsAndRejectsNone(t *testing.T) {
+	srv := hfServer(t, map[string]any{
+		"/repos/ggml-org/llama.cpp/releases?per_page=5": []map[string]any{
+			{"tag_name": "b10000-draft", "published_at": "2026-09-02T00:00:00Z", "draft": true},
+		},
+	})
+	if _, err := (&HF{GitHubBase: srv.URL}).LatestRelease(context.Background(), "ggml-org/llama.cpp"); err == nil {
+		t.Error("a repo with only a draft release should fail, not pin it")
 	}
 }
 

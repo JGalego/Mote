@@ -237,14 +237,14 @@ func TestRunWithTheRuntimePin(t *testing.T) {
 	t.Setenv("MOTE_HF_BASE", stubHF(t))
 	// A GitHub stub offering a newer llama.cpp release.
 	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{
+		json.NewEncoder(w).Encode([]map[string]any{{
 			"tag_name":     "b9999",
 			"published_at": "2026-09-01T00:00:00Z",
 			"assets": []map[string]any{
 				{"name": "llama-b9999-bin-ubuntu-x64.tar.gz", "browser_download_url": "https://example.org/l.tar.gz",
 					"size": 1024, "digest": "sha256:" + strings.Repeat("c", 64)},
 			},
-		})
+		}})
 	}))
 	defer gh.Close()
 	t.Setenv("MOTE_GITHUB_BASE", gh.URL)

@@ -623,9 +623,15 @@ func (h *HF) Upstream(ctx context.Context, id string) (UpstreamInfo, error) {
 	return info, nil
 }
 
+// LatestRelease returns the most recently published release, prerelease or
+// not: llama.cpp tags every nightly CI build a prerelease and GitHub's own
+// "latest" release (the newest non-prerelease, non-draft one) is not always
+// among them, so the releases list, which GitHub returns newest first, is
+// used instead of the singular "latest" endpoint.
 func (h *HF) LatestRelease(ctx context.Context, repo string) (Release, error) {
-	var d struct {
+	var d []struct {
 		Tag       string    `json:"tag_name"`
+		Draft     bool      `json:"draft"`
 		Published time.Time `json:"published_at"`
 		Assets    []struct {
 			Name   string `json:"name"`
@@ -634,14 +640,20 @@ func (h *HF) LatestRelease(ctx context.Context, repo string) (Release, error) {
 			Digest string `json:"digest"`
 		} `json:"assets"`
 	}
-	if err := h.get(ctx, h.gh()+"/repos/"+repo+"/releases/latest", &d, h.GitHubToken); err != nil {
+	if err := h.get(ctx, h.gh()+"/repos/"+repo+"/releases?per_page=5", &d, h.GitHubToken); err != nil {
 		return Release{}, err
 	}
-	rel := Release{Tag: d.Tag, Published: d.Published, Assets: map[string]RemoteAsset{}}
-	for _, a := range d.Assets {
-		rel.Assets[a.Name] = RemoteAsset{URL: a.URL, Size: a.Size, SHA256: strings.TrimPrefix(a.Digest, "sha256:")}
+	for _, rd := range d {
+		if rd.Draft {
+			continue
+		}
+		rel := Release{Tag: rd.Tag, Published: rd.Published, Assets: map[string]RemoteAsset{}}
+		for _, a := range rd.Assets {
+			rel.Assets[a.Name] = RemoteAsset{URL: a.URL, Size: a.Size, SHA256: strings.TrimPrefix(a.Digest, "sha256:")}
+		}
+		return rel, nil
 	}
-	return rel, nil
+	return Release{}, fmt.Errorf("%s has no published release", repo)
 }
 
 func (h *HF) Leaderboard(ctx context.Context, dataset string) ([]LeaderboardEntry, error) {
