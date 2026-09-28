@@ -71,6 +71,7 @@ Usage:
   mote mcp [tools [NAME...]]
   mote listen [TASK] [--wake PHRASE] [--device D] [--chunk SECONDS] [--once]
   mote remember "FACT" | mote forget N|--all|--history | mote memory [search "Q"]
+  mote serve [--port N] [--keep-alive DURATION] | status | stop
   mote tasks
   mote models [list | pull ID|CAP...|--all|--missing | upgrade [--check] [--prune] | rm ID | why CAP | verify]
   mote bench [--full] [--model ID]
@@ -123,6 +124,10 @@ type app struct {
 	ue, uo   *ui.UI // decorated stderr and stdout
 	regURL   string
 	tty      bool
+	// serveURL caches serverURL for the command; inServe marks the
+	// process that is the resident server, which loads models itself.
+	serveURL *string
+	inServe  bool
 }
 
 // Main runs the CLI and returns the process exit code.
@@ -193,7 +198,7 @@ func (a *app) dispatch(ctx context.Context, args []string) error {
 		return a.update(ctx, rest)
 	}
 	switch cmd {
-	case "run", "pipe", "listen", "do", "agent", "memory", "remember", "forget", "models", "bench", "tune":
+	case "run", "pipe", "listen", "do", "agent", "memory", "remember", "forget", "models", "bench", "tune", "serve":
 	default:
 		return usagef("unknown command %q; see `mote help`", cmd)
 	}
@@ -224,6 +229,8 @@ func (a *app) dispatch(ctx context.Context, args []string) error {
 		return a.bench(ctx, rest)
 	case "tune":
 		return a.tune(rest)
+	case "serve":
+		return a.serveCmd(ctx, rest)
 	}
 	return usagef("unknown command %q; see `mote help`", cmd)
 }
@@ -332,7 +339,19 @@ func (a *app) choose(capability, profile string) (*registry.Model, registry.Choi
 	return m, ch, nil
 }
 
+// backend returns how to run a model: in the resident server when one is
+// running or keep_alive lets this command start one, else in this process.
 func (a *app) backend(m *registry.Model) (mrt.Backend, error) {
+	b, err := a.localBackend(m)
+	if l, ok := b.(*mrt.Llama); ok && err == nil {
+		return a.servedBackend(l), nil
+	}
+	return b, err
+}
+
+// localBackend runs a model in this process, which is what measurements
+// need.
+func (a *app) localBackend(m *registry.Model) (mrt.Backend, error) {
 	if m.Backend == "sd.cpp" {
 		rt, _, err := a.runtimeFor(m)
 		if err != nil {
@@ -347,11 +366,7 @@ func (a *app) backend(m *registry.Model) (mrt.Backend, error) {
 	if m.Backend != "llama.cpp" {
 		return nil, fmt.Errorf("%w: %s", mrt.ErrUnsupported, m.Backend)
 	}
-	dir, err := mrt.FindLlama(a.cfg.LlamaDir, a.store(), a.registry().Runtime)
-	if err != nil {
-		return nil, err
-	}
-	return &mrt.Llama{Dir: dir, Threads: a.cfg.Threads, LogDir: filepath.Join(a.dataDir(), "logs"), Repack: a.cfg.Repack == "on"}, nil
+	return a.llama()
 }
 
 // runtimeFor returns the pinned runtime a model needs and its build for

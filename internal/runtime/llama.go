@@ -163,7 +163,8 @@ func (l *Llama) Open(ctx context.Context, m *registry.Model, files map[string]st
 	args = append(args, m.Args...)
 
 	cmd := exec.Command(l.bin("llama-server"), args...)
-	logf, logPath := l.logFile("llama-server")
+	// One log per model: a resident server runs several at once.
+	logf, logPath := l.logFile("llama-server-" + m.ID)
 	if logf != nil {
 		cmd.Stdout, cmd.Stderr = logf, logf
 	}
@@ -206,7 +207,15 @@ func (l *Llama) Open(ctx context.Context, m *registry.Model, files map[string]st
 	}
 }
 
+// URLer is implemented by sessions served over HTTP, so another process
+// can pass requests to them.
+type URLer interface{ URL() string }
+
 type server struct {
+	// name is sent as the request's model, which a server holding several
+	// models needs; llama-server ignores it. cmd is nil for a session in
+	// another process's server.
+	name    string
 	cmd     *exec.Cmd
 	log     *os.File
 	logPath string
@@ -219,6 +228,8 @@ type server struct {
 	closed  bool
 	stats   Stats
 }
+
+func (s *server) URL() string { return s.base }
 
 func (s *server) healthy() bool {
 	resp, err := s.client.Get(s.base + "/health")
@@ -264,6 +275,9 @@ func (s *server) Generate(ctx context.Context, req Request) (Result, error) {
 	}
 	msgs = append(msgs, map[string]any{"role": "user", "content": parts})
 	body := map[string]any{"messages": msgs, "temperature": req.Temperature, "stream": req.OnToken != nil}
+	if s.name != "" {
+		body["model"] = s.name
+	}
 	if req.MaxTokens > 0 {
 		body["max_tokens"] = req.MaxTokens
 	}
@@ -325,7 +339,11 @@ func (s *server) Embed(ctx context.Context, texts []string) ([][]float32, error)
 	if len(texts) == 0 {
 		return nil, nil
 	}
-	payload, _ := json.Marshal(map[string]any{"input": texts})
+	body := map[string]any{"input": texts}
+	if s.name != "" {
+		body["model"] = s.name
+	}
+	payload, _ := json.Marshal(body)
 	hreq, err := http.NewRequestWithContext(ctx, http.MethodPost, s.base+"/v1/embeddings", bytes.NewReader(payload))
 	if err != nil {
 		return nil, err
@@ -435,6 +453,9 @@ func (s *server) Close() Stats {
 		return s.stats
 	}
 	s.closed = true
+	if s.cmd == nil {
+		return s.stats
+	}
 	s.stats.StartupMS = float64(s.startup.Microseconds()) / 1000
 	s.stats.PeakRSSMB = peakRSSMB(s.cmd.Process.Pid)
 	stop(s.cmd.Process)

@@ -240,6 +240,17 @@ func (a *app) doctor() error {
 			line("warn", t.name, "missing, only needed for "+t.use+"; "+installHint(t.name))
 		}
 	}
+	if st, ok := a.readState(); ok {
+		if _, alive := health(st.URL); alive {
+			line("ok", "serve", "running at "+st.URL+"/v1; `mote serve status` lists the loaded models")
+		} else {
+			line("warn", "serve", "a record of a server at "+st.URL+" that no longer answers; the next command replaces it")
+		}
+	} else if k := a.keepAlive(); k > 0 {
+		line("ok", "serve", fmt.Sprintf("not running; the next command starts it and keeps models loaded for %s (keep_alive)", k))
+	} else {
+		line("ok", "serve", "off (keep_alive 0); each command loads its own models")
+	}
 	// Only mote agent --allow-sh uses it, so a missing one is a warning.
 	if sb := sandbox.Detect(context.Background(), exec.LookPath); sb.Available() {
 		line("ok", "sandbox", string(sb.Kind)+" ("+sb.Prog+"), for the agent's shell")
@@ -303,10 +314,10 @@ func (a *app) bench(ctx context.Context, args []string) error {
 	tmp := filepath.Join(a.dataDir(), "tmp")
 	os.MkdirAll(tmp, 0o755)
 	entries, err := bench.Run(ctx, bench.Options{
-		Full: full, Models: models, Files: a.store().Files, Backend: a.backend,
+		Full: full, Models: models, Files: a.store().Files, Backend: a.localBackend,
 		Runtime: reg.Runtime.Version, TempDir: tmp, Log: a.err,
 		Loader: func(m *registry.Model, repack bool) (mrt.Backend, error) {
-			b, err := a.backend(m)
+			b, err := a.localBackend(m)
 			if l, ok := b.(*mrt.Llama); ok {
 				c := *l
 				c.Repack = repack

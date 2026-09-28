@@ -46,6 +46,7 @@ mote runs X-to-Y AI tasks (text, code, images, audio, video, files) on your CPU 
   - [spoken](#spoken-)
   - [your own](#your-own-)
 - [Memory](#memory)
+- [Serving](#serving)
 - [How it works](#how-it-works)
 - [Models](#models)
 - [License](#license)
@@ -95,6 +96,7 @@ In a clone, `go install ./cmd/mote` does the same into `$(go env GOPATH)/bin`. `
 | `mote remember "FACT"` | Keep a fact in front of every model step; `mote memory` lists them, `mote forget N\|--all` removes them |
 | `mote memory [search "Q"]` | Show what mote remembers, or find a past exchange by meaning |
 | `mote listen [TASK]` | Wait for a wake word on the microphone, then run what you say next (never listens unless you start it) |
+| `mote serve [status\|stop]` | Keep models loaded and serve them to editors through an OpenAI-compatible API on `127.0.0.1:11435` |
 | `mote tasks` | List the tasks, their arguments and what each one needs |
 | `mote models [pull\|rm\|why\|verify]` | Show models, sizes and which are in use; fetch, remove, explain or re-verify them. `pull --missing` fetches the ones your profile uses, `pull --all` every one |
 | `mote models upgrade [--check] [--prune]` | Fetch the newest registry and the best models it picks for your profile and RAM; `--prune` removes the ones no longer used |
@@ -336,6 +338,28 @@ and never sent anywhere. `--recall` and `mote memory search` compare meaning
 with the same encoder the router uses, so they find an exchange that used
 different words.
 
+## Serving
+
+Loading a model takes a few seconds, so mote keeps the ones a command used loaded for five minutes, in a small background server that the next command reuses. A second `mote run chat` answers in a fraction of a second instead of reloading. The server stops itself once nothing has been used for that long, unloads the least recently used model when another would not fit in memory, and is replaced if you change how models load (`threads`, `repack`, the runtime, or mote itself).
+
+```sh
+mote serve status                  # what is loaded, and for how long
+mote serve stop                    # unload everything now
+mote config set keep_alive 30m     # keep models longer
+mote config set keep_alive 0       # never start it: each command loads its own models
+```
+
+Run `mote serve` yourself to keep it in the foreground and give other programs the same models. It speaks the OpenAI API on `http://127.0.0.1:11435/v1` (`--port` or `serve_port` to change it), with `/v1/chat/completions`, `/v1/completions`, `/v1/embeddings` and `/v1/models`. Name a model by its id, or by a capability (`text`, `code`, `vision`, `embed`; `mote` means `text`) to get the one mote picked for your machine. Any API key works.
+
+```sh
+mote serve &
+curl -s http://127.0.0.1:11435/v1/chat/completions -H 'Content-Type: application/json' \
+  -d '{"model": "mote", "messages": [{"role": "user", "content": "Say hello in French"}]}'
+aider --openai-api-base http://127.0.0.1:11435/v1 --openai-api-key local --model openai/code
+```
+
+It answers only on the loopback interface, and refuses requests whose `Host` or `Origin` is not local, so a web page cannot reach it. Speech and image generation still run in the command that asks for them.
+
 ## How it works
 
 ```mermaid
@@ -354,7 +378,9 @@ flowchart TD
   AGENT -- "<code>--allow-sh</code>" --> SH["🐚 shell<br/>checked · asks · 🔒 bwrap / sandbox-exec"]
   AGENT -- "<code>--mcp</code>" --> MCP["🔌 local MCP servers<br/>stdio · <code>mcp.json</code>"]
 
-  PIPE -- "model step<br/><code>text · code · extract</code><br/><code>vision · asr</code><br/><code>tts · embed</code>" --> LLAMA["🦙 <code>llama-server</code> · <code>llama-tts</code><br/>127.0.0.1 · CPU only"]
+  PIPE -- "model step<br/><code>text · code · extract</code><br/><code>vision · asr</code><br/><code>tts · embed</code>" --> SERVE["♻️ <code>mote serve</code><br/>keeps models loaded · OpenAI API"]
+  EDITOR(["🧑‍💻 editors · other tools"]) -. "<code>/v1</code>" .-> SERVE
+  SERVE --> LLAMA["🦙 <code>llama-server</code> · <code>llama-tts</code><br/>127.0.0.1 · CPU only"]
   DO -. "choice under a JSON schema" .-> LLAMA
   AGENT -. "each step under a JSON schema" .-> LLAMA
   PIPE -- "tool step · <code>exec</code>" --> TOOLS["🔧 <code>ffmpeg</code> · <code>git</code><br/>any local program, no shell"]
@@ -369,7 +395,7 @@ flowchart TD
   SD --> OUT
 ```
 
-Inference runs in a llama.cpp server bound to `127.0.0.1` with GPU offload disabled (`--device none`). GGUF weights come from Hugging Face only when you allow it, pinned to a commit and verified by SHA-256.
+Inference runs in llama.cpp servers bound to `127.0.0.1` with GPU offload disabled (`--device none`), held by `mote serve` between commands. GGUF weights come from Hugging Face only when you allow it, pinned to a commit and verified by SHA-256.
 
 Models, logs and benchmark results live in the data directory (`~/.local/share/mote`, `~/Library/Application Support/mote`, `%LOCALAPPDATA%\mote`), configuration in the OS config directory. After setup, mote itself touches the network only for `mote update` and explicit pulls; MCP servers you add are programs of their own and may do more.
 

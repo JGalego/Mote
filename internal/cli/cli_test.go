@@ -20,6 +20,11 @@ import (
 func TestMain(m *testing.M) {
 	fakellama.MaybeRun()
 	fakemcp.MaybeRun()
+	// A command that starts mote serve runs its own executable, which in
+	// tests is this binary; this makes it mote.
+	if os.Getenv("MOTE_TEST_AS_MOTE") == "1" {
+		os.Exit(Main(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
+	}
 	os.Exit(m.Run())
 }
 
@@ -35,6 +40,9 @@ func newEnv(t *testing.T) *env {
 	t.Setenv("MOTE_HOME", e.home)
 	t.Setenv("MOTE_CONFIG_DIR", e.cfgDir)
 	t.Setenv("PATH", "") // no system tools or llama.cpp: deterministic
+	// Models load in the command itself unless a test is about the
+	// resident server.
+	t.Setenv("MOTE_KEEP_ALIVE", "0")
 	fakellama.Install(t, e.llamaDir)
 	return e
 }

@@ -38,9 +38,15 @@ type Config struct {
 	Threads      int    `json:"threads,omitempty"`
 	// Repack is on, off, or empty for auto: skip repacking weights for a
 	// server that answers one command, keep it for one that stays loaded.
-	Repack string            `json:"repack,omitempty"`
-	Models map[string]string `json:"models,omitempty"`
-	Tools  map[string]string `json:"tools,omitempty"`
+	Repack string `json:"repack,omitempty"`
+	// KeepAlive is how long a resident server keeps a model loaded after
+	// a command used it, as a duration ("5m"); "0" turns it off, empty
+	// means DefaultKeepAlive.
+	KeepAlive string `json:"keep_alive,omitempty"`
+	// ServePort is the loopback port of mote serve; 0 means DefaultPort.
+	ServePort int               `json:"serve_port,omitempty"`
+	Models    map[string]string `json:"models,omitempty"`
+	Tools     map[string]string `json:"tools,omitempty"`
 }
 
 // Default returns the configuration used when the user accepts all defaults.
@@ -139,6 +145,14 @@ func (c Config) Validate() error {
 	if c.Repack != "" && c.Repack != "on" && c.Repack != "off" {
 		errs = append(errs, "repack must be auto, on or off")
 	}
+	if c.ServePort < 0 || c.ServePort > 65535 {
+		errs = append(errs, "serve_port must be between 1 and 65535, or 0 for the default")
+	}
+	if c.KeepAlive != "" {
+		if d, err := time.ParseDuration(c.KeepAlive); err != nil || d < 0 {
+			errs = append(errs, "keep_alive must be a duration such as 5m, or 0")
+		}
+	}
 	if c.Threads < 0 || c.Threads > 1024 {
 		errs = append(errs, "threads must be between 0 (auto) and 1024")
 	}
@@ -232,8 +246,35 @@ func Rollback(dir string, n int) (Config, error) {
 	return e.Config, err
 }
 
+// DefaultKeepAlive is how long models stay loaded between commands unless
+// keep_alive says otherwise.
+const DefaultKeepAlive = 5 * time.Minute
+
+// DefaultPort is where mote serve listens unless serve_port says otherwise.
+const DefaultPort = 11435
+
+// KeepAliveDuration is the parsed keep_alive.
+func (c Config) KeepAliveDuration() time.Duration {
+	if c.KeepAlive == "" {
+		return DefaultKeepAlive
+	}
+	d, err := time.ParseDuration(c.KeepAlive)
+	if err != nil || d < 0 {
+		return DefaultKeepAlive
+	}
+	return d
+}
+
+// Port is the configured serve port.
+func (c Config) Port() int {
+	if c.ServePort == 0 {
+		return DefaultPort
+	}
+	return c.ServePort
+}
+
 // Keys lists settable keys for `mote config set`.
-var Keys = []string{"profile", "editor", "workspace", "data_dir", "auto_download", "reuse_tools", "llama_dir", "threads", "repack", "wake_word", "router", "memory", "models.<capability>", "tools.<name>"}
+var Keys = []string{"profile", "editor", "workspace", "data_dir", "auto_download", "reuse_tools", "llama_dir", "threads", "repack", "keep_alive", "serve_port", "wake_word", "router", "memory", "models.<capability>", "tools.<name>"}
 
 // Set changes one key. An empty value clears optional keys.
 func (c *Config) Set(key, value string) error {
@@ -289,6 +330,22 @@ func (c *Config) Set(key, value string) error {
 		default:
 			return fmt.Errorf("repack expects auto, on or off")
 		}
+	case key == "keep_alive":
+		if value != "" {
+			if d, err := time.ParseDuration(value); err != nil || d < 0 {
+				return fmt.Errorf("keep_alive expects a duration such as 5m or 1h, or 0 to turn it off")
+			}
+		}
+		c.KeepAlive = value
+	case key == "serve_port":
+		n := 0
+		if value != "" {
+			var err error
+			if n, err = strconv.Atoi(value); err != nil {
+				return fmt.Errorf("serve_port expects a number")
+			}
+		}
+		c.ServePort = n
 	case key == "threads":
 		n, err := strconv.Atoi(value)
 		if err != nil {

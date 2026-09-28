@@ -12,6 +12,7 @@ internal/bench        local benchmark cases, results, tuning proposals
 internal/memory       facts, history and search over past exchanges
 internal/mcp          a client for local MCP servers (stdio JSON-RPC)
 internal/sandbox      runs the agent's shell commands under bwrap or sandbox-exec
+internal/serve        the resident server: keeps models loaded, OpenAI API
 internal/cli          commands and the setup wizard
 install/              install.sh (Linux/macOS), install.ps1 (Windows)
 ```
@@ -111,3 +112,15 @@ used, not at setup.
 **A backend** implements `runtime.Backend` (`Open` a session that can
 `Generate`, and `Speak`) and is chosen in `cli.app.backend` from the model's
 `backend` field, which `registry.Validate` must also accept.
+
+**The resident server** (`internal/serve`) owns every llama-server a
+command would otherwise start and stop. `cli.app.backend` wraps the local
+`runtime.Llama` in a `runtime.Remote` when a server is running or
+`keep_alive` lets the command start one (`mote serve --background`, found
+through `serve.json` in the data directory); its sessions send requests
+through the server's OpenAI endpoints with the model id as `model`. A server
+whose fingerprint (build, registry, runtime, load settings) differs from the
+command's is replaced if a command started it, and left alone if someone did.
+Measurements (`mote bench`) use `localBackend`, never the server. Tests pin
+`MOTE_KEEP_ALIVE=0`; the ones about the server set `MOTE_TEST_AS_MOTE=1` so
+the test binary can stand in for the `mote` a command starts.
