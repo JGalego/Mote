@@ -136,20 +136,31 @@ func Load(p string) (*Index, error) {
 	return ix, nil
 }
 
-// Save writes the index atomically.
+// Save writes the index atomically. The file is kept private: it holds
+// verbatim passages from every file the user indexed.
 func (ix *Index) Save() error {
-	if err := os.MkdirAll(filepath.Dir(ix.path), 0o755); err != nil {
+	dir := filepath.Dir(ix.path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
 	b, err := json.Marshal(ix)
 	if err != nil {
 		return err
 	}
-	tmp := ix.path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+	tmp, err := os.CreateTemp(dir, ".files-*.tmp")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, ix.path)
+	if _, err := tmp.Write(b); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmp.Name())
+		return err
+	}
+	return os.Rename(tmp.Name(), ix.path)
 }
 
 // Options connect an update to the file reader and the embedding model.
