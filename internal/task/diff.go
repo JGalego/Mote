@@ -5,6 +5,11 @@ import (
 	"strings"
 )
 
+// maxDiffCells bounds the O(n·m) table lcsOps builds. Beyond it, the whole
+// file is shown as replaced instead of risking gigabytes of memory on one
+// large file with many short lines.
+const maxDiffCells = 4 << 20 // about 16 MiB of int32, e.g. 2048x2048 lines
+
 // Unified returns a unified diff (3 lines of context) between two texts, or
 // "" when they are equal. Small models are unreliable at writing hunks, so
 // mote asks them for whole files and computes the diff itself.
@@ -13,7 +18,12 @@ func Unified(path, before, after string) string {
 		return ""
 	}
 	a, b := splitLines(before), splitLines(after)
-	ops := lcsOps(a, b)
+	var ops []diffOp
+	if int64(len(a))*int64(len(b)) > maxDiffCells {
+		ops = replaceOps(a, b)
+	} else {
+		ops = lcsOps(a, b)
+	}
 
 	const ctx = 3
 	var out strings.Builder
@@ -85,6 +95,20 @@ type diffOp struct {
 	kind   byte // ' ', '-', '+'
 	text   string
 	ai, bi int // positions in a and b before this op
+}
+
+// replaceOps removes every line of a then adds every line of b, with no
+// attempt at a minimal diff. It is what lcsOps computes anyway when a and b
+// share nothing, so it is a correct diff, just not always the shortest one.
+func replaceOps(a, b []string) []diffOp {
+	ops := make([]diffOp, 0, len(a)+len(b))
+	for i, l := range a {
+		ops = append(ops, diffOp{'-', l, i, 0})
+	}
+	for j, l := range b {
+		ops = append(ops, diffOp{'+', l, len(a), j})
+	}
+	return ops
 }
 
 func lcsOps(a, b []string) []diffOp {

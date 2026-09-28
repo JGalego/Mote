@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -335,6 +336,35 @@ func TestUnified(t *testing.T) {
 	}
 	if got := Unified("n", "", "new\n"); got != "--- a/n\n+++ b/n\n@@ -0,0 +1,1 @@\n+new\n" {
 		t.Errorf("new file diff %q", got)
+	}
+}
+
+// TestUnifiedFallsBackOnHugeInputs guards against the O(n·m) LCS table
+// being built for inputs large enough to exhaust memory: past maxDiffCells,
+// Unified must fall back to a whole-file replace instead.
+func TestUnifiedFallsBackOnHugeInputs(t *testing.T) {
+	n := 3000 // n*n well past maxDiffCells, but fast to build as strings
+	lines := make([]string, n)
+	for i := range lines {
+		lines[i] = strconv.Itoa(i)
+	}
+	before := strings.Join(lines, "\n") + "\n"
+	lines[0] = "changed"
+	after := strings.Join(lines, "\n") + "\n"
+
+	got := Unified("big", before, after)
+	var removed, added int
+	for _, l := range strings.Split(got, "\n") {
+		switch {
+		case strings.HasPrefix(l, "---"), strings.HasPrefix(l, "+++"), strings.HasPrefix(l, "@@"):
+		case strings.HasPrefix(l, "-"):
+			removed++
+		case strings.HasPrefix(l, "+"):
+			added++
+		}
+	}
+	if removed != n || added != n {
+		t.Errorf("fallback diff has %d removed, %d added lines, want %d each", removed, added, n)
 	}
 }
 
