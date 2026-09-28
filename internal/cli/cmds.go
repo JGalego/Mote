@@ -513,7 +513,9 @@ func (a *app) adoptRegistry(ctx context.Context, cur, next *registry.Registry, b
 		return err
 	}
 	if old, err := os.ReadFile(path); err == nil {
-		os.WriteFile(filepath.Join(filepath.Dir(path), "models.prev.json"), old, 0o644)
+		if err := os.WriteFile(filepath.Join(filepath.Dir(path), "models.prev.json"), old, 0o644); err != nil {
+			fmt.Fprintf(a.err, "warning: could not back up the previous registry: %v\n", err)
+		}
 	}
 	if err := os.WriteFile(path, body, 0o644); err != nil {
 		return err
