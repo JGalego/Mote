@@ -78,6 +78,35 @@ func (e *env) install(id string) {
 
 func jsonStr(s string) string { b, _ := json.Marshal(s); return string(b) }
 
+// TestInvocationTempDirsAreUniqueAndRemovable guards against two commands
+// sharing one scratch directory: run and pipe once deleted dataDir/tmp
+// wholesale when they finished, which raced a second command still using it,
+// while do, agent, chat and index never cleaned it up at all. Each
+// invocation must now get its own directory, and cleaning one up must not
+// touch another's.
+func TestInvocationTempDirsAreUniqueAndRemovable(t *testing.T) {
+	base := t.TempDir()
+	d1, cleanup1 := newInvocationTempDir(base)
+	d2, cleanup2 := newInvocationTempDir(base)
+	if d1 == "" || d2 == "" || d1 == d2 {
+		t.Fatalf("expected two distinct, non-empty directories, got %q and %q", d1, d2)
+	}
+	if _, err := os.Stat(d1); err != nil {
+		t.Fatalf("first temp dir does not exist: %v", err)
+	}
+	if _, err := os.Stat(d2); err != nil {
+		t.Fatalf("second temp dir does not exist: %v", err)
+	}
+	cleanup1()
+	if _, err := os.Stat(d1); !os.IsNotExist(err) {
+		t.Errorf("cleanup did not remove %s", d1)
+	}
+	if _, err := os.Stat(d2); err != nil {
+		t.Error("cleaning up the first invocation's directory touched the second's")
+	}
+	cleanup2()
+}
+
 func TestUsageAndExitCodes(t *testing.T) {
 	e := newEnv(t)
 	if code, out, _ := e.mote(""); code != 0 || !strings.Contains(out, "mote run TASK") {

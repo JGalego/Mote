@@ -244,7 +244,6 @@ func (a *app) askCmd(ctx context.Context, args []string) error {
 	if out == "" && a.uo.Live() {
 		env.Stream = func(tok string) { fmt.Fprint(a.out, tok) }
 	}
-	defer os.RemoveAll(env.TempDir)
 	res, err := t.Run(ctx, env, []string{excerpts(hits), question}, task.Options{Output: out})
 	if err != nil {
 		return err

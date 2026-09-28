@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -273,7 +272,6 @@ func resolveStages(stages []stage, tasks []task.Task) ([]task.Task, error) {
 func (a *app) runStages(ctx context.Context, stages []stage, found []task.Task, vals map[string]string,
 	profile string, sessions map[string]mrt.Session, remembered, request string) error {
 	out := firstNonEmpty(vals["-o"], vals["--output"])
-	defer os.RemoveAll(a.env(profile, nil).TempDir)
 
 	last := len(stages) - 1
 	var val task.Value

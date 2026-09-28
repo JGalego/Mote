@@ -131,6 +131,10 @@ type app struct {
 	// process that is the resident server, which loads models itself.
 	serveURL *string
 	inServe  bool
+	// tempDir is this invocation's own scratch directory, so two commands
+	// running at once never share one to leak into or delete out from
+	// under each other. Main removes it when the command is done.
+	tempDir string
 }
 
 // Main runs the CLI and returns the process exit code.
@@ -151,6 +155,9 @@ func Main(args []string, in io.Reader, out, errw io.Writer) int {
 	a.ue, a.uo = ui.New(errw), ui.New(out)
 	a.fetcher = mrt.Fetcher{Progress: barProgress{a.ue}}
 	a.cfg, a.cfgErr = config.Load(a.cfgDir)
+	tmp, cleanupTemp := newInvocationTempDir(a.dataDir())
+	a.tempDir = tmp
+	defer cleanupTemp()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -321,6 +328,24 @@ func (a *app) dataDir() string {
 
 func (a *app) userRegistryPath() string {
 	return filepath.Join(a.dataDir(), "registry", "models.json")
+}
+
+// newInvocationTempDir makes a scratch directory unique to one command, so
+// two commands running at once cannot delete or collide with each other's
+// in-progress files the way sharing dataDir/tmp directly once did. A command
+// that never asks for scratch space still gets a directory, but leaves it
+// empty; cleanup removes it either way. A failure to create it (an unwritable
+// data directory) is not fatal: callers fall back to the OS temp directory.
+func newInvocationTempDir(dataDir string) (dir string, cleanup func()) {
+	base := filepath.Join(dataDir, "tmp")
+	if err := os.MkdirAll(base, 0o755); err != nil {
+		return "", func() {}
+	}
+	d, err := os.MkdirTemp(base, "run-")
+	if err != nil {
+		return "", func() {}
+	}
+	return d, func() { os.RemoveAll(d) }
 }
 
 func (a *app) store() mrt.Store { return mrt.Store{Dir: a.dataDir()} }
@@ -560,7 +585,6 @@ func (a *app) run(ctx context.Context, args []string) error {
 			env.Stream = func(tok string) { fmt.Fprint(a.out, tok) }
 		}
 	}
-	defer os.RemoveAll(env.TempDir)
 	res, err := t.Run(ctx, env, pos[1:], task.Options{Output: out, Apply: vals["--apply"] == "true"})
 	if err != nil {
 		return err
@@ -601,7 +625,7 @@ func (a *app) selectModels(vals map[string]string) (string, error) {
 
 // env builds the task environment. Sessions, when given, is a cache shared
 // by the stages of a pipeline so models stay loaded between them; the caller
-// closes it and removes TempDir.
+// closes it. TempDir is this invocation's own, removed by Main.
 func (a *app) env(profile string, sessions map[string]mrt.Session) task.Env {
 	return task.Env{
 		Resolve: func(ctx context.Context, c string) (*registry.Model, map[string]string, error) {
@@ -618,7 +642,7 @@ func (a *app) env(profile string, sessions map[string]mrt.Session) task.Env {
 		Tool:     a.tool,
 		Stdin:    a.in,
 		Log:      a.err,
-		TempDir:  filepath.Join(a.dataDir(), "tmp"),
+		TempDir:  a.tempDir,
 		Status:   a.status,
 		Sessions: sessions,
 	}
