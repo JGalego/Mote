@@ -338,6 +338,57 @@ func TestInstallRuntime(t *testing.T) {
 	}
 }
 
+// TestConcurrentInstallsDoNotCorruptEachOther guards against two installs of
+// the same build racing on one shared extraction directory: mote serve can
+// pull a runtime lazily at the same moment a manual mote setup does. Both
+// must end up with a complete, working binary, not a half-extracted or
+// half-deleted directory.
+func TestConcurrentInstallsDoNotCorruptEachOther(t *testing.T) {
+	dir := t.TempDir()
+	arc := filepath.Join(dir, "rt.tar.gz")
+	writeTarGz(t, arc, []entry{{name: "llama-b1/" + exe("llama-server"), body: "bin", mode: 0o755}})
+	body, err := os.ReadFile(arc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(body) }))
+	defer srv.Close()
+	s := Store{Dir: filepath.Join(dir, "data")}
+	rt := registry.Runtime{Version: "b1"}
+	a := registry.Asset{URL: srv.URL + "/llama-b1-bin.tar.gz", SHA256: hash(body), Size: int64(len(body))}
+
+	const n = 8
+	results := make(chan error, n)
+	for range n {
+		go func() {
+			_, err := s.InstallRuntime(context.Background(), Fetcher{AllowHTTP: true}, rt, a)
+			results <- err
+		}()
+	}
+	for range n {
+		if err := <-results; err != nil {
+			t.Errorf("concurrent install: %v", err)
+		}
+	}
+	got := filepath.Join(s.RuntimeDir(rt, ""), exe("llama-server"))
+	b, err := os.ReadFile(got)
+	if err != nil {
+		t.Fatalf("binary missing after concurrent installs: %v", err)
+	}
+	if string(b) != "bin" {
+		t.Errorf("binary corrupted by a concurrent install: %q", b)
+	}
+	entries, err := os.ReadDir(filepath.Join(s.Dir, "runtime"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".tmp-") {
+			t.Errorf("leftover extraction directory: %s", e.Name())
+		}
+	}
+}
+
 func TestInstallAnotherBackendsRuntime(t *testing.T) {
 	dir := t.TempDir()
 	arc := filepath.Join(dir, "sd.tar.gz")
@@ -447,6 +498,42 @@ func TestDownloadStallTimeout(t *testing.T) {
 	}
 	if st, _ := os.Stat(dest + ".part"); st == nil || st.Size() != 5 {
 		t.Error("partial file not kept for resume")
+	}
+}
+
+// TestAcquireLockReclaimsAStaleOne guards against a lock left behind by a
+// crashed download blocking every future one: once it is older than
+// staleLock, a new attempt must reclaim it rather than wait forever.
+func TestAcquireLockReclaimsAStaleOne(t *testing.T) {
+	lock := filepath.Join(t.TempDir(), "x.lock")
+	if err := os.WriteFile(lock, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-staleLock - time.Minute)
+	if err := os.Chtimes(lock, old, old); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, release, err := acquireLock(ctx, lock)
+	if err != nil {
+		t.Fatalf("expected the stale lock to be reclaimed, got %v", err)
+	}
+	release()
+}
+
+// TestAcquireLockWaitsForAFreshOne is the other side of the same guard: a
+// lock still being touched must not be reclaimed just because another
+// caller is waiting for it.
+func TestAcquireLockWaitsForAFreshOne(t *testing.T) {
+	lock := filepath.Join(t.TempDir(), "x.lock")
+	if err := os.WriteFile(lock, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	if _, _, err := acquireLock(ctx, lock); err == nil {
+		t.Error("expected acquireLock to give up on a fresh lock once ctx expired")
 	}
 }
 

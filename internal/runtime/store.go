@@ -116,19 +116,35 @@ func (s Store) InstallRuntime(ctx context.Context, f Fetcher, rt registry.Runtim
 	if err := f.Download(ctx, a.URL, archive, a.SHA256, a.Size, name+" "+rt.Version); err != nil {
 		return "", err
 	}
-	tmp := dir + ".tmp"
-	os.RemoveAll(tmp)
+	// A directory unique to this attempt, not the shared runtime/<name>.tmp:
+	// two installs of the same build running at once (mote serve pulling one
+	// lazily while a manual mote setup runs) must not extract into, or
+	// delete, the same in-progress directory.
+	tmp, err := os.MkdirTemp(filepath.Join(s.Dir, "runtime"), filepath.Base(dir)+".tmp-")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(tmp) // no-op once it has been renamed away
 	if err := Extract(archive, tmp); err != nil {
-		os.RemoveAll(tmp)
 		return "", err
 	}
 	if _, err := os.Stat(filepath.Join(tmp, main)); err != nil {
-		os.RemoveAll(tmp)
 		return "", fmt.Errorf("%s archive does not contain %s", name, main)
 	}
-	os.RemoveAll(dir)
 	if err := os.Rename(tmp, dir); err != nil {
-		return "", err
+		if _, err := os.Stat(filepath.Join(dir, main)); err == nil {
+			// Another install of the same build finished first; what it
+			// left behind is just as good as what this one built.
+			return dir, nil
+		}
+		// dir exists but is incomplete, left by an install that did not
+		// finish: replace it and try once more.
+		if err := os.RemoveAll(dir); err != nil {
+			return "", err
+		}
+		if err := os.Rename(tmp, dir); err != nil {
+			return "", err
+		}
 	}
 	os.Remove(archive)
 	return dir, nil

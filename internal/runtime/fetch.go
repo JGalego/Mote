@@ -65,6 +65,19 @@ func (f Fetcher) Download(ctx context.Context, rawURL, dest, sum string, size in
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return err
 	}
+	// dest's .part name is shared and stable, on purpose, so a later mote
+	// process can resume it; that means two mote processes downloading the
+	// same file at once would otherwise write it at once too, and a slower
+	// one could keep going after a faster one already verified and renamed
+	// it away, corrupting what looked like a finished, checksummed file.
+	touch, release, err := acquireLock(ctx, dest+".lock")
+	if err != nil {
+		return fmt.Errorf("download %s: %w", label, err)
+	}
+	defer release()
+	if st, err := os.Stat(dest); err == nil && st.Size() == size {
+		return nil // finished by whoever held the lock before this download
+	}
 	part := dest + ".part"
 	var have int64
 	if st, err := os.Stat(part); err == nil && st.Size() < size {
@@ -111,7 +124,7 @@ func (f Fetcher) Download(ctx context.Context, rawURL, dest, sum string, size in
 	if err != nil {
 		return err
 	}
-	pw := &progress{done: have, alive: func() { watchdog.Reset(stall) }}
+	pw := &progress{done: have, alive: func() { watchdog.Reset(stall); touch() }}
 	if f.Progress != nil {
 		pw.t = f.Progress.Start(label, have, size)
 	}
@@ -135,6 +148,39 @@ func (f Fetcher) Download(ctx context.Context, rawURL, dest, sum string, size in
 		return fmt.Errorf("download %s: %w", label, err)
 	}
 	return os.Rename(part, dest)
+}
+
+// staleLock is how long a lock file may sit untouched before acquireLock
+// assumes the process that made it is gone and reclaims it. A live download
+// touches its lock on every chunk it writes (see Download), so this only
+// needs to be comfortably longer than one write ever takes to stall out.
+const staleLock = 3 * time.Minute
+
+// acquireLock creates path exclusively, across mote processes, waiting for
+// an existing one to be removed or to go stale. touch, called periodically
+// by the holder, proves it is still working so its lock is never reclaimed
+// out from under it; release removes the lock when the holder is done.
+func acquireLock(ctx context.Context, path string) (touch, release func(), err error) {
+	for {
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+		if err == nil {
+			f.Close()
+			return func() { now := time.Now(); os.Chtimes(path, now, now) },
+				func() { os.Remove(path) }, nil
+		}
+		if !os.IsExist(err) {
+			return nil, nil, err
+		}
+		if st, statErr := os.Stat(path); statErr == nil && time.Since(st.ModTime()) > staleLock {
+			os.Remove(path) // the process that made it is gone
+			continue
+		}
+		select {
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
 }
 
 // VerifyFile checks a file's size and SHA-256.
