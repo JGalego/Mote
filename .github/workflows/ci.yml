@@ -30,6 +30,10 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get install -y -q ffmpeg
       - name: Test
+        if: runner.os == 'Linux'
+        run: go test -race ./...
+      - name: Test
+        if: runner.os != 'Linux'
         run: go test ./...
       - name: Cross-build
         if: runner.os == 'Linux'
