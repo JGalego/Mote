@@ -24,23 +24,23 @@ const Schema = 1
 var ErrNotConfigured = errors.New("mote is not set up yet; run `mote setup`")
 
 type Config struct {
-	Schema       int               `json:"schema"`
-	Profile      string            `json:"profile"`
-	Editor       string            `json:"editor,omitempty"`
-	WakeWord     string            `json:"wake_word,omitempty"`
-	Router       string            `json:"router,omitempty"`
-	Memory       bool              `json:"memory,omitempty"`
-	Workspace    string            `json:"workspace,omitempty"`
-	DataDir      string            `json:"data_dir,omitempty"`
-	AutoDownload bool              `json:"auto_download"`
-	ReuseTools   bool              `json:"reuse_tools"`
-	LlamaDir     string            `json:"llama_dir,omitempty"`
-	Threads      int               `json:"threads,omitempty"`
+	Schema       int    `json:"schema"`
+	Profile      string `json:"profile"`
+	Editor       string `json:"editor,omitempty"`
+	WakeWord     string `json:"wake_word,omitempty"`
+	Router       string `json:"router,omitempty"`
+	Memory       bool   `json:"memory,omitempty"`
+	Workspace    string `json:"workspace,omitempty"`
+	DataDir      string `json:"data_dir,omitempty"`
+	AutoDownload bool   `json:"auto_download"`
+	ReuseTools   bool   `json:"reuse_tools"`
+	LlamaDir     string `json:"llama_dir,omitempty"`
+	Threads      int    `json:"threads,omitempty"`
 	// Repack is on, off, or empty for auto: skip repacking weights for a
 	// server that answers one command, keep it for one that stays loaded.
-	Repack string `json:"repack,omitempty"`
-	Models       map[string]string `json:"models,omitempty"`
-	Tools        map[string]string `json:"tools,omitempty"`
+	Repack string            `json:"repack,omitempty"`
+	Models map[string]string `json:"models,omitempty"`
+	Tools  map[string]string `json:"tools,omitempty"`
 }
 
 // Default returns the configuration used when the user accepts all defaults.
