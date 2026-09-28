@@ -401,6 +401,8 @@ flowchart LR
 
 Scores come from Hugging Face `evalResults`, stored with source, date and verification flag; RAM figures are labelled estimates. A [daily workflow](.github/workflows/refresh.yml) re-reads them and commits only what changed; `mote models upgrade --check` shows whether that changed your picks, and `mote models upgrade` downloads the new ones. Locally, `mote bench` measures installed models, `mote tune --apply` turns the results into config, and `mote config rollback` undoes it.
 
+Loading skips work mote does not need: llama.cpp's memory fitting (`--fit off`, since mote sets the device and context itself) and, for a server that answers a single command, repacking the weights for faster CPU kernels (`--no-repack`), which roughly halves load time and costs some prompt speed. `mote bench --full` times loading both ways on your machine, and `mote tune` sets `repack` to `on` when repacking pays for itself within a typical prompt.
+
 ## License
 
 [MIT 🏛️](LICENSE.md)

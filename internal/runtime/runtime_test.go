@@ -837,3 +837,26 @@ func TestOpenFailsWhenThereIsNoBinary(t *testing.T) {
 		t.Errorf("missing binary: %v", err)
 	}
 }
+
+func TestLoadArgsSkipWorkMoteDoesNotNeed(t *testing.T) {
+	has := func(args []string, flag string) bool {
+		for _, a := range args {
+			if a == flag {
+				return true
+			}
+		}
+		return false
+	}
+	one := (&Llama{}).loadArgs()
+	if !has(one, "--fit") || one[1] != "off" || !has(one, "--no-repack") {
+		t.Errorf("one-shot: %q", one)
+	}
+	if kept := (&Llama{Repack: true}).loadArgs(); has(kept, "--no-repack") || !has(kept, "--fit") {
+		t.Errorf("repacking: %q", kept)
+	}
+	for _, f := range []string{"--fit", "--no-repack"} {
+		if !has(RequiredFlags, f) {
+			t.Errorf("doctor does not check %s", f)
+		}
+	}
+}

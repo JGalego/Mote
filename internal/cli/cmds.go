@@ -305,6 +305,15 @@ func (a *app) bench(ctx context.Context, args []string) error {
 	entries, err := bench.Run(ctx, bench.Options{
 		Full: full, Models: models, Files: a.store().Files, Backend: a.backend,
 		Runtime: reg.Runtime.Version, TempDir: tmp, Log: a.err,
+		Loader: func(m *registry.Model, repack bool) (mrt.Backend, error) {
+			b, err := a.backend(m)
+			if l, ok := b.(*mrt.Llama); ok {
+				c := *l
+				c.Repack = repack
+				return &c, nil
+			}
+			return b, err
+		},
 	})
 	if len(entries) > 0 {
 		if serr := bench.Save(a.dataDir(), describe(a.platform(), a.dataDir()), entries); serr != nil {
@@ -325,6 +334,17 @@ func (a *app) bench(ctx context.Context, args []string) error {
 			}
 			for _, s := range e.Skipped {
 				fmt.Fprintln(a.out, "   ", o.Dim("skip: "+s))
+			}
+			if be, ok := e.RepackBreakEven(); ok {
+				verdict := fmt.Sprintf("pays off from ~%d prompt tokens", be)
+				switch {
+				case be < 0:
+					verdict = "never pays off"
+				case be == 0:
+					verdict = "costs nothing"
+				}
+				fmt.Fprintf(a.out, "    load: %.0f ms and %.0f prompt tok/s without repacking, %.0f ms and %.0f with; repacking %s\n",
+					e.NoRepack.StartupMS, e.NoRepack.PromptTPS, e.Repack.StartupMS, e.Repack.PromptTPS, verdict)
 			}
 		}
 		fmt.Fprintln(a.out, o.Dim(fmt.Sprintf("saved to %s; `mote tune` proposes config changes from these results", filepath.Join(a.dataDir(), "bench"))))
@@ -353,11 +373,14 @@ func (a *app) tune(args []string) error {
 		return nil
 	}
 	for _, ch := range changes {
-		action := "pin"
-		if !ch.Pin {
+		label, action := ch.Cap, "pin"
+		switch {
+		case ch.Key != "":
+			label, action = ch.Key, "set"
+		case !ch.Pin:
 			action = "unpin (back to policy default)"
 		}
-		fmt.Fprintf(a.out, "%s: %s %s %s %s\n  %s\n", a.uo.Accent(ch.Cap), ch.From, a.uo.Arrow(), a.uo.Bold(ch.To), a.uo.Dim("["+action+"]"), ch.Reason)
+		fmt.Fprintf(a.out, "%s: %s %s %s %s\n  %s\n", a.uo.Accent(label), ch.From, a.uo.Arrow(), a.uo.Bold(ch.To), a.uo.Dim("["+action+"]"), ch.Reason)
 	}
 	dir := filepath.Join(a.dataDir(), "proposals")
 	os.MkdirAll(dir, 0o755)
@@ -372,7 +395,7 @@ func (a *app) tune(args []string) error {
 	}
 	var why []string
 	for _, ch := range changes {
-		why = append(why, ch.Cap+"->"+ch.To)
+		why = append(why, firstNonEmpty(ch.Key, ch.Cap)+"->"+ch.To)
 	}
 	if _, err := config.Save(a.cfgDir, bench.Apply(a.cfg, changes), "tune: "+strings.Join(why, ", ")+" (proposal "+filepath.Base(p)+")"); err != nil {
 		return err

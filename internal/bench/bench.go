@@ -82,6 +82,34 @@ type Entry struct {
 	Passed       int       `json:"passed"`
 	Failures     []string  `json:"failures,omitempty"`
 	Skipped      []string  `json:"skipped,omitempty"`
+	// NoRepack and Repack time loading the model and reading a prompt
+	// without and with weight repacking (full mode, text models only).
+	NoRepack *LoadTime `json:"no_repack,omitempty"`
+	Repack   *LoadTime `json:"repack,omitempty"`
+}
+
+// LoadTime is how long a model took to start and how fast it read a prompt.
+type LoadTime struct {
+	StartupMS float64 `json:"startup_ms"`
+	PromptTPS float64 `json:"prompt_tokens_per_sec"`
+}
+
+// RepackBreakEven is the prompt length, in tokens, from which repacking
+// weights at load pays for its extra load time: 0 when it costs nothing,
+// -1 when it never pays. ok is false when both were not measured.
+func (e Entry) RepackBreakEven() (tokens int, ok bool) {
+	if e.NoRepack == nil || e.Repack == nil || e.NoRepack.PromptTPS <= 0 || e.Repack.PromptTPS <= 0 {
+		return 0, false
+	}
+	extra := (e.Repack.StartupMS - e.NoRepack.StartupMS) / 1000
+	gain := 1/e.NoRepack.PromptTPS - 1/e.Repack.PromptTPS
+	switch {
+	case extra <= 0:
+		return 0, true
+	case gain <= 0:
+		return -1, true
+	}
+	return int(extra / gain), true
 }
 
 // Options select what to run.
@@ -93,6 +121,49 @@ type Options struct {
 	Runtime string
 	TempDir string
 	Log     io.Writer
+	// Loader, when set, returns a backend that repacks weights at load or
+	// not, so full mode can time both.
+	Loader func(m *registry.Model, repack bool) (runtime.Backend, error)
+}
+
+// loadPrompt is about 600 tokens of prose: long enough to measure prompt
+// speed, short enough to be quick.
+var loadPrompt = strings.Repeat("The committee reviewed the quarterly budget, noted that travel costs had risen, and asked each team to explain its spending before the next meeting. ", 20) +
+	"\n\nSummarize this in one sentence."
+
+// loadRuns is how many times each way loading is timed; the best run
+// counts, since a slow one says more about the machine than the model.
+const loadRuns = 2
+
+// measureLoad starts a model, reads loadPrompt and stops it, loadRuns times.
+func measureLoad(ctx context.Context, opt Options, m *registry.Model, repack bool) (*LoadTime, error) {
+	b, err := opt.Loader(m, repack)
+	if err != nil {
+		return nil, err
+	}
+	var best *LoadTime
+	for i := 0; i < loadRuns; i++ {
+		sess, err := b.Open(ctx, m, opt.Files(m))
+		if err != nil {
+			return nil, err
+		}
+		res, err := sess.Generate(ctx, runtime.Request{Prompt: loadPrompt, MaxTokens: 8})
+		st := sess.Close()
+		if err != nil {
+			return nil, err
+		}
+		l := LoadTime{StartupMS: st.StartupMS}
+		if res.PromptMS > 0 {
+			l.PromptTPS = float64(res.PromptTokens) / res.PromptMS * 1000
+		}
+		if best == nil {
+			best = &l
+			continue
+		}
+		best.StartupMS = min(best.StartupMS, l.StartupMS)
+		best.PromptTPS = max(best.PromptTPS, l.PromptTPS)
+	}
+	return best, nil
 }
 
 // Run measures each model on the cases for its capabilities.
@@ -138,6 +209,16 @@ func Run(ctx context.Context, opt Options) ([]Entry, error) {
 		e, err := runModel(ctx, opt, m, mine, tts, tmp)
 		if err != nil {
 			return out, fmt.Errorf("%s: %w", m.ID, err)
+		}
+		if opt.Full && opt.Loader != nil && m.Backend == "llama.cpp" && m.Has("text") {
+			logf(opt.Log, "bench %s: load time without and with weight repacking", m.ID)
+			if e.NoRepack, err = measureLoad(ctx, opt, m, false); err == nil {
+				e.Repack, err = measureLoad(ctx, opt, m, true)
+			}
+			if err != nil {
+				e.NoRepack, e.Repack = nil, nil
+				e.Skipped = append(e.Skipped, "load: "+err.Error())
+			}
 		}
 		e.Mode, e.Runtime, e.Kind, e.Time = mode, opt.Runtime, registry.KindLocal, time.Now().UTC()
 		out = append(out, e)

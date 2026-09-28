@@ -351,7 +351,7 @@ func (a *app) backend(m *registry.Model) (mrt.Backend, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &mrt.Llama{Dir: dir, Threads: a.cfg.Threads, LogDir: filepath.Join(a.dataDir(), "logs")}, nil
+	return &mrt.Llama{Dir: dir, Threads: a.cfg.Threads, LogDir: filepath.Join(a.dataDir(), "logs"), Repack: a.cfg.Repack == "on"}, nil
 }
 
 // runtimeFor returns the pinned runtime a model needs and its build for

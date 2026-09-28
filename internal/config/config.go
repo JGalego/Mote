@@ -36,6 +36,9 @@ type Config struct {
 	ReuseTools   bool              `json:"reuse_tools"`
 	LlamaDir     string            `json:"llama_dir,omitempty"`
 	Threads      int               `json:"threads,omitempty"`
+	// Repack is on, off, or empty for auto: skip repacking weights for a
+	// server that answers one command, keep it for one that stays loaded.
+	Repack string `json:"repack,omitempty"`
 	Models       map[string]string `json:"models,omitempty"`
 	Tools        map[string]string `json:"tools,omitempty"`
 }
@@ -133,6 +136,9 @@ func (c Config) Validate() error {
 	if c.Profile == "" {
 		errs = append(errs, "profile is empty")
 	}
+	if c.Repack != "" && c.Repack != "on" && c.Repack != "off" {
+		errs = append(errs, "repack must be auto, on or off")
+	}
 	if c.Threads < 0 || c.Threads > 1024 {
 		errs = append(errs, "threads must be between 0 (auto) and 1024")
 	}
@@ -227,7 +233,7 @@ func Rollback(dir string, n int) (Config, error) {
 }
 
 // Keys lists settable keys for `mote config set`.
-var Keys = []string{"profile", "editor", "workspace", "data_dir", "auto_download", "reuse_tools", "llama_dir", "threads", "wake_word", "router", "memory", "models.<capability>", "tools.<name>"}
+var Keys = []string{"profile", "editor", "workspace", "data_dir", "auto_download", "reuse_tools", "llama_dir", "threads", "repack", "wake_word", "router", "memory", "models.<capability>", "tools.<name>"}
 
 // Set changes one key. An empty value clears optional keys.
 func (c *Config) Set(key, value string) error {
@@ -274,6 +280,15 @@ func (c *Config) Set(key, value string) error {
 			return err
 		}
 		c.ReuseTools = b
+	case key == "repack":
+		switch value {
+		case "", "auto":
+			c.Repack = ""
+		case "on", "off":
+			c.Repack = value
+		default:
+			return fmt.Errorf("repack expects auto, on or off")
+		}
 	case key == "threads":
 		n, err := strconv.Atoi(value)
 		if err != nil {

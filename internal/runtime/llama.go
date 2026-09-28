@@ -96,11 +96,16 @@ type Llama struct {
 	LogDir  string
 	// StartTimeout bounds model loading; default two minutes.
 	StartTimeout time.Duration
+	// Repack reorders quantized weights at load for faster CPU kernels.
+	// It costs about a second per GB of model and makes prompts read
+	// 10-25% faster, which pays off for a server that stays loaded or a
+	// long prompt, not for a short one-shot request.
+	Repack bool
 }
 
 // RequiredFlags are llama-server flags mote relies on; `mote doctor` checks
 // them so a runtime bump that renames one is caught early.
-var RequiredFlags = []string{"--mmproj", "--ctx-size", "--device", "--parallel", "--threads", "--host", "--port"}
+var RequiredFlags = []string{"--mmproj", "--ctx-size", "--device", "--parallel", "--threads", "--host", "--port", "--fit", "--no-repack"}
 
 func (l *Llama) bin(name string) string { return filepath.Join(l.Dir, exe(name)) }
 
@@ -132,6 +137,18 @@ func (l *Llama) commonArgs(m *registry.Model, files map[string]string) []string 
 	return args
 }
 
+// loadArgs skip load work mote does not need. --fit would read the whole
+// model once only to size the context and device use, which mote sets
+// itself. A model's own registry args come after these, so it can turn
+// repacking back on.
+func (l *Llama) loadArgs() []string {
+	args := []string{"--fit", "off"}
+	if !l.Repack {
+		args = append(args, "--no-repack")
+	}
+	return args
+}
+
 // Open starts llama-server on a free loopback port and waits until the model
 // is loaded.
 func (l *Llama) Open(ctx context.Context, m *registry.Model, files map[string]string) (Session, error) {
@@ -142,6 +159,7 @@ func (l *Llama) Open(ctx context.Context, m *registry.Model, files map[string]st
 	args := l.commonArgs(m, files)
 	args = append(args, "--host", "127.0.0.1", "--port", strconv.Itoa(port),
 		"--ctx-size", strconv.Itoa(m.Context), "--parallel", "1")
+	args = append(args, l.loadArgs()...)
 	args = append(args, m.Args...)
 
 	cmd := exec.Command(l.bin("llama-server"), args...)
