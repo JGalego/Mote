@@ -177,7 +177,11 @@ func (s Sandbox) Command(ctx context.Context, dir string, net bool, argv ...stri
 	cmd = exec.CommandContext(ctx, full[0], full[1:]...)
 	cmd.Dir = dir
 	if tmp != "" {
-		cmd.Env = append(os.Environ(), "TMPDIR="+tmp)
+		// The sandbox bounds files and network, not the environment: a
+		// command a model wrote could otherwise read any secret the full
+		// environment carries (API keys, tokens) and hand it back as
+		// output. Give it only what running a program needs.
+		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "TMPDIR=" + tmp}
 	}
 	return cmd, done
 }

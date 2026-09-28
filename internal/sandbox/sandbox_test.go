@@ -135,6 +135,33 @@ func run(t *testing.T, s Sandbox, dir string, net bool, mode, arg string) (strin
 	return string(out), err
 }
 
+// TestCommandDoesNotLeakTheFullEnvironment guards against a sandboxed
+// command reading a secret through its environment: bwrap and sandbox-exec
+// bound files and network, not env vars, so Command must build its own
+// minimal one rather than passing the parent's through.
+func TestCommandDoesNotLeakTheFullEnvironment(t *testing.T) {
+	t.Setenv("MOTE_TEST_SECRET", "leak-me")
+	s := Sandbox{Kind: Bwrap, Prog: "/usr/bin/bwrap"}
+	cmd, done := s.Command(context.Background(), "/work", false, "true")
+	defer done()
+	for _, e := range cmd.Env {
+		if strings.HasPrefix(e, "MOTE_TEST_SECRET=") {
+			t.Fatalf("sandboxed command inherited an unrelated environment variable: %s", e)
+		}
+	}
+	has := func(prefix string) bool {
+		for _, e := range cmd.Env {
+			if strings.HasPrefix(e, prefix) {
+				return true
+			}
+		}
+		return false
+	}
+	if !has("PATH=") || !has("HOME=") || !has("TMPDIR=") {
+		t.Errorf("sandboxed command is missing PATH, HOME or TMPDIR: %v", cmd.Env)
+	}
+}
+
 func TestTheSandboxHolds(t *testing.T) {
 	s := Detect(context.Background(), exec.LookPath)
 	if !s.Available() {
