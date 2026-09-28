@@ -86,6 +86,9 @@ type Step struct {
 	// Without Reduce the partial results are joined in order.
 	Split  string `json:"split,omitempty"`
 	Reduce string `json:"reduce,omitempty"`
+	// Empty is the error to give when the step produces nothing, such as
+	// a diff of no changes, instead of passing nothing to a model.
+	Empty string `json:"empty,omitempty"`
 	// Cmd is the argument vector of an exec step: a program on PATH, then
 	// its arguments, which may use {{name}} like a prompt. It never goes
 	// through a shell.
@@ -403,6 +406,9 @@ func (t Task) Run(ctx context.Context, env Env, args []string, opt Options) (Res
 				continue
 			}
 			return Result{Calls: r.calls}, fmt.Errorf("%s step %d (%s): %w", t.ID, i+1, s.Op, err)
+		}
+		if s.Empty != "" && strings.TrimSpace(v.Text) == "" && len(v.Files) == 0 {
+			return Result{Calls: r.calls}, fmt.Errorf("%s: %s", t.ID, s.Empty)
 		}
 		r.vars[s.As] = v
 	}

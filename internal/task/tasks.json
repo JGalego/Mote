@@ -91,6 +91,65 @@
       ]
     },
     {
+      "id": "commit",
+      "summary": "Write a commit message for the staged changes",
+      "examples": ["write a commit message", "describe my staged changes for git", "what should this commit be called"],
+      "in": ["dir"], "out": "text",
+      "params": [{"name": "dir", "kind": "dir", "default": "."}],
+      "steps": [
+        {"op": "exec", "cmd": ["git", "diff", "--cached", "--no-color", "--no-ext-diff"], "dir": "dir", "as": "diff",
+         "empty": "nothing is staged; `git add` the changes to describe first"},
+        {"op": "exec", "cmd": ["git", "log", "-10", "--format=%s"], "dir": "dir", "as": "recent", "optional": true},
+        {"op": "generate", "cap": "code", "split": "diff",
+         "system": "You write git commit messages: a subject line in the imperative mood of at most 72 characters, then, only if the change needs explaining, a blank line and a short body. Reply with the message only.",
+         "prompt": "Recent commit subjects in this repository, whose style to follow:\n{{recent}}\n\nWrite the commit message for this diff:\n\n{{diff}}",
+         "reduce": "Recent commit subjects in this repository, whose style to follow:\n{{recent}}\n\nThese are commit messages for parts of one change, separated by ---. Write the single commit message for the whole change.\n\n{{diff}}",
+         "as": "out"}
+      ]
+    },
+    {
+      "id": "review",
+      "summary": "Review uncommitted changes, or a diff against a branch, for bugs",
+      "examples": ["review my changes", "look for bugs in what I changed", "code review the diff against main"],
+      "in": ["dir"], "out": "text",
+      "params": [{"name": "dir", "kind": "dir", "default": "."}, {"name": "against", "kind": "text", "default": "HEAD"}],
+      "steps": [
+        {"op": "exec", "cmd": ["git", "diff", "--no-color", "--no-ext-diff", "{{against}}", "--"], "dir": "dir", "as": "diff",
+         "empty": "no changes to review"},
+        {"op": "generate", "cap": "code", "split": "diff",
+         "system": "You review code changes. Report only real problems: bugs, security issues, missed edge cases, misleading names. For each, one bullet naming the file and what goes wrong. If there are none, reply No problems found.",
+         "prompt": "Review this diff:\n\n{{diff}}",
+         "reduce": "These are reviews of parts of one diff, separated by ---. Merge them into one list of bullets, dropping duplicates and anything that is not a real problem. If none remain, reply No problems found.\n\n{{diff}}",
+         "as": "out"}
+      ]
+    },
+    {
+      "id": "explain",
+      "summary": "Explain an error message, a command, a log or a piece of code",
+      "examples": ["why does this build fail", "what does this error mean", "explain what this command does", "what does this code do"],
+      "in": ["text"], "out": "text",
+      "params": [{"name": "input", "kind": "input"}],
+      "steps": [
+        {"op": "read", "from": "input", "as": "what"},
+        {"op": "generate", "cap": "code", "split": "what",
+         "system": "You explain errors, commands, logs and code to a developer: what it means, the likely cause, and how to fix or use it. Be brief and concrete.",
+         "prompt": "Explain this:\n\n{{what}}",
+         "reduce": "These are notes on consecutive parts of one log or file, separated by ---. Give one brief explanation of the whole: what went wrong, the likely cause, and how to fix it.\n\n{{what}}",
+         "as": "out"}
+      ]
+    },
+    {
+      "id": "ocr",
+      "summary": "Read the text in an image, such as a photo of a page or a screenshot",
+      "examples": ["copy the text out of this screenshot", "transcribe this photo of a page", "what does this scanned letter say word for word"],
+      "in": ["image"], "out": "text",
+      "params": [{"name": "image", "kind": "file"}],
+      "steps": [
+        {"op": "generate", "cap": "vision", "images": "image",
+         "prompt": "Transcribe all the text in this image exactly as written, keeping line breaks and reading order. Reply with the text only.", "as": "out"}
+      ]
+    },
+    {
       "id": "describe",
       "summary": "Describe an image or answer a question about it",
       "examples": ["what is in this picture", "read the sign in this photo"],

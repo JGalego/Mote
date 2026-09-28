@@ -28,6 +28,10 @@ mote runs X-to-Y AI tasks (text, code, images, audio, video, files) on your CPU 
   - [extract](#extract---)
   - [summarize](#summarize---)
   - [translate](#translate---)
+  - [commit](#commit---)
+  - [review](#review---)
+  - [explain](#explain---)
+  - [ocr](#ocr---)
   - [describe](#describe-----)
   - [transcribe](#transcribe---)
   - [speak](#speak---)
@@ -157,6 +161,38 @@ mote pipe "transcribe entrevista.mp3 | translate English"
 ```
 
 Long documents are translated in parts that each fit one reply, then joined in order.
+
+### commit 🗂️ → 📝
+
+`mote run commit [DIR]` — Write a commit message for the staged changes, in the style of the repository's recent commits.
+
+```sh
+git add -p && git commit -e -m "$(mote run commit)"
+mote pipe "commit | sh: git commit -F -"
+```
+
+### review 🗂️ → 📝
+
+`mote run review [DIR] [AGAINST]` — Review uncommitted changes, or the diff against a branch, for bugs.
+
+```sh
+mote run review                 # everything changed since HEAD
+mote run review . main          # this branch against main
+```
+
+### explain 📝 → 📝
+
+`mote run explain INPUT` — Explain an error message, a command, a log or a piece of code.
+
+```sh
+mote run explain "error[E0382]: borrow of moved value: \`v\`"
+cargo build 2>&1 | mote run explain -
+mote run explain deploy.sh
+```
+
+### ocr 📷 → 📝
+
+`mote run ocr IMAGE` — Read the text in an image, such as a photo of a page or a screenshot, word for word.
 
 ### describe 📷 + 📝 → 📝
 

@@ -52,7 +52,9 @@ so a value is always exactly one argument. An argument that is only a
 reference to an unset optional value is dropped. A value starting with `-`
 is refused unless a literal `--` comes before it in `cmd`, since it would
 otherwise reach the program as an option; put `--` before the values of any
-task a model may call. Output is capped at 1 MiB, and `mote tasks` reports
+task a model may call. `"empty": "MESSAGE"` on any step stops the task with
+that message when the step produces nothing, as `commit` does when nothing
+is staged, rather than asking a model about nothing. Output is capped at 1 MiB, and `mote tasks` reports
 whether the program is installed. See `examples/tools.json`. A task that can
 change things (writes, deletes, sends) should set `"asks": true`: typed with
 `mote run` it runs as usual, but chosen by a model in `mote agent` or
