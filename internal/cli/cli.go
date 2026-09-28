@@ -455,16 +455,25 @@ func installHintOn(tool, goos string) string {
 	// Packages named differently from the program they install. Tools
 	// wrapped by exec tasks can be anything, so an unknown one gets general
 	// advice rather than a guessed package name.
-	pkg, known := map[string]string{"ffmpeg": "ffmpeg", "ffprobe": "ffmpeg", "git": "git", "rg": "ripgrep", "jq": "jq"}[tool]
+	pkg, known := map[string]string{"ffmpeg": "ffmpeg", "ffprobe": "ffmpeg", "git": "git", "rg": "ripgrep", "jq": "jq",
+		"pdftotext": "poppler-utils", "pdftoppm": "poppler-utils"}[tool]
+	general := "install " + tool + " with your package manager, or set tools." + tool + " to its path"
 	if !known {
-		return "install " + tool + " with your package manager, or set tools." + tool + " to its path"
+		return general
 	}
 	switch goos {
 	case "darwin":
+		if pkg == "poppler-utils" {
+			pkg = "poppler" // Homebrew's name for it
+		}
 		return "install it with `brew install " + pkg + "`"
 	case "windows":
-		return "install it with `winget install " + map[string]string{
-			"ffmpeg": "Gyan.FFmpeg", "git": "Git.Git", "ripgrep": "BurntSushi.ripgrep.MSVC", "jq": "jqlang.jq"}[pkg] + "`"
+		id, ok := map[string]string{
+			"ffmpeg": "Gyan.FFmpeg", "git": "Git.Git", "ripgrep": "BurntSushi.ripgrep.MSVC", "jq": "jqlang.jq"}[pkg]
+		if !ok {
+			return general
+		}
+		return "install it with `winget install " + id + "`"
 	}
 	return "install it with your package manager, e.g. `sudo apt install " + pkg + "`"
 }

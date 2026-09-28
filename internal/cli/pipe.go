@@ -174,7 +174,7 @@ func bind(t task.Task, args []string, in task.Value, first bool) ([][]string, er
 			t.ID, pipeMarker)
 	}
 	p := t.Params[len(args)]
-	if p.Kind != "text" && len(in.Files) == 0 {
+	if !p.TakesText() && len(in.Files) == 0 {
 		return nil, usagef("%s needs a %s for %s, but the previous stage produced text; write it to a file first",
 			t.ID, p.Kind, p.Name)
 	}

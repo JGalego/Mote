@@ -178,7 +178,7 @@ func (a *app) listen(ctx context.Context, args []string) error {
 	if !ok {
 		return usagef("unknown task %q; see `mote tasks`", id)
 	}
-	if len(t.Params) == 0 || t.Params[0].Kind != "text" {
+	if len(t.Params) == 0 || !t.Params[0].TakesText() {
 		return usagef("%s does not take spoken text as its first argument", id)
 	}
 	transcribe, ok := task.Find(tasks, "transcribe")

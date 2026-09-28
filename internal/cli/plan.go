@@ -225,7 +225,7 @@ func checkPlan(p plan, tasks []task.Task, request string, withOutput bool) ([]st
 			if i == 0 {
 				// Nothing comes before the first stage but the request, so
 				// that is what a {} there can only mean.
-				if kind != "text" {
+				if !t.Params[j].TakesText() {
 					return nil, nil, fmt.Errorf("stage 1: %s refers to a previous output, but it runs first", t.ID)
 				}
 				if arg == "-" {
@@ -235,7 +235,7 @@ func checkPlan(p plan, tasks []task.Task, request string, withOutput bool) ([]st
 				continue
 			}
 			piped = true
-			if kind != "text" && producesText(found[i-1]) {
+			if !t.Params[j].TakesText() && producesText(found[i-1]) {
 				return nil, nil, fmt.Errorf("stage %d: %s needs a %s, but %s before it produces %s",
 					i+1, t.ID, kind, found[i-1].ID, found[i-1].Out)
 			}
@@ -249,7 +249,7 @@ func checkPlan(p plan, tasks []task.Task, request string, withOutput bool) ([]st
 			}
 		} else if !piped {
 			if len(args) < len(t.Params) {
-				if next := t.Params[len(args)]; next.Kind != "text" && producesText(found[i-1]) {
+				if next := t.Params[len(args)]; !next.TakesText() && producesText(found[i-1]) {
 					return nil, nil, fmt.Errorf("stage %d: %s needs a %s, but %s before it produces %s",
 						i+1, t.ID, next.Kind, found[i-1].ID, found[i-1].Out)
 				}
@@ -259,7 +259,7 @@ func checkPlan(p plan, tasks []task.Task, request string, withOutput bool) ([]st
 				// chat "translate it to French". Small models forget the
 				// {}, so it goes after a final text argument.
 				j := len(args) - 1
-				if j < 0 || t.Params[j].Kind != "text" {
+				if j < 0 || !t.Params[j].TakesText() {
 					return nil, nil, fmt.Errorf("stage %d: %s has no argument left for the previous output", i+1, t.ID)
 				}
 				args[j] = strings.TrimRight(args[j], " \n") + "\n\n" + pipeMarker

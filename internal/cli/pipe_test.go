@@ -104,6 +104,13 @@ func TestBindPlacesThePipedValue(t *testing.T) {
 		t.Errorf("fan out: %q %v", got, err)
 	}
 
+	// An input takes text as well as a file.
+	translate := task.Task{ID: "translate", Params: []task.Param{{Name: "language", Kind: "text"}, {Name: "input", Kind: "input"}}}
+	got, err = bind(translate, []string{"French"}, task.Value{Text: "a transcript"}, false)
+	if err != nil || !reflect.DeepEqual(got, [][]string{{"French", "a transcript"}}) {
+		t.Errorf("input: %q %v", got, err)
+	}
+
 	// Text cannot stand in for a file, and a full argument list has no room.
 	if _, err := bind(describe, nil, task.Value{Text: "words"}, false); err == nil {
 		t.Error("text accepted for a file parameter")

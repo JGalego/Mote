@@ -33,7 +33,7 @@ func routable(tasks []task.Task) []task.Task {
 			continue
 		}
 		switch t.Params[0].Kind {
-		case "text", "file", "dir":
+		case "text", "file", "dir", "input":
 			out = append(out, t)
 		}
 	}
@@ -148,6 +148,17 @@ func bindRequest(t task.Task, request string) ([]string, error) {
 			}
 			args = append(args, paths[0])
 			paths = paths[1:]
+		case "input":
+			if len(paths) > 0 {
+				args = append(args, paths[0])
+				paths = paths[1:]
+				continue
+			}
+			if textUsed || strings.TrimSpace(text) == "" {
+				return args, nil
+			}
+			args = append(args, text)
+			textUsed = true
 		case "text":
 			if textUsed || strings.TrimSpace(text) == "" {
 				return args, nil

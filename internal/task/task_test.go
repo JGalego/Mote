@@ -32,7 +32,11 @@ func (b *fakeBackend) Speak(_ context.Context, _ *registry.Model, _ map[string]s
 
 func (s fakeSession) Generate(_ context.Context, req runtime.Request) (runtime.Result, error) {
 	s.b.prompts = append(s.b.prompts, req)
-	return runtime.Result{Text: s.b.reply(req), OutputTokens: 3}, nil
+	text := s.b.reply(req)
+	if req.OnToken != nil {
+		req.OnToken(text)
+	}
+	return runtime.Result{Text: text, OutputTokens: 3}, nil
 }
 func (fakeSession) Close() runtime.Stats { return runtime.Stats{} }
 

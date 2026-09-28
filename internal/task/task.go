@@ -46,12 +46,16 @@ type Task struct {
 	Source string `json:"-"`
 }
 
+// TakesText reports whether a parameter accepts text typed or piped in,
+// rather than only a path.
+func (p Param) TakesText() bool { return p.Kind == "text" || p.Kind == "input" }
+
 // Custom reports whether t was defined by the user rather than built in.
 func (t Task) Custom() bool { return t.Source != "" }
 
 type Param struct {
 	Name     string  `json:"name"`
-	Kind     string  `json:"kind"` // text, file, dir
+	Kind     string  `json:"kind"` // text, file, dir, input (a file's path or the text itself)
 	Optional bool    `json:"optional,omitempty"`
 	Default  *string `json:"default,omitempty"`
 }
@@ -73,6 +77,15 @@ type Step struct {
 	Dir        string `json:"dir,omitempty"`
 	Optional   bool   `json:"optional,omitempty"`
 	Seed       string `json:"seed,omitempty"`
+	// Plain makes a read step reduce HTML to the text a reader sees. PDF
+	// and office documents are always reduced to their text.
+	Plain bool `json:"plain,omitempty"`
+	// Split names a value that may be too long for the model's context.
+	// When it is, the step runs once per chunk of it, and Reduce, a prompt
+	// in which the same name stands for the partial results, combines them.
+	// Without Reduce the partial results are joined in order.
+	Split  string `json:"split,omitempty"`
+	Reduce string `json:"reduce,omitempty"`
 	// Cmd is the argument vector of an exec step: a program on PATH, then
 	// its arguments, which may use {{name}} like a prompt. It never goes
 	// through a shell.
@@ -239,7 +252,7 @@ var tmplRe = regexp.MustCompile(`\{\{([a-z_]+)\}\}`)
 func (t Task) validate() error {
 	defined := map[string]bool{}
 	for _, p := range t.Params {
-		if p.Kind != "text" && p.Kind != "file" && p.Kind != "dir" {
+		if p.Kind != "text" && p.Kind != "file" && p.Kind != "dir" && p.Kind != "input" {
 			return fmt.Errorf("param %s: unknown kind %q", p.Name, p.Kind)
 		}
 		if defined[p.Name] {
@@ -260,7 +273,7 @@ func (t Task) validate() error {
 				return fmt.Errorf("step %d: op %s needs a known capability, got %q", i+1, s.Op, s.Cap)
 			}
 		}
-		for _, ref := range []string{s.From, s.Images, s.Audio, s.JSONSchema, s.Dir, s.Seed} {
+		for _, ref := range []string{s.From, s.Images, s.Audio, s.JSONSchema, s.Dir, s.Seed, s.Split} {
 			if ref != "" && !defined[ref] {
 				return fmt.Errorf("step %d: %q is not defined before use", i+1, ref)
 			}
@@ -268,7 +281,13 @@ func (t Task) validate() error {
 		if err := s.validateCmd(); err != nil {
 			return fmt.Errorf("step %d: %w", i+1, err)
 		}
-		for _, m := range tmplRe.FindAllStringSubmatch(s.Prompt+s.System+strings.Join(s.Cmd, " "), -1) {
+		if s.Reduce != "" && s.Split == "" {
+			return fmt.Errorf("step %d: reduce needs split", i+1)
+		}
+		if s.Split != "" && !strings.Contains(s.Prompt, "{{"+s.Split+"}}") {
+			return fmt.Errorf("step %d: split value %q is not used in the prompt", i+1, s.Split)
+		}
+		for _, m := range tmplRe.FindAllStringSubmatch(s.Prompt+s.System+s.Reduce+strings.Join(s.Cmd, " "), -1) {
 			if !defined[m[1]] {
 				return fmt.Errorf("step %d: template references undefined %q", i+1, m[1])
 			}
@@ -392,6 +411,13 @@ func (t Task) Run(ctx context.Context, env Env, args []string, opt Options) (Res
 
 func (r *run) param(p Param, v string) (Value, error) {
 	switch p.Kind {
+	case "input":
+		// A path to a file stands for its contents, which a read step
+		// extracts; anything else is the text itself.
+		if st, err := os.Stat(v); err == nil && st.Mode().IsRegular() {
+			return Value{Text: v, Files: []string{v}}, nil
+		}
+		fallthrough
 	case "text":
 		if v == "-" && r.env.Stdin != nil {
 			b, err := io.ReadAll(io.LimitReader(r.env.Stdin, maxRead))
@@ -424,6 +450,16 @@ func (r *run) ref(s string) string {
 
 func (r *run) expand(s string) string {
 	return tmplRe.ReplaceAllStringFunc(s, func(m string) string {
+		return r.vars[m[2:len(m)-2]].Text
+	})
+}
+
+// expandWith is expand with the value name standing for text.
+func (r *run) expandWith(s, name, text string) string {
+	return tmplRe.ReplaceAllStringFunc(s, func(m string) string {
+		if k := m[2 : len(m)-2]; k == name {
+			return text
+		}
 		return r.vars[m[2:len(m)-2]].Text
 	})
 }

@@ -26,6 +26,8 @@ mote runs X-to-Y AI tasks (text, code, images, audio, video, files) on your CPU 
   - [refactor](#refactor---)
   - [doc](#doc---)
   - [extract](#extract---)
+  - [summarize](#summarize---)
+  - [translate](#translate---)
   - [describe](#describe-----)
   - [transcribe](#transcribe---)
   - [speak](#speak---)
@@ -127,9 +129,34 @@ In a clone, `go install ./cmd/mote` does the same into `$(go env GOPATH)/bin`. `
 
 ### extract 📄 → 📊
 
-`mote run extract FILE [SCHEMA]` — Extract structured JSON from a document.
+`mote run extract FILE [SCHEMA]` — Extract structured JSON from a document (text, PDF, Word, OpenDocument, PowerPoint or HTML).
 
 ![mote run extract](docs/demo/extract.gif)
+
+### summarize 📄 → 📝
+
+`mote run summarize INPUT [FOCUS]` — Summarize a document, web page or text of any length.
+
+```sh
+mote run summarize report.pdf
+mote run summarize minutes.docx "the decisions and who owns them"
+curl -s https://example.com | mote run summarize -
+mote pipe "transcribe meeting.m4a | summarize"
+```
+
+`INPUT` is a file or the text itself (`-` reads stdin). PDFs need `pdftotext` from poppler; a scanned PDF with no text layer is read page by page by the vision model, which also needs `pdftoppm` and takes a minute or more per page on a CPU. Word, OpenDocument and PowerPoint files and HTML need nothing else. Text too long for the model's context is summarised in parts, and the parts are then combined.
+
+### translate 📝 → 📝
+
+`mote run translate LANGUAGE INPUT` — Translate text or a document into another language.
+
+```sh
+mote run translate French "Where is the train station?"
+mote run translate English contrato.pdf -o contract.txt
+mote pipe "transcribe entrevista.mp3 | translate English"
+```
+
+Long documents are translated in parts that each fit one reply, then joined in order.
 
 ### describe 📷 + 📝 → 📝
 

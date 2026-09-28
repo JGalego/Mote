@@ -232,6 +232,14 @@ func (a *app) doctor() error {
 			line("warn", t, err.Error())
 		}
 	}
+	// Only PDFs need these, so a missing one is a note, not a problem.
+	for _, t := range []struct{ name, use string }{{"pdftotext", "reading PDFs"}, {"pdftoppm", "reading scanned PDFs"}} {
+		if p, err := a.tool(t.name); err == nil {
+			line("ok", t.name, p)
+		} else {
+			line("warn", t.name, "missing, only needed for "+t.use+"; "+installHint(t.name))
+		}
+	}
 	// Only mote agent --allow-sh uses it, so a missing one is a warning.
 	if sb := sandbox.Detect(context.Background(), exec.LookPath); sb.Available() {
 		line("ok", "sandbox", string(sb.Kind)+" ("+sb.Prog+"), for the agent's shell")

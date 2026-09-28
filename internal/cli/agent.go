@@ -79,7 +79,10 @@ func (a *app) taskTool(t task.Task, env task.Env) agentTool {
 	for i, p := range t.Params {
 		ps[i] = prop{p.Name, map[string]any{"type": "string"}}
 		names[i] = p.Name
-		if p.Kind != "text" {
+		switch p.Kind {
+		case "input":
+			names[i] += ": file path or text"
+		case "file", "dir":
 			names[i] += ": " + p.Kind + " path"
 		}
 		if !required(p) {

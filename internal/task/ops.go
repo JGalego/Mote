@@ -79,7 +79,10 @@ func opRead(r *run, s Step) (Value, error) {
 	if err != nil {
 		return Value{}, err
 	}
-	txt, err := readText(in.Files[0])
+	if len(in.Files) == 0 { // an input given as text
+		return Value{Text: in.Text}, nil
+	}
+	txt, err := r.readDoc(in.Files[0], s.Plain)
 	return Value{Text: txt}, err
 }
 
@@ -119,10 +122,12 @@ func opGenerate(r *run, s Step) (Value, error) {
 		return Value{}, err
 	}
 	stream := r.env.Stream != nil && s.As == "out" && !s.Each
-	call := func(req runtime.Request) (string, error) {
-		done := r.status("thinking with " + m.ID)
+	// call runs one request; live streams its reply to the terminal, and
+	// part says which piece of a split input it is for.
+	call := func(req runtime.Request, live bool, part string) (string, error) {
+		done := r.status("thinking with " + m.ID + part)
 		var sf *streamFilter
-		if stream {
+		if live {
 			sf = &streamFilter{after: m.OutputAfter, fences: s.Fences == "strip", lang: r.env.Lang, emit: func(t string) {
 				if done != nil {
 					done(true)
@@ -139,7 +144,7 @@ func opGenerate(r *run, s Step) (Value, error) {
 		if done != nil {
 			done(err == nil)
 		}
-		if stream && err == nil {
+		if live && err == nil {
 			r.streamed = true
 		}
 		if err != nil {
@@ -150,20 +155,26 @@ func opGenerate(r *run, s Step) (Value, error) {
 	}
 
 	var text string
-	if s.Each && len(images) > 1 {
+	switch {
+	case s.Each && len(images) > 1:
 		var lines []string
 		for i, img := range images {
 			req.Images = []string{img}
-			t, err := call(req)
+			t, err := call(req, false, "")
 			if err != nil {
 				return Value{}, err
 			}
 			lines = append(lines, fmt.Sprintf("%d. %s", i+1, strings.ReplaceAll(t, "\n", " ")))
 		}
 		text = strings.Join(lines, "\n")
-	} else {
+	case s.Split != "":
 		req.Images = images
-		if text, err = call(req); err != nil {
+		if text, err = r.splitGenerate(s, m.Context, req, stream, call); err != nil {
+			return Value{}, err
+		}
+	default:
+		req.Images = images
+		if text, err = call(req, stream, ""); err != nil {
 			return Value{}, err
 		}
 	}
@@ -182,6 +193,123 @@ func opGenerate(r *run, s Step) (Value, error) {
 		text = string(b)
 	}
 	return Value{Text: text}, nil
+}
+
+// maxReduce bounds how many rounds of combining partial results a split
+// step runs before it cuts what is left to fit.
+const maxReduce = 3
+
+// splitGenerate runs a step whose Split value may not fit the model's
+// context: once when it fits, else once per chunk, then the Reduce prompt
+// over the partial results, itself in chunks while they are still too long.
+// Without Reduce the partial results are joined, and all of them stream.
+func (r *run) splitGenerate(s Step, ctxTokens int, req runtime.Request, stream bool,
+	call func(runtime.Request, bool, string) (string, error)) (string, error) {
+	whole := r.vars[s.Split].Text
+	size := chunkChars(ctxTokens, req.System, r.expandWith(s.Prompt, s.Split, ""), req.MaxTokens)
+	if size <= 0 {
+		return call(req, stream, "")
+	}
+	if s.Reduce == "" && req.MaxTokens > 0 && size > req.MaxTokens*2 {
+		// Joined parts are the answer, each about as long as its input
+		// (a translation), so each must also fit in one reply.
+		size = req.MaxTokens * 2
+	}
+	if len(whole) <= size {
+		return call(req, stream, "")
+	}
+	chunks := Chunk(whole, size)
+	var parts []string
+	for i, c := range chunks {
+		req.Prompt = r.expandWith(s.Prompt, s.Split, c)
+		live := stream && s.Reduce == ""
+		if live && i > 0 {
+			r.env.Stream("\n\n")
+		}
+		t, err := call(req, live, fmt.Sprintf(" (part %d of %d)", i+1, len(chunks)))
+		if err != nil {
+			return "", err
+		}
+		parts = append(parts, strings.TrimSpace(t))
+	}
+	if s.Reduce == "" {
+		return strings.Join(parts, "\n\n"), nil
+	}
+	req.Images = nil // the pictures went into the partial results
+	size = chunkChars(ctxTokens, req.System, r.expandWith(s.Reduce, s.Split, ""), req.MaxTokens)
+	for round := 1; ; round++ {
+		joined := strings.Join(parts, "\n\n---\n\n")
+		if len(joined) <= size || round > maxReduce {
+			req.Prompt = r.expandWith(s.Reduce, s.Split, cutRunes(joined, size))
+			return call(req, stream, " (combining)")
+		}
+		groups := Chunk(joined, size)
+		parts = nil
+		for i, g := range groups {
+			req.Prompt = r.expandWith(s.Reduce, s.Split, g)
+			t, err := call(req, false, fmt.Sprintf(" (combining %d of %d)", i+1, len(groups)))
+			if err != nil {
+				return "", err
+			}
+			parts = append(parts, strings.TrimSpace(t))
+		}
+	}
+}
+
+// chunkChars is how many characters of input fit beside a prompt in a
+// context of ctxTokens, leaving room for the reply. Three characters to a
+// token keeps a margin for code and languages other than English. Zero
+// means the context is unknown, and nothing is split.
+func chunkChars(ctxTokens int, system, prompt string, reply int) int {
+	if ctxTokens <= 0 {
+		return 0
+	}
+	free := ctxTokens - reply - (len(system)+len(prompt))/3 - 256
+	if free < 256 {
+		free = 256
+	}
+	return free * 3
+}
+
+// Chunk splits text into pieces of at most size bytes, breaking between
+// paragraphs where it can, then between lines, then between words.
+func Chunk(text string, size int) []string {
+	if size <= 0 || len(text) <= size {
+		return []string{text}
+	}
+	var out []string
+	var cur strings.Builder
+	flush := func() {
+		if t := strings.TrimSpace(cur.String()); t != "" {
+			out = append(out, t)
+		}
+		cur.Reset()
+	}
+	add := func(piece string) {
+		if cur.Len() > 0 && cur.Len()+len(piece) > size {
+			flush()
+		}
+		cur.WriteString(piece)
+	}
+	for _, para := range strings.SplitAfter(text, "\n\n") {
+		if len(para) <= size {
+			add(para)
+			continue
+		}
+		for _, line := range strings.SplitAfter(para, "\n") {
+			for len(line) > size {
+				head := cutRunes(line, size)
+				if i := strings.LastIndexAny(head, " \t"); i > size/2 {
+					head = head[:i+1]
+				}
+				add(head)
+				line = line[len(head):]
+			}
+			add(line)
+		}
+	}
+	flush()
+	return out
 }
 
 // streamFilter shapes streamed tokens for display: it waits for a model's

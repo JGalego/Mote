@@ -55,11 +55,39 @@
       "in": ["text"], "out": "data",
       "params": [{"name": "file", "kind": "file"}, {"name": "schema", "kind": "file", "optional": true}],
       "steps": [
-        {"op": "read", "from": "file", "as": "doc"},
+        {"op": "read", "from": "file", "plain": true, "as": "doc"},
         {"op": "read", "from": "schema", "as": "schema_text", "optional": true},
         {"op": "generate", "cap": "extract", "json_schema": "schema_text",
          "system": "You extract facts from documents into JSON. Use only information present in the document.",
          "prompt": "Extract the key fields from this document as JSON.\n\n{{doc}}", "as": "out"}
+      ]
+    },
+    {
+      "id": "summarize",
+      "summary": "Summarize a document, web page or text of any length",
+      "examples": ["summarise this report", "give me the gist of this pdf", "tl;dr of this article", "sum up these meeting notes"],
+      "in": ["document"], "out": "text",
+      "params": [{"name": "input", "kind": "input"}, {"name": "focus", "kind": "text", "default": "the main points"}],
+      "steps": [
+        {"op": "read", "from": "input", "plain": true, "as": "doc"},
+        {"op": "generate", "cap": "text", "split": "doc",
+         "system": "You summarize documents faithfully and concisely, using only what they say.",
+         "prompt": "Summarize {{focus}} of this text in a short paragraph or a few bullet points.\n\n{{doc}}",
+         "reduce": "These are summaries of consecutive parts of one single document, separated by ---. Write one summary of {{focus}} of the whole document, a short paragraph or a few bullet points, without repeating yourself. Do not describe the parts separately.\n\n{{doc}}",
+         "as": "out"}
+      ]
+    },
+    {
+      "id": "translate",
+      "summary": "Translate text or a document into another language",
+      "examples": ["translate this into French", "what does this say in English", "put this document in Spanish"],
+      "in": ["text", "document"], "out": "text",
+      "params": [{"name": "language", "kind": "text"}, {"name": "input", "kind": "input"}],
+      "steps": [
+        {"op": "read", "from": "input", "plain": true, "as": "doc"},
+        {"op": "generate", "cap": "text", "split": "doc",
+         "system": "You are a translator. Reply with the translation only, keeping the formatting, names and numbers of the original.",
+         "prompt": "Translate into {{language}}:\n\n{{doc}}", "as": "out"}
       ]
     },
     {

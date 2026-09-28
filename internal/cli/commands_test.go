@@ -552,6 +552,9 @@ func TestInstallHintPerPlatform(t *testing.T) {
 		{"linux", "rg", "apt install ripgrep"},
 		{"windows", "rg", "winget install BurntSushi.ripgrep.MSVC"},
 		{"windows", "jq", "winget install jqlang.jq"},
+		{"linux", "pdftotext", "apt install poppler-utils"},
+		{"darwin", "pdftoppm", "brew install poppler"},
+		{"windows", "pdftotext", "set tools.pdftotext to its path"},
 		// A program only an exec task knows about gets no guessed package.
 		{"windows", "frobnicate", "install frobnicate with your package manager"},
 		{"linux", "frobnicate", "set tools.frobnicate to its path"},

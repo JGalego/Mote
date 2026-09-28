@@ -71,6 +71,16 @@ func TestBindRequest(t *testing.T) {
 	if _, err := bindRequest(transcribe, "transcribe the meeting"); err == nil {
 		t.Error("missing file accepted")
 	}
+	// An input takes a named file, else the words of the request.
+	summarize := task.Task{ID: "summarize", Params: []task.Param{{Name: "input", Kind: "input"}}}
+	got, err = bindRequest(summarize, "summarise "+audio)
+	if err != nil || len(got) != 1 || got[0] != audio {
+		t.Errorf("input from a file: %q %v", got, err)
+	}
+	got, err = bindRequest(summarize, "the quick brown fox")
+	if err != nil || len(got) != 1 || got[0] != "the quick brown fox" {
+		t.Errorf("input from words: %q %v", got, err)
+	}
 	// Punctuation around a path does not hide it.
 	got, err = bindRequest(transcribe, `please transcribe "`+audio+`".`)
 	if err != nil || len(got) != 1 || got[0] != audio {

@@ -17,13 +17,25 @@ install/              install.sh (Linux/macOS), install.ps1 (Windows)
 ```
 
 **A task** is data. Add an entry to `internal/task/tasks.json`: positional
-`params` (`text`, `file`, `dir`), then `steps`, each naming an `op`, its
+`params` (`text`, `file`, `dir`, or `input`, which takes a file's path or the
+text itself, `-` for stdin), then `steps`, each naming an `op`, its
 inputs and the value it produces (`as`). The last value must be `out`.
 Optional `examples` are the phrasings someone would use; `mote do` matches a
 request against each one separately, so a task is found by what it is for
 rather than by its name.
 Prompts use `{{name}}` for earlier values. `go test ./internal/task` validates
 every task (unknown ops, undefined values, unknown capabilities).
+
+**Documents** are read by the `read` op: PDFs with `pdftotext` (and, when a
+PDF has no text layer, its first 20 pages rendered by `pdftoppm` and read by
+the vision model), `.docx`, `.odt` and `.pptx` from their XML, anything else
+as text. `"plain": true` also reduces HTML to the text a reader sees; without
+it HTML is source, as `refactor` wants. A `generate` step with
+`"split": "doc"` handles a `doc` too long for the model's context: it runs
+once per chunk, then `reduce`, a prompt in which `{{doc}}` stands for the
+partial answers, combines them (in rounds, if they are long too). Without
+`reduce` the parts are joined in order, which is how `translate` works; each
+part is then also kept short enough to come back in one reply.
 
 **Your own task** needs no fork: put the same JSON in `*.json` files under
 `tasks/` in the config directory (`$MOTE_TASKS_DIR` overrides it, `mote tasks`
