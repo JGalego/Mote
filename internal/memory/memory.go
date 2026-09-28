@@ -111,7 +111,27 @@ func (s Store) Forget(n int) error {
 	if len(facts) == 0 {
 		return s.ForgetAll()
 	}
-	return os.WriteFile(s.FactsPath, []byte(strings.Join(facts, "\n")+"\n"), 0o600)
+	return writeAtomic(s.FactsPath, []byte(strings.Join(facts, "\n")+"\n"))
+}
+
+// writeAtomic replaces path's content without ever leaving it truncated or
+// half-written, unlike an open-truncate-write.
+func writeAtomic(path string, b []byte) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".tmp-*")
+	if err != nil {
+		return err
+	}
+	if _, err := tmp.Write(b); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmp.Name())
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
 }
 
 // ForgetAll deletes every fact.
