@@ -156,11 +156,16 @@ func (f Fetcher) Download(ctx context.Context, rawURL, dest, sum string, size in
 // needs to be comfortably longer than one write ever takes to stall out.
 const staleLock = 3 * time.Minute
 
+// lockPermissionRetry bounds how long acquireLock tolerates access-denied
+// opening a lock file before giving up; see the comment in acquireLock.
+const lockPermissionRetry = 2 * time.Second
+
 // acquireLock creates path exclusively, across mote processes, waiting for
 // an existing one to be removed or to go stale. touch, called periodically
 // by the holder, proves it is still working so its lock is never reclaimed
 // out from under it; release removes the lock when the holder is done.
 func acquireLock(ctx context.Context, path string) (touch, release func(), err error) {
+	var deniedSince time.Time
 	for {
 		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 		if err == nil {
@@ -168,7 +173,21 @@ func acquireLock(ctx context.Context, path string) (touch, release func(), err e
 			return func() { now := time.Now(); os.Chtimes(path, now, now) },
 				func() { os.Remove(path) }, nil
 		}
-		if !os.IsExist(err) {
+		switch {
+		case os.IsExist(err):
+			deniedSince = time.Time{}
+		case errors.Is(err, os.ErrPermission):
+			// Windows can surface a path another holder just released as
+			// access-denied rather than "already exists" while its delete is
+			// still completing; treat a short burst of that like finding the
+			// lock held, but do not let a real permission problem retry
+			// forever.
+			if deniedSince.IsZero() {
+				deniedSince = time.Now()
+			} else if time.Since(deniedSince) > lockPermissionRetry {
+				return nil, nil, err
+			}
+		default:
 			return nil, nil, err
 		}
 		if st, statErr := os.Stat(path); statErr == nil && time.Since(st.ModTime()) > staleLock {

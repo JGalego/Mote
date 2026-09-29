@@ -538,6 +538,33 @@ func TestAcquireLockWaitsForAFreshOne(t *testing.T) {
 	}
 }
 
+// TestAcquireLockGivesUpOnRealPermissionErrors guards the other side of
+// tolerating Windows' transient access-denied on a lock another holder just
+// released (see acquireLock): a permission error that never clears, because
+// the directory genuinely cannot be written to, must still fail rather than
+// retry forever.
+func TestAcquireLockGivesUpOnRealPermissionErrors(t *testing.T) {
+	if goruntime.GOOS == "windows" {
+		t.Skip("Windows does not enforce POSIX directory write permissions the same way")
+	}
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(dir, 0o755) // let TempDir's own cleanup remove it
+	lock := filepath.Join(dir, "x.lock")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	start := time.Now()
+	_, _, err := acquireLock(ctx, lock)
+	if !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("expected a permission error, got %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > lockPermissionRetry+time.Second {
+		t.Errorf("took %s to give up, want close to lockPermissionRetry (%s)", elapsed, lockPermissionRetry)
+	}
+}
+
 func TestVerifyFileReportsWhatIsWrong(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "f.bin")
