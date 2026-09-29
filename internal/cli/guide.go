@@ -131,6 +131,8 @@ func guideSystem(tasks []task.Task) string {
 		"do. Be concise, and give concrete command lines. Only use commands, flags and tasks listed " +
 		"below; never invent one that isn't there.\n\n")
 	b.WriteString(usage)
+	b.WriteString("\nFull command reference (exact flags and subcommands; never invent one not listed here):\n")
+	b.WriteString(helpReferenceText())
 	b.WriteString("\nTasks (id: in-kind(s) -> out-kind — summary):\n")
 	for _, t := range tasks {
 		fmt.Fprintf(&b, "- %s: %s -> %s — %s\n", t.ID, strings.Join(t.In, "+"), t.Out, t.Summary)

@@ -29,6 +29,30 @@ func TestGuideSystemDescribesMoteItself(t *testing.T) {
 	}
 }
 
+// TestGuideSystemHasExactFlagsNotJustTheBanner guards against the guide
+// hallucinating flags: the compact usage banner alone omits several real
+// ones (do's --router, --continue, --recall; agent's --sandbox-net; config
+// set's key names) to stay readable in a terminal, so guideSystem must also
+// include the fuller, test-checked helpTopics reference.
+func TestGuideSystemHasExactFlagsNotJustTheBanner(t *testing.T) {
+	e := newEnv(t)
+	e.setup()
+	e.install("qwen3.5-0.8b")
+	log := filepath.Join(t.TempDir(), "requests.jsonl")
+	t.Setenv("MOTE_FAKE_LOG", log)
+	code, _, errs := e.mote("what flags does do take\n/exit\n", "guide")
+	if code != 0 {
+		t.Fatalf("%d %s", code, errs)
+	}
+	reqs := fakeLog(t, log)
+	sys, _ := reqs[0]["system"].(string)
+	for _, want := range []string{"--router", "--continue", "--recall", "--sandbox-net", "models.<capability>"} {
+		if !strings.Contains(sys, want) {
+			t.Errorf("system prompt missing %q, so the guide could hallucinate it", want)
+		}
+	}
+}
+
 func TestGuideKeepsTheConversation(t *testing.T) {
 	e := newEnv(t)
 	e.setup()

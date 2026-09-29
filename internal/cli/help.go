@@ -376,6 +376,32 @@ var helpTopics = map[string]helpTopic{
 	},
 }
 
+// helpReferenceText renders every command's exact usage and subcommands as
+// plain text (no colour codes), for grounding `mote guide`'s system prompt.
+// It exists because the compact `usage` banner leaves out several real
+// flags (e.g. `do`'s --router, --continue, --recall) to stay readable in a
+// terminal, and a small model asked about them from that alone tends to
+// invent plausible-looking ones instead. helpTopics is built from the same
+// flags() calls dispatch uses and checked against it in tests, so this is
+// the accurate, if more verbose, version.
+func helpReferenceText() string {
+	var b strings.Builder
+	for _, name := range topLevelCommands {
+		h, ok := helpTopics[name]
+		if !ok {
+			continue
+		}
+		fmt.Fprintf(&b, "mote %s - %s\n", name, h.summary)
+		for _, u := range h.usage {
+			fmt.Fprintf(&b, "  %s\n", u)
+		}
+		for _, s := range h.subs {
+			fmt.Fprintf(&b, "    %s: %s\n", s.name, s.desc)
+		}
+	}
+	return b.String()
+}
+
 // hasHelpFlag reports whether args ask for help: -h or --help before a "--"
 // that would otherwise end flag parsing.
 func hasHelpFlag(args []string) bool {
