@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -625,6 +626,19 @@ func TestStorePullDownloadsWhatIsMissing(t *testing.T) {
 	}
 }
 
+// TestSDCannotChatOrSpeak locks in that an image backend fails clearly for
+// the request kinds it cannot serve, rather than being silently skipped.
+func TestSDCannotChatOrSpeak(t *testing.T) {
+	sd := &SD{}
+	m := &registry.Model{ID: "flux"}
+	if _, err := sd.Open(context.Background(), m, nil); !errors.Is(err, ErrUnsupported) {
+		t.Errorf("Open: got %v, want ErrUnsupported", err)
+	}
+	if _, err := sd.Speak(context.Background(), m, nil, "hi", "out.wav"); !errors.Is(err, ErrUnsupported) {
+		t.Errorf("Speak: got %v, want ErrUnsupported", err)
+	}
+}
+
 func TestImageMIME(t *testing.T) {
 	cases := map[string]string{
 		"a.png": "image/png", "a.PNG": "image/png",
@@ -679,6 +693,71 @@ func stubServer(t *testing.T, h http.HandlerFunc) *server {
 	return &server{
 		base: srv.URL, client: srv.Client(),
 		model: &registry.Model{ID: "m"}, exited: make(chan struct{}),
+	}
+}
+
+func TestRemoteOpen(t *testing.T) {
+	ctx := context.Background()
+	m := &registry.Model{ID: "m", Context: 512}
+
+	// The server cannot be reached, and there is no fallback: ErrUnreachable.
+	r := &Remote{URL: "http://127.0.0.1:1"}
+	if _, err := r.Open(ctx, m, nil); !errors.Is(err, ErrUnreachable) {
+		t.Errorf("unreachable, no fallback: got %v, want ErrUnreachable", err)
+	}
+
+	// A fallback is told why, and gets the chance to load the model locally.
+	var fellBack error
+	r = &Remote{URL: "http://127.0.0.1:1", Local: &Llama{Dir: t.TempDir()},
+		Fallback: func(err error) { fellBack = err }}
+	if _, err := r.Open(ctx, m, map[string]string{"model": "m.gguf"}); err == nil {
+		t.Error("expected an error: there is no llama-server binary to fall back to")
+	}
+	if !errors.Is(fellBack, ErrUnreachable) {
+		t.Errorf("fallback was not told why: %v", fellBack)
+	}
+
+	// A context already done is reported as such, not as merely unreachable.
+	cctx, cancel := context.WithCancel(ctx)
+	cancel()
+	r = &Remote{URL: "http://127.0.0.1:1"}
+	if _, err := r.Open(cctx, m, nil); !errors.Is(err, context.Canceled) {
+		t.Errorf("canceled context: got %v, want context.Canceled", err)
+	}
+
+	// The server answers but refuses the model: its own message wins.
+	refuses := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"message": "no room for m"}})
+	}))
+	defer refuses.Close()
+	r = &Remote{URL: refuses.URL}
+	if _, err := r.Open(ctx, m, nil); err == nil || err.Error() != "no room for m" {
+		t.Errorf("server error: got %v", err)
+	}
+
+	// A failure with a plain-text body is reported with the status and text.
+	broken := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}))
+	defer broken.Close()
+	r = &Remote{URL: broken.URL}
+	if _, err := r.Open(ctx, m, nil); err == nil || !strings.Contains(err.Error(), "internal error") {
+		t.Errorf("plain text error: got %v", err)
+	}
+
+	// A successful load returns a session pointed at the resident server.
+	loads := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"startup_ms": 42.0})
+	}))
+	defer loads.Close()
+	r = &Remote{URL: loads.URL}
+	sess, err := r.Open(ctx, m, nil)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if u, ok := sess.(URLer); !ok || u.URL() != loads.URL {
+		t.Errorf("session URL: got %+v", sess)
 	}
 }
 

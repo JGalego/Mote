@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -104,6 +105,28 @@ func TestDetectWithoutTheProgram(t *testing.T) {
 	missing := func(string) (string, error) { return "", exec.ErrNotFound }
 	if s := Detect(context.Background(), missing); s.Available() && s.Kind == Bwrap {
 		t.Error("bwrap detected without bwrap")
+	}
+}
+
+// TestDetectWhenBwrapCannotRun covers the other reason a machine has no
+// working sandbox: bwrap is installed, but its probe fails (unprivileged
+// user namespaces switched off, as containers often do).
+func TestDetectWhenBwrapCannotRun(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("this simulates bwrap, which Detect only looks for on linux")
+	}
+	fake := filepath.Join(t.TempDir(), "bwrap")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	look := func(name string) (string, error) {
+		if name == "bwrap" {
+			return fake, nil
+		}
+		return "", exec.ErrNotFound
+	}
+	if s := Detect(context.Background(), look); s.Available() {
+		t.Error("a bwrap whose probe fails should not be reported as available")
 	}
 }
 
