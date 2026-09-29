@@ -92,6 +92,7 @@ In a clone, `go install ./cmd/mote` does the same into `$(go env GOPATH)/bin`. `
 | `mote setup [--profile P] [--yes] [--gpu\|--no-gpu]` | Install the runtime and the models for a profile (`small`, `balanced`, `quality`); asks about GPU offload when one is detected |
 | `mote run TASK [ARGS...]` | Run a task, e.g. `mote run chat "Explain what a mutex is"`; `-o FILE` writes the output, `--model ID` overrides the model, `--apply` writes `patch` changes |
 | `mote chat [--system "..."]` | Talk with the text model; it sees the earlier turns. `/new` starts over, `/exit` or Ctrl-D ends, a line ending in `\` continues, Tab completes a `/command` |
+| `mote guide` | Ask the text model about mote itself: which command or task fits a goal, or whether one task's output can feed another's input |
 | `mote pipe "A \| B \| sh: cmd"` | Chain tasks in one process, each stage receiving the last one's value: `{}` or `-` places it, `sh:` runs a shell command, `--trace` shows each step |
 | `mote do "REQUEST"` | Pick the task that fits a request written in plain words and run it; `--router embed` chooses with the encoder, `--plan` writes a pipeline of several tasks, `--dry-run` shows the choice |
 | `mote agent "GOAL"` | Work towards a goal in steps, calling tasks and local tools and reading what they return; `--tools` picks them, `--allow-sh` offers the shell |

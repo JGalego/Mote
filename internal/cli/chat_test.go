@@ -63,6 +63,57 @@ func TestChatKeepsTheConversation(t *testing.T) {
 	}
 }
 
+func TestChatContinuePrimesFromRememberedHistory(t *testing.T) {
+	e := newEnv(t)
+	e.setup()
+	e.install("qwen3.5-0.8b")
+	e.mote("", "config", "set", "memory", "true")
+	e.mote("", "run", "chat", "what is a mutex")
+
+	log := filepath.Join(t.TempDir(), "requests.jsonl")
+	t.Setenv("MOTE_FAKE_LOG", log)
+	code, _, errs := e.mote("go on\n/exit\n", "chat", "--continue")
+	if code != 0 {
+		t.Fatalf("%d %s", code, errs)
+	}
+	reqs := fakeLog(t, log)
+	if len(reqs) != 1 {
+		t.Fatalf("%d requests", len(reqs))
+	}
+	if sys, _ := reqs[0]["system"].(string); !strings.Contains(sys, "Earlier, asked: what is a mutex") {
+		t.Errorf("--continue did not prime the system prompt: %q", sys)
+	}
+}
+
+func TestChatRecallSearchesEachTurn(t *testing.T) {
+	e := newEnv(t)
+	e.setup()
+	e.install("qwen3.5-0.8b")
+	e.install("bge-small-en-1.5")
+	e.mote("", "config", "set", "memory", "true")
+	e.mote("", "run", "chat", "how do I pickle a cucumber")
+	e.mote("", "run", "chat", "write a go mutex example")
+
+	log := filepath.Join(t.TempDir(), "requests.jsonl")
+	t.Setenv("MOTE_FAKE_LOG", log)
+	in := "tell me more about a mutex\npickle it again\n/exit\n"
+	code, _, errs := e.mote(in, "chat", "--recall")
+	if code != 0 {
+		t.Fatalf("%d %s", code, errs)
+	}
+	reqs := fakeLog(t, log)
+	if len(reqs) != 2 {
+		t.Fatalf("%d requests", len(reqs))
+	}
+	// Recall runs fresh each turn, against that turn's own question.
+	if sys, _ := reqs[0]["system"].(string); !strings.Contains(sys, "mutex example") {
+		t.Errorf("first turn did not recall the mutex exchange: %q", sys)
+	}
+	if sys, _ := reqs[1]["system"].(string); !strings.Contains(sys, "cucumber") {
+		t.Errorf("second turn did not recall the cucumber exchange: %q", sys)
+	}
+}
+
 func TestReadTurn(t *testing.T) {
 	a := &app{ue: ui.New(io.Discard)}
 

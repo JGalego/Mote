@@ -65,7 +65,8 @@ const usage = `mote - local, CPU-only X-to-Y AI tasks
 Usage:
   mote setup [--yes] [--config FILE] [--profile P] [--data-dir DIR] [--auto-download] [--no-download] [--gpu|--no-gpu]
   mote run TASK [ARGS...] [-o OUTPUT] [--apply] [--model ID] [--profile P]
-  mote chat [--system "INSTRUCTIONS"] [--model ID]
+  mote chat [--system "INSTRUCTIONS"] [--model ID] [--continue] [--recall]
+  mote guide [--model ID]
   mote index [DIR...] | status | rm DIR|--all
   mote ask "QUESTION" [--in DIR] [--top N] [--sources]
   mote pipe "TASK ARGS | TASK ARGS | sh: COMMAND" [-o OUTPUT] [--trace] [--model ID]
@@ -100,6 +101,7 @@ Examples:
   mote agent "how many Go files are in this repository?" --allow-sh
   mote remember "I write Go, and prefer short answers"
   mote run chat "and in Python?" --continue
+  mote guide
 `
 
 // usageError marks bad invocations (exit code 2).
@@ -213,7 +215,7 @@ func (a *app) dispatch(ctx context.Context, args []string) error {
 		return a.completeCmd(rest)
 	}
 	switch cmd {
-	case "run", "pipe", "listen", "do", "agent", "memory", "remember", "forget", "models", "bench", "tune", "serve", "chat", "index", "ask":
+	case "run", "pipe", "listen", "do", "agent", "memory", "remember", "forget", "models", "bench", "tune", "serve", "chat", "index", "ask", "guide":
 	default:
 		return usagef("unknown command %q; see `mote help`", cmd)
 	}
@@ -252,6 +254,8 @@ func (a *app) dispatch(ctx context.Context, args []string) error {
 		return a.indexCmd(ctx, rest)
 	case "ask":
 		return a.askCmd(ctx, rest)
+	case "guide":
+		return a.guideCmd(ctx, rest)
 	}
 	return usagef("unknown command %q; see `mote help`", cmd)
 }

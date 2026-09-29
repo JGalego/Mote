@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/jgalego/mote/internal/memory"
 	mrt "github.com/jgalego/mote/internal/runtime"
 	"github.com/jgalego/mote/internal/task"
 	"github.com/jgalego/mote/internal/ui"
@@ -18,12 +19,12 @@ const chatHelp = "/new starts over · /exit or Ctrl-D ends · end a line with \\
 // sees the earlier turns. Each line of input is a turn, so it works on a
 // pipe as well as in a terminal.
 func (a *app) chatCmd(ctx context.Context, args []string) error {
-	vals, pos, err := flags(args, []string{"--model", "--profile", "--system"}, nil)
+	vals, pos, err := flags(args, []string{"--model", "--profile", "--system"}, []string{"--continue", "--recall"})
 	if err != nil {
 		return err
 	}
 	if len(pos) > 0 {
-		return usagef(`usage: mote chat [--system "INSTRUCTIONS"] [--model ID]`)
+		return usagef(`usage: mote chat [--system "INSTRUCTIONS"] [--model ID] [--continue] [--recall]`)
 	}
 	profile, err := a.selectModels(vals)
 	if err != nil {
@@ -32,11 +33,14 @@ func (a *app) chatCmd(ctx context.Context, args []string) error {
 	sessions := map[string]mrt.Session{}
 	defer task.CloseSessions(sessions)
 	env := a.env(profile, sessions)
-	remembered, err := a.memoryFor(ctx, "", nil, profile, sessions)
+	// --recall searches per turn, against what is actually being asked, so
+	// only --continue (which needs no query) is resolved once up front.
+	remembered, err := a.memoryFor(ctx, "", map[string]string{"--continue": vals["--continue"]}, profile, sessions)
 	if err != nil {
 		return err
 	}
 	system := strings.TrimSpace(remembered + "\n\n" + vals["--system"])
+	recall := vals["--recall"] == "true"
 	m, files, err := env.Resolve(ctx, "text")
 	if err != nil {
 		return err
@@ -90,8 +94,21 @@ func (a *app) chatCmd(ctx context.Context, args []string) error {
 			fmt.Fprintln(a.err, chatHelp)
 			continue
 		}
-		req := mrt.Request{System: system, Prompt: line, Temperature: 0.2, MaxTokens: 2048}
-		req.History = fitTurns(turns, m.Context, req.MaxTokens, len(system)+len(line))
+		turnSystem := system
+		if recall {
+			hits, err := a.searchMemory(ctx, line, defaultRecall, profile, sessions)
+			if err != nil {
+				fmt.Fprintf(a.err, "%s %v\n", a.ue.Fail(), err)
+			} else if len(hits) > 0 {
+				var recalled []memory.Entry
+				for _, h := range hits {
+					recalled = append(recalled, h.Entry)
+				}
+				turnSystem = strings.TrimSpace(system + "\n\n" + memory.Prompt(nil, recalled))
+			}
+		}
+		req := mrt.Request{System: turnSystem, Prompt: line, Temperature: 0.2, MaxTokens: 2048}
+		req.History = fitTurns(turns, m.Context, req.MaxTokens, len(turnSystem)+len(line))
 		streamed := false
 		think := a.status("thinking with " + m.ID)
 		if a.uo.Live() {
