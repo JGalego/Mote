@@ -113,15 +113,15 @@ func (a *app) routeText(ctx context.Context, request string, tasks []task.Task, 
 	return picked.Task, nil
 }
 
-// bindRequest turns a request into arguments for the chosen task: words
-// naming something on disk fill its file and dir parameters, in order, and
-// what remains fills its first text parameter. A task with no file
-// parameters gets the request as written, since nothing was taken out of it.
-func bindRequest(t task.Task, request string) ([]string, error) {
-	var paths, rest []string
+// pathWord strips the punctuation a word picks up in a sentence, so
+// "invoice.txt?" still stats as "invoice.txt".
+func pathWord(w string) string { return strings.Trim(w, `"'.,;:!?`) }
+
+// splitPaths pulls the words of a request that already name something on
+// disk from the words that do not, in the order they appear.
+func splitPaths(request string) (paths, rest []string) {
 	for _, w := range strings.Fields(request) {
-		clean := strings.Trim(w, `"'.,;:!?`)
-		if clean != "" {
+		if clean := pathWord(w); clean != "" {
 			if _, err := os.Stat(clean); err == nil {
 				paths = append(paths, clean)
 				continue
@@ -129,6 +129,15 @@ func bindRequest(t task.Task, request string) ([]string, error) {
 		}
 		rest = append(rest, w)
 	}
+	return paths, rest
+}
+
+// bindRequest turns a request into arguments for the chosen task: words
+// naming something on disk fill its file and dir parameters, in order, and
+// what remains fills its first text parameter. A task with no file
+// parameters gets the request as written, since nothing was taken out of it.
+func bindRequest(t task.Task, request string) ([]string, error) {
+	paths, rest := splitPaths(request)
 	text := request
 	if len(paths) > 0 {
 		text = strings.Join(rest, " ")
@@ -168,6 +177,21 @@ func bindRequest(t task.Task, request string) ([]string, error) {
 		}
 	}
 	return args, nil
+}
+
+// missingWords is the words of a request that name nothing on disk,
+// stripped of punctuation, in the order they appear. It is what a failed
+// bind goes looking for elsewhere, via resolveMissingFile.
+func missingWords(request string) []string {
+	var out []string
+	for _, w := range strings.Fields(request) {
+		if clean := pathWord(w); clean != "" {
+			if _, err := os.Stat(clean); err != nil {
+				out = append(out, clean)
+			}
+		}
+	}
+	return out
 }
 
 // do implements `mote do`.
@@ -232,7 +256,21 @@ func (a *app) do(ctx context.Context, args []string) error {
 	}
 	taskArgs, err := bindRequest(t, request)
 	if err != nil {
-		return err
+		var ue usageError
+		if !errors.As(err, &ue) {
+			return err
+		}
+		resolved, rerr := a.resolveMissingFile(request, missingWords(request), vals)
+		if rerr != nil {
+			return rerr
+		}
+		if resolved == "" {
+			return err
+		}
+		request = resolved
+		if taskArgs, err = bindRequest(t, request); err != nil {
+			return err
+		}
 	}
 	fmt.Fprintf(a.err, "%s %s\n", a.ue.Arrow(),
 		a.ue.Dim("mote run "+t.ID+" "+strings.Join(quoteArgs(taskArgs), " ")))

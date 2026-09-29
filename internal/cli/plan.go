@@ -313,6 +313,17 @@ func planCommand(stages []stage) string {
 // doPlan implements `mote do --plan`.
 func (a *app) doPlan(ctx context.Context, request string, tasks []task.Task, vals map[string]string, profile string, sessions map[string]mrt.Session) error {
 	var p plan
+	// A word shaped like a filename that does not stat here gets the same
+	// search nearby and confirm as do's own binding. This has to happen
+	// before namedFiles: the schema below only ever offers a file-taking
+	// task the files it finds, so a name that resolves to a subdirectory
+	// must be found before the plan is generated, not after it is rejected
+	// for lacking a file to use.
+	if resolved, err := a.resolveMissingFile(request, candidateFilenames(request), vals); err != nil {
+		return err
+	} else if resolved != "" {
+		request = resolved
+	}
 	files := namedFiles(request)
 	if err := a.generateJSON(ctx, profile, sessions, planSystem, planPrompt(request, tasks, files), planSchema(tasks, files), &p); err != nil {
 		return fmt.Errorf("planning: %w", err)

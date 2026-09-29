@@ -1,12 +1,15 @@
 package cli
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/jgalego/mote/internal/task"
+	"github.com/jgalego/mote/internal/ui"
 )
 
 func TestRoutableSkipsTasksARequestCannotDrive(t *testing.T) {
@@ -85,6 +88,192 @@ func TestBindRequest(t *testing.T) {
 	got, err = bindRequest(transcribe, `please transcribe "`+audio+`".`)
 	if err != nil || len(got) != 1 || got[0] != audio {
 		t.Errorf("quoted path: %q %v", got, err)
+	}
+}
+
+// chdir moves the process into dir for the test and restores the original
+// working directory afterwards, since filesystem search walks relative
+// paths from wherever the process happens to be running.
+func chdir(t *testing.T, dir string) {
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(old) })
+}
+
+func TestResolveMissingFileFindsAFileInASubdirectory(t *testing.T) {
+	dir := t.TempDir()
+	os.Mkdir(filepath.Join(dir, "examples"), 0o755)
+	os.WriteFile(filepath.Join(dir, "examples", "invoice.txt"), []byte("Total: 42 EUR"), 0o644)
+	chdir(t, dir)
+
+	var errb bytes.Buffer
+	a := &app{err: &errb, ue: ui.New(&errb)}
+
+	// --yes uses the single match without asking, the same way it skips
+	// confirmChosen's ask.
+	got, err := a.resolveMissingFile("what's the value in invoice.txt?", missingWords("what's the value in invoice.txt?"), map[string]string{"--yes": "true"})
+	if err != nil {
+		t.Fatalf("resolveMissingFile: %v", err)
+	}
+	want := "what's the value in " + filepath.Join("examples", "invoice.txt") + "?"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+
+	// A word with nothing on disk anywhere leaves the request alone rather
+	// than erroring: the caller falls back to the original bindRequest error.
+	got, err = a.resolveMissingFile("summarise nonexistent.txt", missingWords("summarise nonexistent.txt"), map[string]string{"--yes": "true"})
+	if err != nil || got != "" {
+		t.Errorf("no match found: %q %v", got, err)
+	}
+}
+
+func TestResolveMissingFileAsksBeforeUsingAMatch(t *testing.T) {
+	dir := t.TempDir()
+	os.Mkdir(filepath.Join(dir, "examples"), 0o755)
+	os.WriteFile(filepath.Join(dir, "examples", "invoice.txt"), []byte("x"), 0o644)
+	chdir(t, dir)
+
+	var errb bytes.Buffer
+	a := &app{err: &errb, ue: ui.New(&errb), tty: true, in: strings.NewReader("y\n")}
+	got, err := a.resolveMissingFile("read invoice.txt", missingWords("read invoice.txt"), nil)
+	if err != nil {
+		t.Fatalf("resolveMissingFile: %v", err)
+	}
+	want := "read " + filepath.Join("examples", "invoice.txt")
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	if !strings.Contains(errb.String(), "invoice.txt") {
+		t.Errorf("did not ask about the match: %s", errb.String())
+	}
+
+	// Declining leaves the request unresolved.
+	a = &app{err: &errb, ue: ui.New(&errb), tty: true, in: strings.NewReader("n\n")}
+	got, err = a.resolveMissingFile("read invoice.txt", missingWords("read invoice.txt"), nil)
+	if err != nil || got != "" {
+		t.Errorf("decline should give up: %q %v", got, err)
+	}
+
+	// With no terminal to ask on and no --yes, it fails with the candidate
+	// named rather than guessing or hanging on a read.
+	a = &app{err: &errb, ue: ui.New(&errb), tty: false}
+	if _, err := a.resolveMissingFile("read invoice.txt", missingWords("read invoice.txt"), nil); err == nil {
+		t.Error("non-interactive run should refuse to guess")
+	}
+}
+
+func TestResolveMissingFileListsSeveralMatches(t *testing.T) {
+	dir := t.TempDir()
+	for _, sub := range []string{"a", "b"} {
+		os.Mkdir(filepath.Join(dir, sub), 0o755)
+		os.WriteFile(filepath.Join(dir, sub, "notes.txt"), []byte("x"), 0o644)
+	}
+	chdir(t, dir)
+
+	var errb bytes.Buffer
+	a := &app{err: &errb, ue: ui.New(&errb), tty: true, in: strings.NewReader("2\n")}
+	got, err := a.resolveMissingFile("read notes.txt", missingWords("read notes.txt"), nil)
+	if err != nil {
+		t.Fatalf("resolveMissingFile: %v", err)
+	}
+	want := "read " + filepath.Join("b", "notes.txt")
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestResolveTaskArgsFindsAnArgumentElsewhere(t *testing.T) {
+	dir := t.TempDir()
+	os.Mkdir(filepath.Join(dir, "src"), 0o755)
+	os.WriteFile(filepath.Join(dir, "src", "main.go"), []byte("package main"), 0o644)
+	chdir(t, dir)
+
+	doc := task.Task{ID: "doc", Params: []task.Param{{Name: "file", Kind: "file"}}}
+	var errb bytes.Buffer
+	a := &app{err: &errb, ue: ui.New(&errb)}
+
+	got, err := a.resolveTaskArgs(doc, []string{"main.go"}, map[string]string{"--yes": "true"})
+	if err != nil {
+		t.Fatalf("resolveTaskArgs: %v", err)
+	}
+	want := []string{filepath.Join("src", "main.go")}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+
+	// A path that already stats is left alone, and "-" and {} are never
+	// treated as filenames to search for.
+	transcribe := task.Task{ID: "transcribe", Params: []task.Param{{Name: "audio", Kind: "file"}}}
+	got, err = a.resolveTaskArgs(transcribe, []string{filepath.Join("src", "main.go")}, nil)
+	if err != nil || !reflect.DeepEqual(got, []string{filepath.Join("src", "main.go")}) {
+		t.Errorf("existing path: %v %v", got, err)
+	}
+	got, err = a.resolveTaskArgs(transcribe, []string{"-"}, nil)
+	if err != nil || !reflect.DeepEqual(got, []string{"-"}) {
+		t.Errorf("dash placeholder: %v %v", got, err)
+	}
+	describe := task.Task{ID: "describe", Params: []task.Param{
+		{Name: "image", Kind: "file"}, {Name: "question", Kind: "text"},
+	}}
+	got, err = a.resolveTaskArgs(describe, []string{"{}", "what is this?"}, nil)
+	if err != nil || got[0] != "{}" {
+		t.Errorf("pipe marker: %v %v", got, err)
+	}
+
+	// A word matching nothing anywhere is left as given, so the ordinary
+	// "does not exist" error from the task engine still applies.
+	got, err = a.resolveTaskArgs(doc, []string{"nosuchfile.go"}, map[string]string{"--yes": "true"})
+	if err != nil || !reflect.DeepEqual(got, []string{"nosuchfile.go"}) {
+		t.Errorf("no match: %v %v", got, err)
+	}
+}
+
+func TestRunResolvesAMissingFileArgument(t *testing.T) {
+	e := newEnv(t)
+	e.setup()
+	e.install("qwen3.5-0.8b")
+
+	dir := t.TempDir()
+	os.Mkdir(filepath.Join(dir, "src"), 0o755)
+	os.WriteFile(filepath.Join(dir, "src", "main.go"), []byte("package main"), 0o644)
+	chdir(t, dir)
+
+	code, out, errs := e.mote("", "run", "doc", "main.go", "--yes")
+	if code != 0 {
+		t.Fatalf("run: %d %s", code, errs)
+	}
+	if !strings.Contains(out, "echo:") {
+		t.Errorf("task did not run: %q", out)
+	}
+
+	// With no terminal to ask on and no --yes, it refuses to guess.
+	if code, _, errs := e.mote("", "run", "doc", "main.go"); code == 0 || !strings.Contains(errs, "main.go") {
+		t.Errorf("non-interactive run should refuse to guess: %d %s", code, errs)
+	}
+}
+
+func TestPipeResolvesAMissingFileArgument(t *testing.T) {
+	e := newEnv(t)
+	e.setup()
+	e.install("qwen3.5-0.8b")
+
+	dir := t.TempDir()
+	os.Mkdir(filepath.Join(dir, "src"), 0o755)
+	os.WriteFile(filepath.Join(dir, "src", "main.go"), []byte("package main"), 0o644)
+	chdir(t, dir)
+
+	code, out, errs := e.mote("", "pipe", `doc main.go | chat "again: {}"`, "--yes")
+	if code != 0 {
+		t.Fatalf("pipe: %d %s", code, errs)
+	}
+	if !strings.Contains(out, "again: echo:") {
+		t.Errorf("second stage did not see the first's output: %q", out)
 	}
 }
 

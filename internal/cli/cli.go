@@ -542,7 +542,7 @@ func hostOf(u string) string {
 
 func (a *app) run(ctx context.Context, args []string) error {
 	vals, pos, err := flags(args, []string{"-o", "--output", "--model", "--profile"},
-		[]string{"--apply", "--continue", "--recall"})
+		[]string{"--apply", "--continue", "--recall", "--yes", "-y"})
 	if err != nil {
 		return err
 	}
@@ -557,6 +557,13 @@ func (a *app) run(ctx context.Context, args []string) error {
 	if !ok {
 		return usagef("unknown task %q; see `mote tasks`", pos[0])
 	}
+	// A file or dir argument that does not stat here gets the same search
+	// nearby and confirm that `do` offers a spoken request: named on the
+	// command line, it is just as likely to live in a subdirectory.
+	taskArgs, err := a.resolveTaskArgs(t, pos[1:], vals)
+	if err != nil {
+		return err
+	}
 	profile, err := a.selectModels(vals)
 	if err != nil {
 		return err
@@ -565,14 +572,14 @@ func (a *app) run(ctx context.Context, args []string) error {
 	sessions := map[string]mrt.Session{}
 	defer task.CloseSessions(sessions)
 	env := a.env(profile, sessions)
-	request := strings.Join(pos[1:], " ")
+	request := strings.Join(taskArgs, " ")
 	if env.Memory, err = a.memoryFor(ctx, request, vals, profile, sessions); err != nil {
 		return err
 	}
 	// Highlight source code and JSON, but only on the way to a terminal:
 	// files and pipes keep the exact bytes the model produced.
 	var code *ui.CodeStream
-	hint := langHint(pos[1:])
+	hint := langHint(taskArgs)
 	if out == "" && (t.Out == "code" || t.Out == "data") {
 		code = a.uo.CodeStream(highlightLang(t, hint))
 	}
@@ -585,7 +592,7 @@ func (a *app) run(ctx context.Context, args []string) error {
 			env.Stream = func(tok string) { fmt.Fprint(a.out, tok) }
 		}
 	}
-	res, err := t.Run(ctx, env, pos[1:], task.Options{Output: out, Apply: vals["--apply"] == "true"})
+	res, err := t.Run(ctx, env, taskArgs, task.Options{Output: out, Apply: vals["--apply"] == "true"})
 	if err != nil {
 		return err
 	}

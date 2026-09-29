@@ -302,6 +302,35 @@ func TestDoPlanRunsThePipeline(t *testing.T) {
 	}
 }
 
+func TestDoPlanResolvesAMissingFileInTheRequest(t *testing.T) {
+	e := newEnv(t)
+	e.setup()
+	e.install("qwen3.5-0.8b")
+
+	dir := t.TempDir()
+	os.Mkdir(filepath.Join(dir, "examples"), 0o755)
+	os.WriteFile(filepath.Join(dir, "examples", "invoice.txt"), []byte("Total: 42"), 0o644)
+	chdir(t, dir)
+
+	// invoice.txt does not stat from dir, so without resolving it first the
+	// planner would never be offered "doc" as a choice at all: namedFiles
+	// would come back empty and the schema would drop any branch needing a
+	// file. --yes here answers the "use examples/invoice.txt instead?" ask.
+	resolved := filepath.Join("examples", "invoice.txt")
+	log := script(t, `{"first":{"task":"doc","args":["`+resolved+`"]},"then":[]}`)
+
+	code, out, errs := e.mote("", "do", "--plan", "--yes", "document invoice.txt")
+	if code != 0 {
+		t.Fatalf("do --plan: %d %s", code, errs)
+	}
+	if !strings.Contains(out, "echo:") {
+		t.Errorf("task did not run: %q", out)
+	}
+	if reqs := requests(t, log); !strings.Contains(reqs[0]["prompt"].(string), resolved) {
+		t.Errorf("planner was not shown the resolved path: %v", reqs[0])
+	}
+}
+
 func TestDoPlanDryRunAndRefusals(t *testing.T) {
 	e := newEnv(t)
 	e.setup()

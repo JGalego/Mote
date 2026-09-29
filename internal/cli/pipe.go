@@ -211,7 +211,7 @@ func (a *app) runShell(ctx context.Context, s stage, in task.Value) (task.Value,
 // pipe runs several tasks in one process, passing each stage's value to the
 // next and keeping models loaded across stages.
 func (a *app) pipe(ctx context.Context, args []string) error {
-	vals, pos, err := flags(args, []string{"-o", "--output", "--model", "--profile"}, []string{"--apply", "--trace"})
+	vals, pos, err := flags(args, []string{"-o", "--output", "--model", "--profile"}, []string{"--apply", "--trace", "--yes", "-y"})
 	if err != nil {
 		return err
 	}
@@ -229,6 +229,18 @@ func (a *app) pipe(ctx context.Context, args []string) error {
 	found, err := resolveStages(stages, tasks)
 	if err != nil {
 		return err
+	}
+	// A stage's own file or dir argument gets the same search nearby and
+	// confirm `do` offers a spoken request: typed into a pipeline, it is
+	// just as likely to live in a subdirectory. "-" and {} are left for
+	// bind to fill from the previous stage's value.
+	for i, s := range stages {
+		if s.shell != "" {
+			continue
+		}
+		if stages[i].args, err = a.resolveTaskArgs(found[i], s.args, vals); err != nil {
+			return err
+		}
 	}
 	profile, err := a.selectModels(vals)
 	if err != nil {
