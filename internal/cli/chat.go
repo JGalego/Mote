@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/jgalego/mote/internal/memory"
@@ -18,13 +19,32 @@ const chatHelp = "/new starts over · /exit or Ctrl-D ends · end a line with \\
 // chatCmd implements `mote chat`: a conversation with the text model, which
 // sees the earlier turns. Each line of input is a turn, so it works on a
 // pipe as well as in a terminal.
+//
+// With --tools, a turn is answered by the same think/act/observe loop as
+// `mote agent` instead of a plain reply, so the model may run mote commands
+// on the way to an answer; without it, chat never runs anything. A task
+// marked "asks" is confirmed before each call unless --yes was given, same
+// as `mote agent`.
 func (a *app) chatCmd(ctx context.Context, args []string) error {
-	vals, pos, err := flags(args, []string{"--model", "--profile", "--system"}, []string{"--continue", "--recall"})
+	vals, pos, err := flags(args,
+		[]string{"--model", "--profile", "--system", "--tools", "--steps"},
+		[]string{"--continue", "--recall", "--yes", "-y"})
 	if err != nil {
 		return err
 	}
 	if len(pos) > 0 {
-		return usagef(`usage: mote chat [--system "INSTRUCTIONS"] [--model ID] [--continue] [--recall]`)
+		return usagef(`usage: mote chat [--system "INSTRUCTIONS"] [--model ID] [--continue] [--recall] [--tools a,b|all] [--steps N] [--yes]`)
+	}
+	_, useTools := vals["--tools"]
+	yes := vals["--yes"] == "true" || vals["-y"] == "true"
+	if !useTools && (vals["--steps"] != "" || yes) {
+		return usagef("--steps and --yes only apply with --tools")
+	}
+	steps := defaultAgentSteps
+	if v := vals["--steps"]; v != "" {
+		if steps, err = strconv.Atoi(v); err != nil || steps < 1 || steps > maxAgentSteps {
+			return usagef("--steps must be a number from 1 to %d", maxAgentSteps)
+		}
 	}
 	profile, err := a.selectModels(vals)
 	if err != nil {
@@ -40,6 +60,7 @@ func (a *app) chatCmd(ctx context.Context, args []string) error {
 		return err
 	}
 	system := strings.TrimSpace(remembered + "\n\n" + vals["--system"])
+	toolSystemBase := strings.TrimSpace(system + "\n\n" + agentSystem)
 	recall := vals["--recall"] == "true"
 	m, files, err := env.Resolve(ctx, "text")
 	if err != nil {
@@ -64,8 +85,60 @@ func (a *app) chatCmd(ctx context.Context, args []string) error {
 	var turns []mrt.Turn
 	sc := bufio.NewScanner(a.in)
 	sc.Buffer(make([]byte, 1<<20), 1<<20)
+
+	var tools []agentTool
+	var wd string
+	if useTools {
+		toolsArg := vals["--tools"]
+		if strings.TrimSpace(toolsArg) == "" {
+			return usagef(`--tools needs a comma list of task ids, or "all"`)
+		}
+		names := toolsArg
+		if toolsArg == "all" {
+			names = ""
+		}
+		tasks, err := task.LoadFrom(a.tasksDir())
+		if err != nil {
+			return err
+		}
+		env.Memory = remembered
+		env.Stdin = nil // a tool's "-" is text, not a request to read the terminal
+		ask := func(call string) bool {
+			if yes {
+				return true
+			}
+			fmt.Fprintf(a.err, "%s run %s? [y/N] ", a.ue.Warn(), a.ue.Bold(call))
+			if !sc.Scan() {
+				return false
+			}
+			line := strings.ToLower(strings.TrimSpace(sc.Text()))
+			return line == "y" || line == "yes"
+		}
+		if tools, err = a.agentTools(tasks, names, false, env, ask, nil, shellBox{}, nil); err != nil {
+			return err
+		}
+		if !yes && !a.tty {
+			for _, t := range tools {
+				if t.asks {
+					return usagef("%s can change things, so mote asks before each call, and stdin is not a terminal; pass --yes to call it without asking, or restrict --tools", t.id)
+				}
+			}
+		}
+		if wd, err = os.Getwd(); err != nil {
+			return err
+		}
+		var ids []string
+		for _, t := range tools {
+			ids = append(ids, t.id)
+		}
+		fmt.Fprintf(a.err, "%s\n", a.ue.Dim("tools: "+strings.Join(ids, ", ")))
+	}
+
 	next := func() (string, bool) { return a.readTurn(sc, live) }
-	if live {
+	if live && !useTools {
+		// Tab-completing a /command needs raw terminal input, which would
+		// also swallow the y/n a tool call asks for; --tools keeps plain
+		// line reading so that prompt works.
 		if f, ok := a.in.(*os.File); ok {
 			if restore, ok := ui.EnterCbreak(f); ok {
 				defer restore()
@@ -94,18 +167,44 @@ func (a *app) chatCmd(ctx context.Context, args []string) error {
 			fmt.Fprintln(a.err, chatHelp)
 			continue
 		}
-		turnSystem := system
+		recalled := ""
 		if recall {
 			hits, err := a.searchMemory(ctx, line, defaultRecall, profile, sessions)
 			if err != nil {
 				fmt.Fprintf(a.err, "%s %v\n", a.ue.Fail(), err)
 			} else if len(hits) > 0 {
-				var recalled []memory.Entry
+				var entries []memory.Entry
 				for _, h := range hits {
-					recalled = append(recalled, h.Entry)
+					entries = append(entries, h.Entry)
 				}
-				turnSystem = strings.TrimSpace(system + "\n\n" + memory.Prompt(nil, recalled))
+				recalled = memory.Prompt(nil, entries)
 			}
+		}
+		if useTools {
+			turnSystem := toolSystemBase
+			if recalled != "" {
+				turnSystem = strings.TrimSpace(turnSystem + "\n\n" + recalled)
+			}
+			if recent := fitTurns(turns, m.Context, 2048, len(turnSystem)+len(line)); len(recent) > 0 {
+				turnSystem = strings.TrimSpace(turnSystem + "\n\n" + renderTurns(recent))
+			}
+			answer, err := a.runAgentLoop(ctx, profile, sessions, turnSystem, line, wd, tools, steps)
+			if err != nil {
+				if ctx.Err() != nil {
+					return nil
+				}
+				fmt.Fprintf(a.err, "%s %v\n", a.ue.Fail(), err)
+				continue
+			}
+			answer = strings.TrimSpace(answer)
+			fmt.Fprintln(a.out, answer)
+			turns = append(turns, mrt.Turn{Role: "user", Text: line}, mrt.Turn{Role: "assistant", Text: answer})
+			a.record(task.Task{ID: "chat"}, line, task.Result{Value: task.Value{Text: answer}})
+			continue
+		}
+		turnSystem := system
+		if recalled != "" {
+			turnSystem = strings.TrimSpace(turnSystem + "\n\n" + recalled)
 		}
 		req := mrt.Request{System: turnSystem, Prompt: line, Temperature: 0.2, MaxTokens: 2048}
 		req.History = fitTurns(turns, m.Context, req.MaxTokens, len(turnSystem)+len(line))
@@ -173,6 +272,18 @@ func (a *app) readTurn(sc *bufio.Scanner, live bool) (string, bool) {
 		parts = append(parts, line)
 		return strings.TrimSpace(strings.Join(parts, "\n")), true
 	}
+}
+
+// renderTurns shows earlier chat turns as plain text, so a tool-calling
+// turn's system prompt can carry the conversation the think/act/observe
+// loop otherwise never sees (its own goal and history are this turn's).
+func renderTurns(turns []mrt.Turn) string {
+	var b strings.Builder
+	b.WriteString("Recent conversation:\n")
+	for _, t := range turns {
+		fmt.Fprintf(&b, "%s: %s\n", t.Role, t.Text)
+	}
+	return strings.TrimSpace(b.String())
 }
 
 // fitTurns keeps the most recent turns that fit in a context of ctxTokens

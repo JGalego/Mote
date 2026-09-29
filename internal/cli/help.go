@@ -291,18 +291,22 @@ var helpTopics = map[string]helpTopic{
 	},
 	"chat": {
 		summary: "Talk with the text model; it sees the earlier turns.",
-		usage:   []string{`mote chat [--system "INSTRUCTIONS"] [--model ID] [--profile P] [--continue] [--recall]`},
+		usage:   []string{`mote chat [--system "INSTRUCTIONS"] [--model ID] [--profile P] [--continue] [--recall] [--tools a,b|all] [--steps N] [--yes|-y]`},
 		flags: []helpFlag{
 			{"--system TEXT", "set the system prompt for the conversation"},
 			{"--model ID", "use this model instead of the one your profile picks"},
 			{"--profile P", "use this profile for this run"},
 			{"--continue", "resume the previous chat history instead of starting fresh"},
-			{"--recall", "bring back the closest past exchanges as context before the first turn"},
+			{"--recall", "bring back the closest past exchanges as context before answering each turn"},
+			{"--tools a,b|all", "let chat run mote tasks to answer a turn, on the same think/act/observe loop as `mote agent`; without it, chat only talks"},
+			{"--steps N", "cap the number of tool calls per turn (default 8, max 30)"},
+			{"--yes, -y", `answer yes to a tool call mote would otherwise confirm (only tasks marked "asks" are confirmed at all)`},
 		},
 		notes: []string{chatHelp},
 		examples: []string{
 			"mote chat",
 			`mote chat --system "You are a terse code reviewer"`,
+			"mote chat --tools all",
 		},
 	},
 	"index": {

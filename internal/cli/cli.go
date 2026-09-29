@@ -66,7 +66,7 @@ Usage:
   mote help [COMMAND]  (or add --help / -h to any command)
   mote setup [--yes] [--config FILE] [--profile P] [--data-dir DIR] [--auto-download] [--no-download] [--gpu|--no-gpu]
   mote run TASK [ARGS...] [-o OUTPUT] [--apply] [--model ID] [--profile P]
-  mote chat [--system "INSTRUCTIONS"] [--model ID] [--continue] [--recall]
+  mote chat [--system "INSTRUCTIONS"] [--model ID] [--continue] [--recall] [--tools a,b|all] [--yes]
   mote guide [--model ID]
   mote index [DIR...] | status | rm DIR|--all
   mote ask "QUESTION" [--in DIR] [--top N] [--sources]

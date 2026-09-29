@@ -23,7 +23,7 @@ var commandFlags = map[string][]string{
 	"do":      {"-o", "--output", "--model", "--profile", "--router", "--apply", "--dry-run", "--continue", "--recall", "--plan", "--trace", "--yes", "-y", "--help", "-h"},
 	"agent":   {"-o", "--output", "--model", "--profile", "--tools", "--steps", "--mcp", "--sandbox", "--allow-sh", "--yes", "-y", "--sandbox-net", "--help", "-h"},
 	"listen":  {"--wake", "--device", "--chunk", "--model", "--profile", "--once", "--help", "-h"},
-	"chat":    {"--model", "--profile", "--system", "--continue", "--recall", "--help", "-h"},
+	"chat":    {"--model", "--profile", "--system", "--continue", "--recall", "--tools", "--steps", "--yes", "-y", "--help", "-h"},
 	"guide":   {"--model", "--profile", "--help", "-h"},
 	"ask":     {"--in", "--top", "--model", "--profile", "-o", "--output", "--sources", "--help", "-h"},
 	"index":   {"--profile", "--help", "-h"},

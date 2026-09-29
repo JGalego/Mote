@@ -561,14 +561,29 @@ func (a *app) agent(ctx context.Context, args []string) error {
 			}
 		}
 	}
-	byID := map[string]agentTool{}
-	for _, t := range tools {
-		byID[t.id] = t
-	}
 
 	system := agentSystem
 	if remembered != "" {
 		system = remembered + "\n\n" + system
+	}
+	answer, err := a.runAgentLoop(ctx, profile, sessions, system, goal, wd, tools, steps)
+	if err != nil {
+		return err
+	}
+	t := task.Task{ID: "agent", Out: "text"}
+	res := task.Result{Value: task.Value{Text: strings.TrimSpace(answer) + "\n"}}
+	a.record(t, goal, res)
+	return a.emit(t, res, firstNonEmpty(vals["-o"], vals["--output"]), nil)
+}
+
+// runAgentLoop drives the think/act/observe loop until the model finishes
+// the goal or steps run out, showing its work on stderr as it goes, and
+// returns its final answer. It is `mote agent`'s core, also used by
+// `mote chat --tools` to answer one turn.
+func (a *app) runAgentLoop(ctx context.Context, profile string, sessions map[string]mrt.Session, system, goal, wd string, tools []agentTool, steps int) (string, error) {
+	byID := map[string]agentTool{}
+	for _, t := range tools {
+		byID[t.id] = t
 	}
 	var history []taken
 	seen := map[string]int{} // call -> the step that made it
@@ -578,7 +593,7 @@ func (a *app) agent(ctx context.Context, args []string) error {
 		var st agentStep
 		prompt := agentPrompt(goal, wd, tools, history, steps-step+1, false)
 		if err := a.generateJSON(ctx, profile, sessions, system, prompt, stepSchema(tools, false), &st); err != nil {
-			return fmt.Errorf("step %d: %w", step, err)
+			return "", fmt.Errorf("step %d: %w", step, err)
 		}
 		a.showThought(step, st.Thought)
 		if st.Action.Tool == finishID {
@@ -605,7 +620,7 @@ func (a *app) agent(ctx context.Context, args []string) error {
 			seen[call] = step
 			out, err := t.run(ctx, st.Action.Args)
 			if ctx.Err() != nil {
-				return ctx.Err()
+				return "", ctx.Err()
 			}
 			if err != nil {
 				obs = "error: " + err.Error()
@@ -624,18 +639,15 @@ func (a *app) agent(ctx context.Context, args []string) error {
 		var st agentStep
 		prompt := agentPrompt(goal, wd, tools, history, 0, true)
 		if err := a.generateJSON(ctx, profile, sessions, system, prompt, stepSchema(tools, true), &st); err != nil {
-			return fmt.Errorf("final answer: %w", err)
+			return "", fmt.Errorf("final answer: %w", err)
 		}
 		if st.Action.Tool != finishID {
-			return fmt.Errorf("the model did not give an answer within %d steps", steps)
+			return "", fmt.Errorf("the model did not give an answer within %d steps", steps)
 		}
 		a.showThought(len(history)+1, st.Thought)
 		answer = finishAnswer(st.Action.Args)
 	}
-	t := task.Task{ID: "agent", Out: "text"}
-	res := task.Result{Value: task.Value{Text: strings.TrimSpace(answer) + "\n"}}
-	a.record(t, goal, res)
-	return a.emit(t, res, firstNonEmpty(vals["-o"], vals["--output"]), nil)
+	return answer, nil
 }
 
 func finishAnswer(raw json.RawMessage) string {

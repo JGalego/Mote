@@ -114,6 +114,84 @@ func TestChatRecallSearchesEachTurn(t *testing.T) {
 	}
 }
 
+func TestChatToolsCallsATaskAndAnswers(t *testing.T) {
+	e := newEnv(t)
+	e.setup()
+	e.install("qwen3.5-0.8b")
+	script(t,
+		`{"thought":"write it","action":{"tool":"code","args":{"prompt":"add two numbers"}}}`,
+		`{"thought":"done","action":{"tool":"finish","args":{"answer":"here you go"}}}`)
+	code, out, errs := e.mote("write a function that adds two numbers\n/exit\n", "chat", "--tools", "code")
+	if code != 0 {
+		t.Fatalf("%d %s", code, errs)
+	}
+	if !strings.Contains(out, "here you go") {
+		t.Errorf("answer missing from stdout: %q", out)
+	}
+	if !strings.Contains(errs, "tools: code") {
+		t.Errorf("enabled tools not announced: %q", errs)
+	}
+}
+
+func TestChatToolsOffByDefault(t *testing.T) {
+	e := newEnv(t)
+	e.setup()
+	e.install("qwen3.5-0.8b")
+	if code, _, errs := e.mote("", "chat", "--steps", "3"); code != ExitUsage || !strings.Contains(errs, "only apply with --tools") {
+		t.Errorf("--steps without --tools: %d %s", code, errs)
+	}
+	if code, _, errs := e.mote("", "chat", "--yes"); code != ExitUsage || !strings.Contains(errs, "only apply with --tools") {
+		t.Errorf("--yes without --tools: %d %s", code, errs)
+	}
+	if code, _, errs := e.mote("", "chat", "--tools", ""); code != ExitUsage || !strings.Contains(errs, "comma list") {
+		t.Errorf("--tools with no value: %d %s", code, errs)
+	}
+}
+
+func TestChatToolsConfirmsTasksMarkedAsks(t *testing.T) {
+	e := newEnv(t)
+	e.setup()
+	e.install("qwen3.5-0.8b")
+	bin := fakeTools(t)
+	marker := filepath.Join(t.TempDir(), "gone")
+	os.WriteFile(filepath.Join(bin, "wipe"), []byte("#!/bin/sh\necho wiped > "+marker+"\n"), 0o755)
+	dir := t.TempDir()
+	t.Setenv("MOTE_TASKS_DIR", dir)
+	os.WriteFile(filepath.Join(dir, "wipe.json"), []byte(`{"tasks":[{"id":"wipe","summary":"Wipe a thing","asks":true,
+	  "in":["text"],"out":"text","params":[{"name":"what","kind":"text"}],
+	  "steps":[{"op":"exec","cmd":["wipe","--","{{what}}"],"as":"out"}]}]}`), 0o644)
+	call := `{"thought":"t","action":{"tool":"wipe","args":{"what":"it"}}}`
+	done := `{"thought":"t","action":{"tool":"finish","args":{"answer":"ok"}}}`
+
+	// With no terminal and no --yes, chat refuses up front rather than
+	// asking mid-conversation, where there is no one to answer.
+	script(t, call, done)
+	if code, _, errs := e.mote("", "chat", "--tools", "wipe"); code != ExitUsage || !strings.Contains(errs, "wipe can change things") {
+		t.Errorf("unasked: %d %s", code, errs)
+	}
+
+	t.Setenv("MOTE_FORCE_LIVE", "1")
+	script(t, call, done)
+	// The confirmation reads the next line the same way a turn does: the
+	// question, then "n" answers the prompt, then the next turn ends it.
+	if code, _, errs := e.mote("wipe it\nn\n/exit\n", "chat", "--tools", "wipe"); code != 0 || !strings.Contains(errs, "run wipe") {
+		t.Fatalf("declined: %d %s", code, errs)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("a declined task ran")
+	}
+
+	t.Setenv("MOTE_FORCE_LIVE", "")
+	// --yes answers for the user, who named the tool.
+	script(t, call, done)
+	if code, _, errs := e.mote("wipe it\n/exit\n", "chat", "--tools", "wipe", "--yes"); code != 0 {
+		t.Fatalf("--yes: %d %s", code, errs)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Error("--yes did not run the task")
+	}
+}
+
 func TestReadTurn(t *testing.T) {
 	a := &app{ue: ui.New(io.Discard)}
 
