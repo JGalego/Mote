@@ -4,13 +4,15 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	mrt "github.com/jgalego/mote/internal/runtime"
 	"github.com/jgalego/mote/internal/task"
+	"github.com/jgalego/mote/internal/ui"
 )
 
-const chatHelp = "/new starts over · /exit or Ctrl-D ends · end a line with \\ to continue it"
+const chatHelp = "/new starts over · /exit or Ctrl-D ends · end a line with \\ to continue it · Tab completes a /command"
 
 // chatCmd implements `mote chat`: a conversation with the text model, which
 // sees the earlier turns. Each line of input is a turn, so it works on a
@@ -58,8 +60,18 @@ func (a *app) chatCmd(ctx context.Context, args []string) error {
 	var turns []mrt.Turn
 	sc := bufio.NewScanner(a.in)
 	sc.Buffer(make([]byte, 1<<20), 1<<20)
+	next := func() (string, bool) { return a.readTurn(sc, live) }
+	if live {
+		if f, ok := a.in.(*os.File); ok {
+			if restore, ok := ui.EnterCbreak(f); ok {
+				defer restore()
+				br := bufio.NewReader(f)
+				next = func() (string, bool) { return a.editTurn(br) }
+			}
+		}
+	}
 	for {
-		line, ok := a.readTurn(sc, live)
+		line, ok := next()
 		if !ok {
 			return sc.Err()
 		}
