@@ -109,6 +109,7 @@ In a clone, `go install ./cmd/mote` does the same into `$(go env GOPATH)/bin`. `
 | `mote tune [--apply]` | Propose config changes from those measurements, and record them with `--apply` |
 | `mote doctor` | Check the installation: runtime, models, tools, data directory |
 | `mote config [show\|set\|history\|rollback\|edit]` | Show or change the configuration; every version is kept |
+| `mote completion bash\|zsh\|fish` | Print a shell completion script; `source <(mote completion bash)` in `.bashrc` completes commands, subcommands, models, tasks and flags |
 | `mote update [--check]` | Update mote, or only report whether an update exists |
 | `mote version` | Print the version |
 

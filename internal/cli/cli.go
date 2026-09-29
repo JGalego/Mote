@@ -81,6 +81,7 @@ Usage:
   mote tune [--apply]
   mote doctor
   mote config [show | path | set KEY VALUE | history | rollback [N] | edit]
+  mote completion bash|zsh|fish
   mote update [--check]
   mote version
 
@@ -206,6 +207,10 @@ func (a *app) dispatch(ctx context.Context, args []string) error {
 		return a.mcpCmd(ctx, rest)
 	case "update":
 		return a.update(ctx, rest)
+	case "completion":
+		return a.completionCmd(rest)
+	case "__complete":
+		return a.completeCmd(rest)
 	}
 	switch cmd {
 	case "run", "pipe", "listen", "do", "agent", "memory", "remember", "forget", "models", "bench", "tune", "serve", "chat", "index", "ask":
