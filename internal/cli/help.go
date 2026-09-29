@@ -1,0 +1,444 @@
+package cli
+
+import (
+	"fmt"
+	"strings"
+)
+
+// helpFlag pairs a flag's syntax, or a subcommand's form, with its
+// description; both are printed as a two-column list.
+type helpFlag struct {
+	name string
+	desc string
+}
+
+// helpTopic documents one top-level command in more depth than its one-line
+// summary in usage, for `mote help CMD` and `mote CMD --help`.
+type helpTopic struct {
+	summary  string
+	usage    []string   // full invocation lines, e.g. "mote chat [--system ...]"
+	subs     []helpFlag // subcommand forms, when the command has any
+	flags    []helpFlag // flags, most useful first
+	notes    []string   // short paragraphs printed after subs/flags
+	examples []string   // full command lines, e.g. `mote chat --system "..."`
+}
+
+var helpTopics = map[string]helpTopic{
+	"help": {
+		summary: "Show general usage, or detailed help for one command.",
+		usage:   []string{"mote help [COMMAND]"},
+		notes:   []string{"`mote COMMAND --help` (or -h) shows the same thing."},
+		examples: []string{
+			"mote help",
+			"mote help chat",
+			"mote models --help",
+		},
+	},
+	"version": {
+		summary:  "Print the version mote was built from.",
+		usage:    []string{"mote version"},
+		examples: []string{"mote version"},
+	},
+	"setup": {
+		summary: "Install the runtime and the models for a profile.",
+		usage:   []string{"mote setup [--yes] [--config FILE] [--profile P] [--data-dir DIR] [--auto-download|--no-download] [--gpu|--no-gpu]"},
+		flags: []helpFlag{
+			{"--yes, -y", "accept every prompt's default and run non-interactively"},
+			{"--config FILE", "write the configuration to FILE instead of the default location"},
+			{"--profile P", "preselect a profile (small, balanced, quality) instead of asking"},
+			{"--data-dir DIR", "store models and other data under DIR"},
+			{"--auto-download", "let mote download models it needs without asking each time"},
+			{"--no-download", "configure mote without downloading anything yet"},
+			{"--gpu", "offload inference to a detected GPU"},
+			{"--no-gpu", "stay on the CPU even if a GPU is detected"},
+		},
+		examples: []string{
+			"mote setup",
+			"mote setup --profile small --yes",
+			"mote setup --no-download --config ~/mote.json",
+		},
+	},
+	"config": {
+		summary: "Show or change mote's configuration; every version is kept.",
+		usage: []string{
+			"mote config [show]",
+			"mote config path",
+			"mote config set KEY VALUE",
+			"mote config history",
+			"mote config rollback [N]",
+			"mote config edit",
+		},
+		subs: []helpFlag{
+			{"show", "print the current configuration as JSON (default with no subcommand)"},
+			{"path", "print the path to the configuration file"},
+			{"set KEY VALUE", "change one key: profile, editor, workspace, data_dir, auto_download, reuse_tools, llama_dir, threads, repack, gpu, keep_alive, serve_port, wake_word, router, memory, models.<capability>, tools.<name>"},
+			{"history", "list every saved version of the configuration"},
+			{"rollback [N]", "restore the N-th most recent version (default 1)"},
+			{"edit", "open the configuration file in $VISUAL or $EDITOR"},
+		},
+		examples: []string{
+			"mote config show",
+			"mote config set gpu on",
+			"mote config set keep_alive 30m",
+			"mote config rollback",
+		},
+	},
+	"doctor": {
+		summary:  "Check the installation: runtime, models, tools, data directory.",
+		usage:    []string{"mote doctor"},
+		examples: []string{"mote doctor"},
+	},
+	"tasks": {
+		summary:  "List the tasks `mote run` can run, their arguments and what each one needs.",
+		usage:    []string{"mote tasks"},
+		examples: []string{"mote tasks"},
+	},
+	"mcp": {
+		summary: "List the configured MCP servers, or start them and show what they offer.",
+		usage:   []string{"mote mcp", "mote mcp tools [NAME...]"},
+		subs: []helpFlag{
+			{"(none)", "list the servers configured in mcp.json"},
+			{"tools [NAME...]", "start the named servers (or all of them) and list their tools, and whether the agent can use each one"},
+		},
+		examples: []string{
+			"mote mcp",
+			"mote mcp tools",
+			"mote mcp tools files",
+		},
+	},
+	"update": {
+		summary: "Update mote to the latest release, or check whether one exists.",
+		usage:   []string{"mote update [--check]"},
+		flags: []helpFlag{
+			{"--check", "report whether an update is available without installing it"},
+		},
+		examples: []string{"mote update --check", "mote update"},
+	},
+	"run": {
+		summary: "Run one of mote's built-in or custom tasks.",
+		usage:   []string{"mote run TASK [ARGS...] [-o FILE] [--apply] [--model ID] [--profile P] [--continue] [--recall] [--yes|-y]"},
+		flags: []helpFlag{
+			{"-o, --output FILE", "write the result to FILE instead of stdout"},
+			{"--model ID", "use this model for every capability it provides, instead of your profile's pick"},
+			{"--profile P", "use this profile (small, balanced, quality) for this run"},
+			{"--apply", "write a patch task's proposed changes to disk instead of only printing the diff"},
+			{"--continue", "carry on from the task's last exchange, e.g. chat"},
+			{"--recall", "bring back the closest past exchanges as context before answering"},
+			{"--yes, -y", "approve confirmations mote would otherwise ask about"},
+		},
+		notes: []string{"Run `mote tasks` to see every task, its arguments and what it needs."},
+		examples: []string{
+			`mote run chat "Explain what a mutex is in two sentences"`,
+			`mote run code "Python function that parses ISO 8601 dates" -o dates.py`,
+			`mote run describe photo.jpg "What is written on the sign?"`,
+			`mote run patch ./src "Rename the function load to read_config" --apply`,
+		},
+	},
+	"pipe": {
+		summary: "Chain tasks in one process, each stage receiving the last one's value.",
+		usage:   []string{`mote pipe "A | B | sh: cmd" [-o FILE] [--model ID] [--profile P] [--apply] [--trace] [--yes|-y]`},
+		flags: []helpFlag{
+			{"-o, --output FILE", "write the last stage's result to FILE instead of stdout"},
+			{"--model ID", "use this model for every capability it provides"},
+			{"--profile P", "use this profile for this run"},
+			{"--apply", "write a patch stage's changes to disk"},
+			{"--trace", "print every stage's output, not only the last one"},
+			{"--yes, -y", "approve confirmations mote would otherwise ask about"},
+		},
+		notes: []string{"Each stage gets the previous value as {} or - (or its first missing argument); `sh:` pipes it into a shell command."},
+		examples: []string{
+			`mote pipe "transcribe meeting.m4a | chat 'Summarise in 3 bullets: {}'"`,
+			`mote pipe "frames clip.mp4 3 | describe | sh: tee notes.txt"`,
+			`mote pipe --trace "code 'print the squares of 1 to 5 in Python' | sh: python3 -"`,
+		},
+	},
+	"do": {
+		summary: "Pick the task that fits a request written in plain words, and run it.",
+		usage:   []string{`mote do "REQUEST" [-o FILE] [--model ID] [--profile P] [--router text|embed] [--plan [--trace]] [--dry-run] [--apply] [--continue] [--recall] [--yes|-y]`},
+		flags: []helpFlag{
+			{"-o, --output FILE", "write the result to FILE instead of stdout"},
+			{"--model ID", "use this model for every capability it provides"},
+			{"--profile P", "use this profile for this run"},
+			{"--router text|embed", "choose the task with the text model (default) or a 36 MB encoder with no generation"},
+			{"--plan", "write and run a `mote pipe` pipeline for requests that take several steps"},
+			{"--trace", "with --plan, print every stage's output"},
+			{"--dry-run", "print the chosen command without running it"},
+			{"--apply", "write a patch task's changes to disk"},
+			{"--continue", "carry on from the task's last exchange"},
+			{"--recall", "bring back the closest past exchanges as context"},
+			{"--yes, -y", "approve confirmations mote would otherwise ask about"},
+		},
+		examples: []string{
+			`mote do "summarise meeting.m4a in three bullets"`,
+			`mote do "what is on the sign in photo.jpg" --dry-run`,
+			`mote do --plan "document calc.py then translate it to French"`,
+		},
+	},
+	"agent": {
+		summary: "Work toward a goal in steps, calling tasks and local tools and reading what they return.",
+		usage:   []string{`mote agent "GOAL" [-o FILE] [--model ID] [--profile P] [--tools a,b] [--mcp SERVER,...] [--steps N] [--allow-sh [--sandbox auto|on|off] [--sandbox-net]] [--yes|-y]`},
+		flags: []helpFlag{
+			{"-o, --output FILE", "write the answer to FILE instead of stdout"},
+			{"--model ID", "use this model for every capability it provides"},
+			{"--profile P", "use this profile for this run"},
+			{"--tools a,b", "limit which tasks and tools the agent may call"},
+			{"--mcp SERVER,...", "add the tools of local MCP servers listed in mcp.json"},
+			{"--steps N", "cap the number of steps (default 8, max 30)"},
+			{"--allow-sh", "let the agent run shell commands, checked and confirmed"},
+			{"--sandbox auto|on|off", "require, skip, or auto-detect a sandbox for shell commands"},
+			{"--sandbox-net", "restore network access inside the sandbox"},
+			{"--yes, -y", "approve read-only shell commands automatically"},
+		},
+		notes: []string{"Use the balanced profile; the small profile's text model is too small to act reliably."},
+		examples: []string{
+			`mote agent "what is the total due in invoice.txt?"`,
+			`mote agent "how many Go files are in this repository?" --allow-sh`,
+			`mote agent "find where retries are configured" --tools search,chat`,
+		},
+	},
+	"memory": {
+		summary: "Show what mote remembers, or find a past exchange by meaning.",
+		usage:   []string{"mote memory [--model ID] [--profile P]", `mote memory search "QUERY" [--model ID] [--profile P]`},
+		subs: []helpFlag{
+			{"(none)", "list remembered facts and, if kept, recent exchange history"},
+			{`search "QUERY"`, "find the past exchange closest in meaning to QUERY"},
+		},
+		examples: []string{"mote memory", `mote memory search "mutex"`},
+	},
+	"remember": {
+		summary:  "Keep a fact in front of every model step.",
+		usage:    []string{`mote remember "FACT"`},
+		examples: []string{`mote remember "I write Go, and prefer short answers"`},
+	},
+	"forget": {
+		summary: "Remove a remembered fact, or clear facts or exchange history.",
+		usage:   []string{"mote forget N", "mote forget --all", "mote forget --history"},
+		flags: []helpFlag{
+			{"--all", "forget every remembered fact"},
+			{"--history", "clear the exchange history"},
+		},
+		examples: []string{"mote forget 2", "mote forget --all", "mote forget --history"},
+	},
+	"models": {
+		summary: "Show models, sizes and which are in use; fetch, remove, explain or re-verify them.",
+		usage: []string{
+			"mote models [list]",
+			"mote models pull ID|CAPABILITY...|--all|--missing [--yes]",
+			"mote models upgrade [--check] [--prune] [--yes]",
+			"mote models rm ID",
+			"mote models why CAPABILITY",
+			"mote models verify",
+		},
+		subs: []helpFlag{
+			{"list", "show every model, its size and which capability it's the default for (default with no subcommand)"},
+			{"pull ID|CAP...|--all|--missing", "download models by id or capability; --missing fetches only the ones your profile uses, --all fetches every one"},
+			{"upgrade [--check] [--prune]", "fetch the newest registry and the best models it picks for your profile and RAM"},
+			{"rm ID", "remove a downloaded model"},
+			{"why CAPABILITY", "explain which model was chosen for a capability, and why"},
+			{"verify", "re-check the SHA-256 of every installed model"},
+		},
+		flags: []helpFlag{
+			{"--all", "with pull, fetch every model in the registry"},
+			{"--missing", "with pull, fetch only the models your profile currently uses"},
+			{"--check", "with upgrade, report changes without downloading"},
+			{"--prune", "with upgrade, remove models no longer used after upgrading"},
+			{"--yes, -y", "skip confirmation prompts"},
+		},
+		examples: []string{
+			"mote models",
+			"mote models pull text",
+			"mote models pull --missing",
+			"mote models why text",
+			"mote models upgrade --check",
+		},
+	},
+	"bench": {
+		summary: "Measure installed models locally: startup, tokens/s, peak RSS, small pass/fail checks.",
+		usage:   []string{"mote bench [--full] [--model ID] [--strict]"},
+		flags: []helpFlag{
+			{"--full", "also time loading with and without weight repacking"},
+			{"--model ID", "benchmark only this model"},
+			{"--strict", "exit non-zero if any check failed"},
+		},
+		examples: []string{"mote bench", "mote bench --full --strict"},
+	},
+	"tune": {
+		summary: "Propose configuration changes from `mote bench`'s measurements.",
+		usage:   []string{"mote tune [--apply]"},
+		flags: []helpFlag{
+			{"--apply", "record the proposed changes instead of only printing them"},
+		},
+		examples: []string{"mote tune", "mote tune --apply"},
+	},
+	"serve": {
+		summary: "Keep models loaded and serve them to editors through an OpenAI-compatible API.",
+		usage: []string{
+			"mote serve [--port N] [--keep-alive DURATION] [--background]",
+			"mote serve status",
+			"mote serve stop",
+		},
+		subs: []helpFlag{
+			{"(none)", "run the server, in the foreground unless --background, on 127.0.0.1:11435"},
+			{"status", "show what is loaded, and for how long"},
+			{"stop", "unload everything now"},
+		},
+		flags: []helpFlag{
+			{"--port N", "listen on this port instead of 11435"},
+			{"--keep-alive DURATION", "keep models loaded this long after the last use"},
+			{"--background", "start the server detached and return immediately"},
+		},
+		examples: []string{"mote serve", "mote serve status", "mote serve stop"},
+	},
+	"chat": {
+		summary: "Talk with the text model; it sees the earlier turns.",
+		usage:   []string{`mote chat [--system "INSTRUCTIONS"] [--model ID] [--profile P] [--continue] [--recall]`},
+		flags: []helpFlag{
+			{"--system TEXT", "set the system prompt for the conversation"},
+			{"--model ID", "use this model instead of the one your profile picks"},
+			{"--profile P", "use this profile for this run"},
+			{"--continue", "resume the previous chat history instead of starting fresh"},
+			{"--recall", "bring back the closest past exchanges as context before the first turn"},
+		},
+		notes: []string{chatHelp},
+		examples: []string{
+			"mote chat",
+			`mote chat --system "You are a terse code reviewer"`,
+		},
+	},
+	"index": {
+		summary: "Index files under a folder so `mote ask` can answer from them.",
+		usage: []string{
+			"mote index DIR... [--profile P]",
+			"mote index status",
+			"mote index rm DIR...|--all",
+		},
+		subs: []helpFlag{
+			{"DIR...", "index (or re-index changed files under) one or more folders; no folders refreshes what's indexed"},
+			{"status", "show what's indexed"},
+			{"rm DIR...|--all", "forget one or more folders, or the whole index"},
+		},
+		flags: []helpFlag{
+			{"--profile P", "use this profile's embedding model"},
+		},
+		examples: []string{
+			"mote index ~/notes ~/projects/mote/docs",
+			"mote index status",
+			"mote index rm ~/notes",
+		},
+	},
+	"ask": {
+		summary: "Answer a question from the indexed files closest to it, citing sources.",
+		usage:   []string{`mote ask "QUESTION" [--in DIR] [--top N] [-o FILE] [--model ID] [--profile P] [--sources]`},
+		flags: []helpFlag{
+			{"--in DIR", "search only files indexed under DIR"},
+			{"--top N", "use this many passages (default 6)"},
+			{"-o, --output FILE", "write the answer to FILE instead of stdout"},
+			{"--model ID", "use this model instead of the one your profile picks"},
+			{"--profile P", "use this profile for this run"},
+			{"--sources", "print the passages instead of asking a model to answer"},
+		},
+		examples: []string{
+			`mote ask "what did we decide about retries"`,
+			`mote ask "how does the logo get generated" --in ~/projects/mote/docs --sources`,
+		},
+	},
+	"listen": {
+		summary: "Wait for a wake word on the microphone, then run what you say next.",
+		usage:   []string{"mote listen [TASK] [--wake PHRASE] [--device D] [--chunk SECONDS] [--model ID] [--profile P] [--once]"},
+		flags: []helpFlag{
+			{"--wake PHRASE", `wake word to listen for (default "hey mote")`},
+			{"--device D", "input device (required on Windows)"},
+			{"--chunk SECONDS", "seconds per recording chunk"},
+			{"--model ID", "use this model instead of the one your profile picks"},
+			{"--profile P", "use this profile for this run"},
+			{"--once", "stop after one request"},
+		},
+		notes:    []string{"mote never listens unless you start it."},
+		examples: []string{"mote listen", `mote listen code --wake "ok mote"`},
+	},
+	"completion": {
+		summary: "Print a shell completion script.",
+		usage:   []string{"mote completion bash|zsh|fish"},
+		examples: []string{
+			"source <(mote completion bash)",
+			"mote completion zsh >> ~/.zshrc",
+		},
+	},
+	"guide": {
+		summary: "Ask the text model about mote itself: which command or task fits a goal.",
+		usage:   []string{"mote guide [--model ID] [--profile P]"},
+		flags: []helpFlag{
+			{"--model ID", "use this model instead of the one your profile picks"},
+			{"--profile P", "use this profile for this run"},
+		},
+		notes:    []string{chatHelp},
+		examples: []string{"mote guide"},
+	},
+}
+
+// hasHelpFlag reports whether args ask for help: -h or --help before a "--"
+// that would otherwise end flag parsing.
+func hasHelpFlag(args []string) bool {
+	for _, a := range args {
+		if a == "--" {
+			return false
+		}
+		if a == "--help" || a == "-h" {
+			return true
+		}
+	}
+	return false
+}
+
+// commandHelp implements `mote help CMD` and `mote CMD --help`.
+func (a *app) commandHelp(name string) error {
+	h, ok := helpTopics[name]
+	if !ok {
+		return usagef("unknown command %q; see `mote help`", name)
+	}
+	a.printCommandHelp(name, h)
+	return nil
+}
+
+func (a *app) printCommandHelp(name string, h helpTopic) {
+	o := a.uo
+	fmt.Fprintf(a.out, "%s %s\n\n", o.Bold("mote "+name), o.Dim("— "+h.summary))
+	fmt.Fprintln(a.out, o.Bold("Usage:"))
+	for _, u := range h.usage {
+		a.printInvocation(u)
+	}
+	if len(h.subs) > 0 {
+		fmt.Fprintf(a.out, "\n%s\n", o.Bold("Subcommands:"))
+		for _, s := range h.subs {
+			fmt.Fprintf(a.out, "  %s %s\n", o.Cyan(pad(s.name, 30)), s.desc)
+		}
+	}
+	if len(h.flags) > 0 {
+		fmt.Fprintf(a.out, "\n%s\n", o.Bold("Flags:"))
+		for _, f := range h.flags {
+			fmt.Fprintf(a.out, "  %s %s\n", o.Accent(pad(f.name, 22)), f.desc)
+		}
+	}
+	for _, n := range h.notes {
+		fmt.Fprintf(a.out, "\n%s\n", o.Dim(n))
+	}
+	if len(h.examples) > 0 {
+		fmt.Fprintf(a.out, "\n%s\n", o.Bold("Examples:"))
+		for _, e := range h.examples {
+			a.printInvocation(e)
+		}
+	}
+}
+
+// printInvocation prints one "mote CMD ARGS" line the way usage() does:
+// "mote" dim, the command cyan, everything else plain.
+func (a *app) printInvocation(line string) {
+	o := a.uo
+	line = strings.TrimPrefix(line, "mote ")
+	cmd, rest, ok := strings.Cut(line, " ")
+	if !ok {
+		fmt.Fprintf(a.out, "  %s %s\n", o.Dim("mote"), o.Cyan(cmd))
+		return
+	}
+	fmt.Fprintf(a.out, "  %s %s %s\n", o.Dim("mote"), o.Cyan(cmd), rest)
+}

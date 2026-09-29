@@ -63,6 +63,7 @@ const (
 const usage = `mote - local, CPU-only X-to-Y AI tasks
 
 Usage:
+  mote help [COMMAND]  (or add --help / -h to any command)
   mote setup [--yes] [--config FILE] [--profile P] [--data-dir DIR] [--auto-download] [--no-download] [--gpu|--no-gpu]
   mote run TASK [ARGS...] [-o OUTPUT] [--apply] [--model ID] [--profile P]
   mote chat [--system "INSTRUCTIONS"] [--model ID] [--continue] [--recall]
@@ -102,6 +103,7 @@ Examples:
   mote remember "I write Go, and prefer short answers"
   mote run chat "and in Python?" --continue
   mote guide
+  mote help chat
 `
 
 // usageError marks bad invocations (exit code 2).
@@ -190,8 +192,20 @@ func (a *app) dispatch(ctx context.Context, args []string) error {
 		return nil
 	}
 	cmd, rest := args[0], args[1:]
+	if cmd == "help" {
+		if len(rest) > 0 {
+			return a.commandHelp(rest[0])
+		}
+		a.usage()
+		return nil
+	}
+	if hasHelpFlag(rest) {
+		if _, ok := helpTopics[cmd]; ok {
+			return a.commandHelp(cmd)
+		}
+	}
 	switch cmd {
-	case "help", "-h", "--help":
+	case "-h", "--help":
 		a.usage()
 		return nil
 	case "version", "--version":

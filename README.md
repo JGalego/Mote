@@ -89,6 +89,7 @@ In a clone, `go install ./cmd/mote` does the same into `$(go env GOPATH)/bin`. `
 
 | Command | What it does |
 | --- | --- |
+| `mote help [COMMAND]` | Print general usage, or a command's flags, subcommands and examples; `mote COMMAND --help`/`-h` shows the same thing |
 | `mote setup [--profile P] [--yes] [--gpu\|--no-gpu]` | Install the runtime and the models for a profile (`small`, `balanced`, `quality`); asks about GPU offload when one is detected |
 | `mote run TASK [ARGS...]` | Run a task, e.g. `mote run chat "Explain what a mutex is"`; `-o FILE` writes the output, `--model ID` overrides the model, `--apply` writes `patch` changes |
 | `mote chat [--system "..."]` | Talk with the text model; it sees the earlier turns. `/new` starts over, `/exit` or Ctrl-D ends, a line ending in `\` continues, Tab completes a `/command` |
