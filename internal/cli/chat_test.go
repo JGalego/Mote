@@ -1,13 +1,17 @@
 package cli
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	mrt "github.com/jgalego/mote/internal/runtime"
+	"github.com/jgalego/mote/internal/ui"
 )
 
 // fakeLog returns the requests the fake llama-server was sent.
@@ -56,6 +60,41 @@ func TestChatKeepsTheConversation(t *testing.T) {
 	}
 	if code, _, _ := e.mote("", "chat", "stray"); code != ExitUsage {
 		t.Errorf("positional argument: exit %d", code)
+	}
+}
+
+func TestReadTurn(t *testing.T) {
+	a := &app{ue: ui.New(io.Discard)}
+
+	// A line ending in backslash continues onto the next, trimmed once complete.
+	sc := bufio.NewScanner(strings.NewReader("first \\\nsecond\n"))
+	sc.Buffer(make([]byte, 1<<20), 1<<20)
+	if line, ok := a.readTurn(sc, false); !ok || line != "first \nsecond" {
+		t.Errorf("continuation: got %q %v", line, ok)
+	}
+
+	// EOF while a continuation is still open returns what was gathered so far.
+	sc = bufio.NewScanner(strings.NewReader("first \\\n"))
+	if line, ok := a.readTurn(sc, false); !ok || line != "first " {
+		t.Errorf("continuation cut short by EOF: got %q %v", line, ok)
+	}
+
+	// Plain EOF with nothing typed reports there is no turn.
+	sc = bufio.NewScanner(strings.NewReader(""))
+	if _, ok := a.readTurn(sc, false); ok {
+		t.Error("empty input should report no turn")
+	}
+
+	// Live mode prompts for each line, marks a continuation differently,
+	// and ends the prompt's line once input runs out mid-continuation.
+	var errBuf bytes.Buffer
+	a.err = &errBuf
+	sc = bufio.NewScanner(strings.NewReader("first \\\n"))
+	if line, ok := a.readTurn(sc, true); !ok || line != "first " {
+		t.Errorf("live continuation: got %q %v", line, ok)
+	}
+	if s := errBuf.String(); !strings.Contains(s, "›") || !strings.Contains(s, "…") {
+		t.Errorf("live prompts missing: %q", s)
 	}
 }
 

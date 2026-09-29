@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -328,6 +329,50 @@ func TestUpdate(t *testing.T) {
 	}
 }
 
+// TestUpdateWarnsWhenTheBackupCannotBeWritten guards adoptRegistry's own
+// error path: a failed backup of the previous registry must be reported,
+// not silently dropped, and must not stop the new registry from being
+// written.
+func TestUpdateWarnsWhenTheBackupCannotBeWritten(t *testing.T) {
+	e := newEnv(t)
+	e.setup()
+	reg := registry.Default()
+	serveVersion := func(v string) *httptest.Server {
+		next := *reg
+		next.Version = v
+		body := registry.Encode(&next)
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(body) }))
+	}
+
+	srv1 := serveVersion(reg.Version + ".9")
+	defer srv1.Close()
+	t.Setenv("MOTE_REGISTRY_URL", srv1.URL)
+	if code, _, errs := e.mote("", "update"); code != 0 {
+		t.Fatalf("first update: %s", errs)
+	}
+
+	// A directory where the backup file belongs makes only the backup write
+	// fail; models.json itself is a different, still-writable path.
+	prev := filepath.Join(e.home, "registry", "models.prev.json")
+	if err := os.MkdirAll(prev, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	srv2 := serveVersion(reg.Version + ".10")
+	defer srv2.Close()
+	t.Setenv("MOTE_REGISTRY_URL", srv2.URL)
+	code, _, errs := e.mote("", "update")
+	if code != 0 {
+		t.Fatalf("second update: %d %s", code, errs)
+	}
+	if !strings.Contains(errs, "could not back up") {
+		t.Errorf("expected a backup warning, got %q", errs)
+	}
+	if _, out, _ := e.mote("", "version"); !strings.Contains(out, reg.Version+".10") {
+		t.Errorf("registry was not updated despite the backup failure: %s", out)
+	}
+}
+
 // moteTTY runs mote with stdout on a real file, which ui treats as
 // colourable when CLICOLOR_FORCE is set (a bytes.Buffer never is). Windows
 // needs a real console handle for that, so the caller is told whether colour
@@ -416,6 +461,76 @@ func TestCustomTasks(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "broken.json"), []byte(`{"tasks":[{"id":"nope"}]}`), 0o644)
 	if code, _, errs := e.mote("", "run", "chat", "hi"); code == 0 || !strings.Contains(errs, "broken.json") {
 		t.Errorf("broken task file: %d %s", code, errs)
+	}
+}
+
+func TestBarProgressStartsABar(t *testing.T) {
+	var buf bytes.Buffer
+	bp := barProgress{u: ui.New(&buf)}
+	tr := bp.Start("model.gguf", 5, 10)
+	if tr == nil {
+		t.Fatal("Start returned a nil tracker")
+	}
+	tr.Set(7)
+	tr.Finish(nil)
+}
+
+// TestReady covers both of ready's rules: a llama.cpp model needs only its
+// own files, but any other backend also needs its runtime installed.
+func TestReady(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("MOTE_HOME", dataDir)
+	seedFiles := func(m *registry.Model) {
+		t.Helper()
+		for _, f := range m.Files {
+			p := filepath.Join(dataDir, "models", m.ID, f.Name)
+			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(p, make([]byte, f.Size), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	a := &app{reg: &registry.Registry{
+		Runtime:  registry.Runtime{Name: "llama.cpp", Version: "b1"},
+		Runtimes: []registry.Runtime{{Name: "sd.cpp", Version: "master-1"}},
+	}}
+
+	llamaModel := &registry.Model{ID: "text", Backend: "llama.cpp", Files: []registry.File{{Role: "model", Name: "text.gguf", Size: 4}}}
+	if a.ready(llamaModel) {
+		t.Error("a llama.cpp model with no files should not be ready")
+	}
+	seedFiles(llamaModel)
+	if !a.ready(llamaModel) {
+		t.Error("a llama.cpp model needs only its own files")
+	}
+
+	sdModel := &registry.Model{ID: "flux", Backend: "sd.cpp", Files: []registry.File{{Role: "model", Name: "flux.gguf", Size: 4}}}
+	seedFiles(sdModel)
+	if a.ready(sdModel) {
+		t.Error("an sd.cpp model needs its runtime installed too, which it is not yet")
+	}
+	bin := "sd-cli"
+	if runtime.GOOS == "windows" {
+		bin += ".exe"
+	}
+	rtDir := filepath.Join(dataDir, "runtime", "sd.cpp-master-1")
+	if err := os.MkdirAll(rtDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rtDir, bin), []byte("bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if !a.ready(sdModel) {
+		t.Error("an sd.cpp model should be ready once its runtime is installed")
+	}
+
+	unknown := &registry.Model{ID: "x", Backend: "unknown.cpp", Files: []registry.File{{Role: "model", Name: "x.gguf", Size: 4}}}
+	seedFiles(unknown)
+	if a.ready(unknown) {
+		t.Error("a backend with no pinned runtime should never be ready")
 	}
 }
 

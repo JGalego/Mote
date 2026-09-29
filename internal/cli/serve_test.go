@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -21,6 +22,51 @@ func freeLoopbackPort(t *testing.T) string {
 	}
 	defer ln.Close()
 	return strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
+}
+
+// TestAwaitServer covers waiting for a server that has not started this
+// command's own: none appearing, one appearing with the wrong fingerprint,
+// and one appearing with the right one after a short delay.
+func TestAwaitServer(t *testing.T) {
+	newEnv(t) // sets MOTE_HOME, which a.statePath() below resolves through
+	a := &app{}
+
+	if _, ok := a.awaitServer("fp1", 200*time.Millisecond); ok {
+		t.Error("expected no server to be found")
+	}
+
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]string{"fingerprint": "other"})
+	}))
+	defer other.Close()
+	writeState := func(st serveState) {
+		t.Helper()
+		b, err := json.Marshal(st)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(a.statePath(), b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeState(serveState{URL: other.URL, Fingerprint: "other"})
+	if _, ok := a.awaitServer("fp1", 200*time.Millisecond); ok {
+		t.Error("a mismatched fingerprint should not be accepted")
+	}
+
+	matches := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]string{"fingerprint": "fp1"})
+	}))
+	defer matches.Close()
+	os.Remove(a.statePath())
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		writeState(serveState{URL: matches.URL, Fingerprint: "fp1"})
+	}()
+	url, ok := a.awaitServer("fp1", 2*time.Second)
+	if !ok || url != matches.URL {
+		t.Errorf("expected to find the server once it appeared: %q %v", url, ok)
+	}
 }
 
 // state reads serve.json from the test's data directory.

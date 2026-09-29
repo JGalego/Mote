@@ -96,6 +96,24 @@ func TestClipKeepsBothEnds(t *testing.T) {
 	}
 }
 
+func TestCappedBufferKeepsOnlyTheFirstMaxBytes(t *testing.T) {
+	c := &cappedBuffer{max: 5}
+	if n, err := c.Write([]byte("hello")); err != nil || n != 5 || c.String() != "hello" {
+		t.Errorf("exact fit: %d %v %q", n, err, c.String())
+	}
+	if n, err := c.Write([]byte("world")); err != nil || n != 5 || c.String() != "hello" {
+		t.Errorf("already full: %d %v %q", n, err, c.String())
+	}
+
+	c = &cappedBuffer{max: 5}
+	if n, err := c.Write([]byte("hi")); err != nil || n != 2 || c.String() != "hi" {
+		t.Errorf("room to spare: %d %v %q", n, err, c.String())
+	}
+	if n, err := c.Write([]byte("there")); err != nil || n != 5 || c.String() != "hithe" {
+		t.Errorf("overflow with some room left: %d %v %q", n, err, c.String())
+	}
+}
+
 func TestAgentPromptShortensOlderObservations(t *testing.T) {
 	obs := func(tag string) string { return tag + strings.Repeat(".", 3000) + tag + "-end" }
 	history := []taken{
