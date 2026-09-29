@@ -1,0 +1,9 @@
+# These paths are never part of the shipped mote binary: fakellama and
+# fakemcp are test doubles imported only by _test.go files, and cmd/mote's
+# main is a two-line wrapper around internal/cli.Main, which is the part
+# that is actually tested. Counting them would measure how well test
+# infrastructure tests itself, not how well mote is tested.
+ignore:
+  - "cmd/mote/main.go"
+  - "internal/fakellama/.*"
+  - "internal/fakemcp/.*"
