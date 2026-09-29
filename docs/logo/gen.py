@@ -32,10 +32,17 @@ def outline(text, size, x, y):
     return pen.getCommands(), cx - x, bounds.bounds
 
 
-# Motes leave the top of the cursor, rise and drift right while fading.
-# (start x offset, rise, drift, radius, duration s, delay s)
-MOTES = [(6, 58, 26, 5.8, 2.4, 0.0), (18, 70, 44, 4.2, 2.9, 0.6), (12, 50, 12, 3.4, 2.2, 1.2),
-         (24, 64, 58, 2.9, 3.1, 1.7), (8, 76, 34, 2.4, 2.7, 2.3), (20, 46, 50, 4.6, 2.5, 0.3)]
+# The cursor blinks on a steady, clock-like beat; motes ride the same clock so
+# they only exist during the invisible half and are always gone before it
+# reappears.
+CYCLE = 1.06  # full blink period, seconds (matches a regular cursor blink)
+ON_FRAC = 0.5  # fraction of CYCLE the cursor is visible
+
+# Motes leave the top of the cursor, rise and drift right while fading, each
+# living entirely inside the cursor's off-phase (t1..t3, as a fraction of CYCLE).
+# Kept sparse so the mark stays calm.
+# (start x offset, rise, drift, radius, t1, t3)
+MOTES = [(4, 42, 14, 3.8, 0.52, 0.80), (10, 46, 20, 4.6, 0.54, 0.86), (20, 38, 34, 3.4, 0.62, 0.93)]
 
 
 def logo(theme):
@@ -58,14 +65,17 @@ def logo(theme):
     height = round(ink_bottom - ink_top + 2 * pad_y)
     tx, ty = pad_x - left, pad_y - ink_top
     motes = []
-    for dx, rise, drift, r, dur, delay in MOTES:
+    for dx, rise, drift, r, t1, t3 in MOTES:
         x0, y0 = cx + dx, top + 6
+        t2 = t1 + 0.22 * (t3 - t1)
+        f2 = (t2 - t1) / (t3 - t1)
+        key = f"0;{t1:.3f};{t2:.3f};{t3:.3f};1"
         motes.append(
             f'<circle cx="{x0:.1f}" cy="{y0}" r="{r}" fill="{t["mote"]}" opacity="0">'
-            f'<animate attributeName="cy" values="{y0};{y0 - rise}" dur="{dur}s" begin="{delay}s" repeatCount="indefinite"/>'
-            f'<animate attributeName="cx" values="{x0:.1f};{x0 + drift:.1f}" dur="{dur}s" begin="{delay}s" repeatCount="indefinite"/>'
-            f'<animate attributeName="opacity" values="0;1;0.8;0" keyTimes="0;0.15;0.6;1" dur="{dur}s" begin="{delay}s" repeatCount="indefinite"/>'
-            f'<animate attributeName="r" values="{r};{r * 0.45:.1f}" dur="{dur}s" begin="{delay}s" repeatCount="indefinite"/>'
+            f'<animate attributeName="cy" values="{y0};{y0};{y0 - rise * f2:.2f};{y0 - rise:.2f};{y0 - rise:.2f}" keyTimes="{key}" dur="{CYCLE}s" repeatCount="indefinite"/>'
+            f'<animate attributeName="cx" values="{x0:.1f};{x0:.1f};{x0 + drift * f2:.2f};{x0 + drift:.1f};{x0 + drift:.1f}" keyTimes="{key}" dur="{CYCLE}s" repeatCount="indefinite"/>'
+            f'<animate attributeName="opacity" values="0;0;1;0.3;0" keyTimes="{key}" dur="{CYCLE}s" repeatCount="indefinite"/>'
+            f'<animate attributeName="r" values="{r};{r};{r - r * 0.6 * f2:.2f};{r * 0.4:.2f};{r * 0.4:.2f}" keyTimes="{key}" dur="{CYCLE}s" repeatCount="indefinite"/>'
             f"</circle>")
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" width="{width}" height="{height}" role="img" aria-label="mote">'
@@ -79,7 +89,8 @@ def logo(theme):
         f'<path d="{chev}" fill="url(#word)"/>'
         f'<path d="{word}" fill="{t["fg"]}"/>'
         f'<rect x="{cx:.1f}" y="{top}" width="{cw}" height="{ch}" rx="3" fill="url(#cursor)">'
-        f'<animate attributeName="opacity" values="1;0" dur="1.06s" calcMode="discrete" repeatCount="indefinite"/></rect>'
+        f'<animate attributeName="opacity" values="1;1;0;0" keyTimes="0;{ON_FRAC};{ON_FRAC};1" '
+        f'dur="{CYCLE}s" calcMode="discrete" repeatCount="indefinite"/></rect>'
         + "".join(motes) + "</g></svg>\n")
 
 
