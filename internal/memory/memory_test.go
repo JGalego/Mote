@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"testing"
 	"time"
@@ -72,6 +73,26 @@ func TestForget(t *testing.T) {
 	// Forgetting nothing is not an error.
 	if err := s.ForgetAll(); err != nil {
 		t.Errorf("second ForgetAll: %v", err)
+	}
+}
+
+// TestForgetFailsCleanlyWhenTheDirIsUnwritable guards writeAtomic's own
+// error path: if its temp file cannot even be created, Forget must report
+// that instead of leaving facts.txt half-written.
+func TestForgetFailsCleanlyWhenTheDirIsUnwritable(t *testing.T) {
+	if goruntime.GOOS == "windows" {
+		t.Skip("permission bits work differently on windows")
+	}
+	s := store(t)
+	s.Remember("one")
+	s.Remember("two")
+	dir := filepath.Dir(s.FactsPath)
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(dir, 0o700) // let TempDir clean up afterwards
+	if err := s.Forget(1); err == nil {
+		t.Error("expected an error when the config directory cannot be written to")
 	}
 }
 

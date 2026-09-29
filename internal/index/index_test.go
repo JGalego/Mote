@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"testing"
 	"time"
@@ -178,6 +179,42 @@ func TestBadIndexFileSaysHowToRecover(t *testing.T) {
 	os.WriteFile(p, []byte("{"), 0o644)
 	if _, err := Load(p); err == nil || !strings.Contains(err.Error(), "mote index rm --all") {
 		t.Errorf("%v", err)
+	}
+}
+
+// TestSaveIsPrivate guards against index.json going back to being
+// world-readable: it holds verbatim passages from every file indexed.
+func TestSaveIsPrivate(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "files.json")
+	ix, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ix.Save(); err != nil {
+		t.Fatal(err)
+	}
+	st, err := os.Stat(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if goruntime.GOOS != "windows" && st.Mode().Perm() != 0o600 {
+		t.Errorf("index.json mode is %o, want 0600", st.Mode().Perm())
+	}
+}
+
+// TestSaveFailsWhenTheDirCannotBeCreated guards Save's own error path: a
+// destination that cannot be prepared must be reported, not silently
+// dropped.
+func TestSaveFailsWhenTheDirCannotBeCreated(t *testing.T) {
+	blocker := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// blocker is a file, so nothing can be made a directory under it; built
+	// directly, since even Load fails to reach a path through it.
+	ix := &Index{Files: map[string]File{}, path: filepath.Join(blocker, "sub", "files.json")}
+	if err := ix.Save(); err == nil {
+		t.Error("expected an error when the parent path is not a directory")
 	}
 }
 

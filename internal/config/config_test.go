@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLoadMissing(t *testing.T) {
@@ -260,5 +261,47 @@ func TestDataDirPerPlatform(t *testing.T) {
 		if got := dataDirOn(goos, "/home/u", env(map[string]string{"MOTE_HOME": "/override", "XDG_DATA_HOME": "/xdg"})); got != "/override" {
 			t.Errorf("%s: MOTE_HOME ignored: %s", goos, got)
 		}
+	}
+}
+
+func TestKeepAliveDuration(t *testing.T) {
+	cases := []struct {
+		keepAlive string
+		want      time.Duration
+	}{
+		{"", DefaultKeepAlive},
+		{"30m", 30 * time.Minute},
+		{"0", 0},
+		{"not a duration", DefaultKeepAlive},
+		{"-5m", DefaultKeepAlive}, // a negative keep-alive makes no sense
+	}
+	for _, c := range cases {
+		if got := (Config{KeepAlive: c.keepAlive}).KeepAliveDuration(); got != c.want {
+			t.Errorf("KeepAlive %q: got %s, want %s", c.keepAlive, got, c.want)
+		}
+	}
+}
+
+// TestWriteAtomicFailsWhenTheDirCannotBeCreated guards writeAtomic's own
+// error path: Save must report a failure to prepare the destination
+// instead of silently losing the write.
+func TestWriteAtomicFailsWhenTheDirCannotBeCreated(t *testing.T) {
+	blocker := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// blocker is a file, so nothing can be made a directory under it.
+	err := writeAtomic(filepath.Join(blocker, "sub", "config.json"), []byte("{}"))
+	if err == nil {
+		t.Error("expected an error when the parent path is not a directory")
+	}
+}
+
+func TestPort(t *testing.T) {
+	if got := (Config{}).Port(); got != DefaultPort {
+		t.Errorf("default port: got %d, want %d", got, DefaultPort)
+	}
+	if got := (Config{ServePort: 8080}).Port(); got != 8080 {
+		t.Errorf("configured port: got %d, want 8080", got)
 	}
 }
