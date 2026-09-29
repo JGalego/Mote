@@ -316,8 +316,18 @@ func TestDoPlanResolvesAMissingFileInTheRequest(t *testing.T) {
 	// planner would never be offered "doc" as a choice at all: namedFiles
 	// would come back empty and the schema would drop any branch needing a
 	// file. --yes here answers the "use examples/invoice.txt instead?" ask.
+	// The reply is built with json.Marshal, not a hand-written literal,
+	// since resolved holds a filepath.Join path and a Windows "\i" is not a
+	// valid JSON escape.
 	resolved := filepath.Join("examples", "invoice.txt")
-	log := script(t, `{"first":{"task":"doc","args":["`+resolved+`"]},"then":[]}`)
+	reply, err := json.Marshal(map[string]any{
+		"first": map[string]any{"task": "doc", "args": []string{resolved}},
+		"then":  []any{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := script(t, string(reply))
 
 	code, out, errs := e.mote("", "do", "--plan", "--yes", "document invoice.txt")
 	if code != 0 {
