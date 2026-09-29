@@ -31,10 +31,16 @@ jobs:
         run: sudo apt-get install -y -q ffmpeg
       - name: Test
         if: runner.os == 'Linux'
-        run: go test -race ./...
+        run: go test -race -covermode=atomic -coverprofile=coverage.out ./...
       - name: Test
         if: runner.os != 'Linux'
         run: go test ./...
+      - name: Upload coverage to Codecov
+        if: runner.os == 'Linux'
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          files: ./coverage.out
+          token: ${{ secrets.CODECOV_TOKEN }}
       - name: Cross-build
         if: runner.os == 'Linux'
         shell: bash

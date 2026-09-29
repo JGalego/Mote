@@ -9,6 +9,7 @@
 
 <p align="center">
   <a href="https://github.com/JGalego/Mote/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/JGalego/Mote/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://codecov.io/gh/JGalego/Mote"><img alt="Coverage" src="https://codecov.io/gh/JGalego/Mote/graph/badge.svg"></a>
   <a href="https://github.com/JGalego/Mote/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/JGalego/Mote?display_name=tag&sort=semver"></a>
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
   <img alt="Platforms" src="https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20windows-lightgrey.svg">
