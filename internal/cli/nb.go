@@ -50,34 +50,75 @@ func (a *app) nbCmd(ctx context.Context, args []string) error {
 func prepareCells(book *motebook.Book, tasks []task.Task) ([]nbCell, error) {
 	cells := make([]nbCell, len(book.Cells))
 	for i, c := range book.Cells {
-		fail := func(format string, a ...any) error {
-			return usagef("cell %d (line %d): %s", i+1, c.Line, fmt.Sprintf(format, a...))
+		var err error
+		if cells[i], err = prepareCell(i, c, tasks); err != nil {
+			return nil, err
 		}
-		stages, err := parseStages(c.Expr)
-		if err != nil {
-			return nil, fail("%v", err)
-		}
-		found, err := resolveStages(stages, tasks)
-		if err != nil {
-			return nil, fail("%v", err)
-		}
-		nc := nbCell{cell: c, stages: stages, found: found}
-		for j, s := range stages {
-			if s.shell != "" {
-				// A shell command is text handed to a shell: a value that came
-				// from a model must not be able to become part of it.
-				if len(motebook.Refs(s.shell)) > 0 {
-					return nil, fail("{{name}} cannot go into a shell command; pipe the value in and use {} instead")
-				}
-				nc.changes = true
-			} else if found[j].Asks {
-				nc.changes = true
-			}
-		}
-		cells[i] = nc
 	}
 	return cells, nil
 }
+
+// prepareCell parses one cell and finds its tasks. i is its position, for
+// messages.
+func prepareCell(i int, c motebook.Cell, tasks []task.Task) (nbCell, error) {
+	fail := func(format string, a ...any) error {
+		return usagef("cell %d (line %d): %s", i+1, c.Line, fmt.Sprintf(format, a...))
+	}
+	stages, err := parseStages(c.Expr)
+	if err != nil {
+		return nbCell{}, fail("%v", err)
+	}
+	found, err := resolveStages(stages, tasks)
+	if err != nil {
+		return nbCell{}, fail("%v", err)
+	}
+	nc := nbCell{cell: c, stages: stages, found: found}
+	for j, s := range stages {
+		if s.shell != "" {
+			// A shell command is text handed to a shell: a value that came
+			// from a model must not be able to become part of it.
+			if len(motebook.Refs(s.shell)) > 0 {
+				return nbCell{}, fail("{{name}} cannot go into a shell command; pipe the value in and use {} instead")
+			}
+			nc.changes = true
+		} else if found[j].Asks {
+			nc.changes = true
+		}
+	}
+	return nc, nil
+}
+
+// nbModels holds what running cells needs from the models, loaded when the
+// first cell that has to run asks for it and kept for the ones after.
+type nbModels struct {
+	a          *app
+	vals       map[string]string
+	profile    string
+	remembered string
+	sessions   map[string]mrt.Session
+	ready      bool
+}
+
+func (a *app) newNbModels(vals map[string]string) *nbModels {
+	return &nbModels{a: a, vals: vals, sessions: map[string]mrt.Session{}}
+}
+
+func (m *nbModels) load(ctx context.Context) error {
+	if m.ready {
+		return nil
+	}
+	var err error
+	if m.profile, err = m.a.selectModels(m.vals); err != nil {
+		return err
+	}
+	if m.remembered, err = m.a.memoryFor(ctx, "", nil, m.profile, m.sessions); err != nil {
+		return err
+	}
+	m.ready = true
+	return nil
+}
+
+func (m *nbModels) close() { task.CloseSessions(m.sessions) }
 
 // confirmNotebook asks once, before anything runs, when cells can change
 // things. A notebook may have been written by a model (`mote meta`), so
@@ -143,24 +184,8 @@ func (a *app) nbRun(ctx context.Context, path string, vals map[string]string) er
 	}
 
 	// Models are only loaded when a cell has to run.
-	sessions := map[string]mrt.Session{}
-	defer task.CloseSessions(sessions)
-	var profile, remembered string
-	ready := false
-	prepare := func() error {
-		if ready {
-			return nil
-		}
-		var err error
-		if profile, err = a.selectModels(vals); err != nil {
-			return err
-		}
-		if remembered, err = a.memoryFor(ctx, "", nil, profile, sessions); err != nil {
-			return err
-		}
-		ready = true
-		return nil
-	}
+	models := a.newNbModels(vals)
+	defer models.close()
 
 	values := map[string]string{}
 	bindValue := func(c nbCell, v string) {
@@ -199,20 +224,17 @@ func (a *app) nbRun(ctx context.Context, path string, vals map[string]string) er
 			fmt.Fprintf(a.err, "%s %s %s\n", a.ue.Dim("·"), label, a.ue.Dim("would run: "+oneLine(c.cell.Expr)))
 			continue
 		}
-		if err := prepare(); err != nil {
+		if err := models.load(ctx); err != nil {
 			return err
 		}
 		done := a.status(label)
-		text, volatile, err := a.runCell(ctx, c, values, vals, profile, sessions, remembered)
+		res, err := a.runToOutput(ctx, c, key, values, vals, models)
 		done(err == nil)
 		if err != nil {
 			return fmt.Errorf("cell %d (line %d): %w", i+1, c.cell.Line, err)
 		}
-		bindValue(c, text)
-		if volatile || c.changes {
-			key = ""
-		}
-		book.Set(i, motebook.Output{Key: key, Text: text})
+		bindValue(c, res.Text)
+		book.Set(i, res)
 		if err := save(); err != nil {
 			return err
 		}
@@ -225,11 +247,25 @@ func (a *app) nbRun(ctx context.Context, path string, vals map[string]string) er
 	return nil
 }
 
+// runToOutput runs a cell and returns the output to keep under it. key is
+// the fingerprint it would have if it could be trusted to come out the same
+// again; a cell that can change things, or that produced files, which may
+// be gone by the next run, is kept without one and so always runs.
+func (a *app) runToOutput(ctx context.Context, c nbCell, key string, values, vals map[string]string, m *nbModels) (motebook.Output, error) {
+	text, files, err := a.runCell(ctx, c, values, vals, m)
+	if err != nil {
+		return motebook.Output{}, err
+	}
+	if files || c.changes {
+		key = ""
+	}
+	return motebook.Output{Key: key, Text: text}, nil
+}
+
 // runCell runs one cell with the values bound so far and returns what it
-// produced. volatile reports a result that must not be trusted to still be
-// true later: files, which may be gone by the next run.
-func (a *app) runCell(ctx context.Context, c nbCell, values, vals map[string]string, profile string,
-	sessions map[string]mrt.Session, remembered string) (text string, volatile bool, err error) {
+// produced: its text, or the paths of the files it made, one per line, in
+// which case files is set.
+func (a *app) runCell(ctx context.Context, c nbCell, values, vals map[string]string, m *nbModels) (text string, files bool, err error) {
 	lookup := func(name string) (string, bool) {
 		v, ok := values[name]
 		return v, ok
@@ -238,7 +274,7 @@ func (a *app) runCell(ctx context.Context, c nbCell, values, vals map[string]str
 	for i := range stages {
 		stages[i].expand = func(s string) string { return motebook.Substitute(s, lookup) }
 	}
-	r, err := a.chain(ctx, stages, c.found, vals, profile, sessions, remembered, "", false)
+	r, err := a.chain(ctx, stages, c.found, vals, m.profile, m.sessions, m.remembered, "", false)
 	if err != nil {
 		return "", false, err
 	}
