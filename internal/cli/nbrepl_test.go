@@ -344,3 +344,73 @@ func TestNbConsoleAsksWhetherToSaveWhenItEndsAtATerminal(t *testing.T) {
 		t.Errorf("a file session asked to save: %s", errs)
 	}
 }
+
+func TestConsoleTagline(t *testing.T) {
+	for _, c := range []struct {
+		path  string
+		cells int
+		want  string
+	}{
+		{"", 0, "notebook console · not saved · 0 cells · /help"},
+		{"scratch.mote.md", 1, "notebook console · scratch.mote.md · 1 cell · /help"},
+		{"scratch.mote.md", 12, "notebook console · scratch.mote.md · 12 cells · /help"},
+	} {
+		if got := consoleTagline(c.path, c.cells); got != c.want {
+			t.Errorf("consoleTagline(%q, %d) = %q, want %q", c.path, c.cells, got, c.want)
+		}
+	}
+}
+
+// consoleStderr runs a session with stdout and stderr as real files, which is
+// what it takes for mote to think it has a terminal to decorate.
+func consoleStderr(t *testing.T, e *env, env map[string]string, args ...string) string {
+	t.Helper()
+	t.Setenv("MOTE_FORCE_LIVE", "1")
+	t.Setenv("CLICOLOR_FORCE", "1")
+	t.Setenv("TERM", "xterm")
+	for k, v := range env {
+		t.Setenv(k, v)
+	}
+	dir := t.TempDir()
+	out, err := os.Create(filepath.Join(dir, "out"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	errf, err := os.Create(filepath.Join(dir, "err"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Close()
+	defer errf.Close()
+	if code := Main(args, strings.NewReader(""), out, errf); code != 0 {
+		t.Fatalf("%v: exit %d\n%s", args, code, readFile(t, errf.Name()))
+	}
+	return readFile(t, errf.Name())
+}
+
+func TestConsoleOpensWithTheBannerAtATerminal(t *testing.T) {
+	e, path := nbSessionEnv(t)
+
+	// In colour: the logo, and the tagline under it.
+	got := consoleStderr(t, e, nil, "nb", "console", path)
+	if !strings.Contains(got, "\x1b[") || !strings.Contains(got, "notebook console · "+path+" · 0 cells · /help") {
+		t.Errorf("coloured banner:\n%q", got)
+	}
+	if !strings.Contains(got, "██") && !strings.Contains(got, "_") && strings.Count(got, "\n") < 6 {
+		t.Errorf("no logo, only a line:\n%q", got)
+	}
+
+	// Without colour it is a line, as elsewhere, so a log stays compact.
+	got = consoleStderr(t, e, map[string]string{"NO_COLOR": "1"}, "nb", "console", "-o", filepath.Join(t.TempDir(), "x.mote.md"))
+	if strings.Contains(got, "\x1b") || !strings.Contains(got, "mote - notebook console · not saved · 0 cells · /help\n") {
+		t.Errorf("plain banner:\n%q", got)
+	}
+}
+
+func TestConsoleHasNoBannerWhenPiped(t *testing.T) {
+	e, path := nbSessionEnv(t)
+	code, out, errs := e.mote("chat hi\n", "nb", "console", path)
+	if code != 0 || strings.Contains(errs, "notebook console") || strings.Contains(out, "notebook console") {
+		t.Errorf("a piped session was decorated: %d %q %s", code, out, errs)
+	}
+}

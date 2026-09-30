@@ -48,6 +48,16 @@ func cellCount(n int) string {
 	return fmt.Sprintf("%d cells", n)
 }
 
+// consoleTagline is the line under the banner when a session opens: where
+// the cells are kept, how many there are, and where to find the commands.
+func consoleTagline(path string, cells int) string {
+	where := path
+	if where == "" {
+		where = "not saved"
+	}
+	return fmt.Sprintf("notebook console · %s · %s · /help", where, cellCount(cells))
+}
+
 // defaultSessionName is what saving a session offers as its file name.
 const defaultSessionName = "session.mote.md"
 
@@ -100,11 +110,7 @@ func (a *app) nbConsole(ctx context.Context, path string, vals map[string]string
 
 	live := a.tty && a.uo.Live()
 	if live {
-		where := path
-		if where == "" {
-			where = "not saved"
-		}
-		fmt.Fprintln(a.err, a.ue.Dim(fmt.Sprintf("%s · %s · /help", where, cellCount(len(book.Cells)))))
+		fmt.Fprint(a.err, a.ue.Banner(consoleTagline(path, len(book.Cells))))
 	}
 	for {
 		prompt := a.ue.Accent(fmt.Sprintf("In [%d]: ", len(s.book.Cells)+1))
