@@ -3,26 +3,56 @@ package cli
 import (
 	"bufio"
 	"fmt"
+	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 // slashCommands are the commands recognized at the chat prompt; Tab
 // completes them there.
 var slashCommands = []string{"/exit", "/quit", "/bye", "/new", "/reset", "/clear", "/help", "/?"}
 
+// completer proposes what the word that ends at pos in line could become:
+// start is where that word begins, and cands are the whole replacements for
+// line[start:pos], each with any suffix it should carry.
+type completer func(line []rune, pos int) (start int, cands []string)
+
+// lineOpts says what a line editor offers besides typing.
+type lineOpts struct {
+	complete completer // Tab; nil for none
+	history  *[]string // Up and Down; nil for none
+}
+
+// slashCompleter completes a command at the start of a line.
+func slashCompleter(cmds []string) completer {
+	return func(line []rune, pos int) (int, []string) {
+		typed := string(line[:pos])
+		if !strings.HasPrefix(typed, "/") || strings.ContainsAny(typed, " \t") {
+			return 0, nil
+		}
+		return 0, filterPrefix(cmds, typed)
+	}
+}
+
 // editTurn reads one turn from a terminal already in cbreak mode, echoing
 // what is typed and completing a leading "/" command on Tab. Like readTurn,
 // a line ending in "\" continues onto the next; ok is false at Ctrl-D on an
 // empty line or a read error.
 func (a *app) editTurn(r *bufio.Reader) (string, bool) {
+	return a.editTurnWith(r, a.ue.Accent("› "), lineOpts{complete: slashCompleter(slashCommands)})
+}
+
+// editTurnWith is editTurn with its own prompt and options. A turn of one
+// line is added to the history.
+func (a *app) editTurnWith(r *bufio.Reader, first string, o lineOpts) (string, bool) {
 	var parts []string
 	for {
-		prompt := a.ue.Accent("› ")
+		prompt := first
 		if len(parts) > 0 {
 			prompt = a.ue.Dim("… ")
 		}
 		fmt.Fprint(a.err, prompt)
-		line, ok := a.editLine(r, prompt)
+		line, ok := a.readLine(r, prompt, o)
 		if !ok {
 			if len(parts) > 0 {
 				return strings.Join(parts, "\n"), true
@@ -34,70 +64,316 @@ func (a *app) editTurn(r *bufio.Reader) (string, bool) {
 			continue
 		}
 		parts = append(parts, line)
-		return strings.TrimSpace(strings.Join(parts, "\n")), true
+		turn := strings.TrimSpace(strings.Join(parts, "\n"))
+		if o.history != nil && turn != "" && !strings.Contains(turn, "\n") {
+			if h := *o.history; len(h) == 0 || h[len(h)-1] != turn {
+				*o.history = append(h, turn)
+			}
+		}
+		return turn, true
 	}
 }
 
-// editLine reads one line byte by byte, since the terminal no longer
-// echoes or buffers it. Backspace edits, Tab completes a leading slash
-// command, and an escape sequence (an arrow key, say) is swallowed rather
-// than left to corrupt the buffer.
+// editLine reads one line with the chat prompt's editing: see readLine.
 func (a *app) editLine(r *bufio.Reader, prompt string) (string, bool) {
-	var buf []rune
-	redraw := func() { fmt.Fprintf(a.err, "\r\x1b[K%s%s", prompt, string(buf)) }
+	return a.readLine(r, prompt, lineOpts{complete: slashCompleter(slashCommands)})
+}
+
+var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
+
+// visibleLen is how many columns s takes on a terminal, colour codes
+// excluded.
+func visibleLen(s string) int { return utf8.RuneCountInString(ansiRe.ReplaceAllString(s, "")) }
+
+// editor is a line being edited on a terminal in cbreak mode, which echoes
+// nothing and buffers nothing, so drawing it is up to us.
+type editor struct {
+	a      *app
+	r      *bufio.Reader
+	prompt string
+	o      lineOpts
+	width  int // columns
+	plen   int // columns the prompt takes
+
+	buf   []rune
+	pos   int    // the cursor, as an index into buf
+	row   int    // the row of the drawn line the cursor is on, from its first
+	hist  int    // which history entry is showing; len(history) is the line being typed
+	draft []rune // the line being typed, while an older one shows
+}
+
+// readLine reads one line, byte by byte. It edits in place (Left, Right,
+// Home, End, Delete, Backspace and the usual Ctrl keys), recalls earlier lines
+// with Up and Down, completes with Tab, and takes UTF-8. Any other escape
+// sequence is swallowed rather than left to corrupt the line. ok is false at
+// Ctrl-D on an empty line or on a read error.
+func (a *app) readLine(r *bufio.Reader, prompt string, o lineOpts) (string, bool) {
+	e := &editor{a: a, r: r, prompt: prompt, o: o, width: max(a.ue.Width(), 20), plen: visibleLen(prompt)}
+	if o.history != nil {
+		e.hist = len(*o.history)
+	}
+	return e.run()
+}
+
+func (e *editor) run() (string, bool) {
 	for {
-		b, err := r.ReadByte()
+		b, err := e.r.ReadByte()
 		if err != nil {
 			return "", false
 		}
 		switch {
 		case b == '\r' || b == '\n':
-			fmt.Fprintln(a.err)
-			return string(buf), true
+			e.finish()
+			return string(e.buf), true
 		case b == 4: // Ctrl-D
-			if len(buf) == 0 {
+			if len(e.buf) == 0 {
 				return "", false
 			}
-		case b == 127 || b == 8: // backspace/DEL
-			if len(buf) > 0 {
-				buf = buf[:len(buf)-1]
-				fmt.Fprint(a.err, "\b \b")
+			e.deleteAt(e.pos)
+		case b == 127 || b == 8: // backspace
+			if e.pos > 0 {
+				e.pos--
+				e.deleteAt(e.pos)
 			}
 		case b == '\t':
-			buf = a.completeSlash(buf, redraw)
+			e.tab()
+		case b == 1: // Ctrl-A
+			e.moveTo(0)
+		case b == 5: // Ctrl-E
+			e.moveTo(len(e.buf))
+		case b == 2: // Ctrl-B
+			e.moveTo(e.pos - 1)
+		case b == 6: // Ctrl-F
+			e.moveTo(e.pos + 1)
+		case b == 16: // Ctrl-P
+			e.recall(-1)
+		case b == 14: // Ctrl-N
+			e.recall(1)
+		case b == 21: // Ctrl-U: everything before the cursor
+			e.buf, e.pos = e.buf[e.pos:], 0
+			e.draw()
+		case b == 11: // Ctrl-K: everything after it
+			e.buf = e.buf[:e.pos]
+			e.draw()
+		case b == 23: // Ctrl-W: the word before it
+			start := e.wordStart(e.pos)
+			e.buf = append(e.buf[:start:start], e.buf[e.pos:]...)
+			e.pos = start
+			e.draw()
 		case b == 0x1b:
-			skipEscape(r)
+			e.escape()
 		case b >= 0x20 && b < 0x7f:
-			buf = append(buf, rune(b))
-			fmt.Fprintf(a.err, "%c", b)
+			e.insert(rune(b))
+		case b >= 0x80:
+			e.r.UnreadByte()
+			if c, _, err := e.r.ReadRune(); err == nil && c != utf8.RuneError {
+				e.insert(c)
+			}
 		}
 	}
 }
 
-// completeSlash expands buf on Tab: a single match replaces it outright, an
-// ambiguous one extends buf to their common prefix, and if that adds
-// nothing, the candidates print below for the line to be redrawn under.
-func (a *app) completeSlash(buf []rune, redraw func()) []rune {
-	cur := string(buf)
-	if !strings.HasPrefix(cur, "/") {
-		return buf
+// insert types c at the cursor.
+func (e *editor) insert(c rune) {
+	atEnd := e.pos == len(e.buf)
+	e.buf = append(e.buf, 0)
+	copy(e.buf[e.pos+1:], e.buf[e.pos:])
+	e.buf[e.pos] = c
+	e.pos++
+	if !atEnd {
+		e.draw()
+		return
 	}
-	matches := filterPrefix(slashCommands, cur)
-	switch len(matches) {
-	case 0:
-		return buf
-	case 1:
-		buf = []rune(matches[0])
-	default:
-		if common := commonPrefix(matches); len(common) > len(cur) {
-			buf = []rune(common)
+	// Typing at the end needs no redraw; the terminal wraps by itself, and
+	// only the exact end of a row needs the line moved down for us.
+	fmt.Fprint(e.a.err, string(c))
+	if end := e.plen + len(e.buf); end%e.width == 0 {
+		fmt.Fprint(e.a.err, "\r\n")
+	}
+	e.row = (e.plen + e.pos) / e.width
+}
+
+func (e *editor) deleteAt(i int) {
+	if i >= len(e.buf) {
+		return
+	}
+	e.buf = append(e.buf[:i], e.buf[i+1:]...)
+	e.draw()
+}
+
+func (e *editor) moveTo(i int) {
+	i = min(max(i, 0), len(e.buf))
+	if i == e.pos {
+		return
+	}
+	e.pos = i
+	e.draw()
+}
+
+// wordStart is where the word before i begins.
+func (e *editor) wordStart(i int) int {
+	for i > 0 && e.buf[i-1] == ' ' {
+		i--
+	}
+	for i > 0 && e.buf[i-1] != ' ' {
+		i--
+	}
+	return i
+}
+
+// wordEnd is where the word at or after i ends.
+func (e *editor) wordEnd(i int) int {
+	for i < len(e.buf) && e.buf[i] == ' ' {
+		i++
+	}
+	for i < len(e.buf) && e.buf[i] != ' ' {
+		i++
+	}
+	return i
+}
+
+// recall shows an earlier (-1) or later (+1) line from the history. The line
+// being typed is kept, and comes back after the newest.
+func (e *editor) recall(dir int) {
+	if e.o.history == nil {
+		return
+	}
+	h := *e.o.history
+	next := e.hist + dir
+	if next < 0 || next > len(h) {
+		return
+	}
+	if e.hist == len(h) {
+		e.draft = append([]rune(nil), e.buf...)
+	}
+	e.hist = next
+	if next == len(h) {
+		e.buf = append([]rune(nil), e.draft...)
+	} else {
+		e.buf = []rune(h[next])
+	}
+	e.pos = len(e.buf)
+	e.draw()
+}
+
+// escape reads an escape sequence and does what it asks for, if it is a key
+// this understands. Anything else is read to its end and dropped.
+func (e *editor) escape() {
+	b, err := e.r.ReadByte()
+	if err != nil || (b != '[' && b != 'O') {
+		return
+	}
+	var params []byte
+	for {
+		c, err := e.r.ReadByte()
+		if err != nil {
+			return
+		}
+		if c >= 0x40 && c <= 0x7e {
+			e.key(string(params), c)
+			return
+		}
+		params = append(params, c)
+	}
+}
+
+// key acts on the arrow, Home, End and Delete keys. A held Ctrl (";5") makes
+// Left and Right move by words.
+func (e *editor) key(params string, final byte) {
+	word := strings.HasSuffix(params, ";5")
+	switch final {
+	case 'A':
+		e.recall(-1)
+	case 'B':
+		e.recall(1)
+	case 'C':
+		if word {
+			e.moveTo(e.wordEnd(e.pos))
 		} else {
-			fmt.Fprintln(a.err)
-			fmt.Fprintln(a.err, strings.Join(matches, "  "))
+			e.moveTo(e.pos + 1)
+		}
+	case 'D':
+		if word {
+			e.moveTo(e.wordStart(e.pos))
+		} else {
+			e.moveTo(e.pos - 1)
+		}
+	case 'H':
+		e.moveTo(0)
+	case 'F':
+		e.moveTo(len(e.buf))
+	case '~':
+		switch params {
+		case "1", "7":
+			e.moveTo(0)
+		case "4", "8":
+			e.moveTo(len(e.buf))
+		case "3":
+			e.deleteAt(e.pos)
 		}
 	}
-	redraw()
-	return buf
+}
+
+// draw redraws the whole line, wherever it wraps, and puts the cursor back
+// where it is in it.
+func (e *editor) draw() {
+	w := e.a.err
+	if e.row > 0 {
+		fmt.Fprintf(w, "\x1b[%dA", e.row)
+	}
+	fmt.Fprintf(w, "\r\x1b[J%s%s", e.prompt, string(e.buf))
+	end := e.plen + len(e.buf)
+	if end > 0 && end%e.width == 0 {
+		fmt.Fprint(w, "\r\n") // the cursor waits at the edge; move it to the next row for real
+	}
+	row, col := (e.plen+e.pos)/e.width, (e.plen+e.pos)%e.width
+	if up := end/e.width - row; up > 0 {
+		fmt.Fprintf(w, "\x1b[%dA", up)
+	}
+	fmt.Fprint(w, "\r")
+	if col > 0 {
+		fmt.Fprintf(w, "\x1b[%dC", col)
+	}
+	e.row = row
+}
+
+// finish ends the line: the cursor goes below it, wherever it was in it.
+func (e *editor) finish() {
+	if down := (e.plen+len(e.buf))/e.width - e.row; down > 0 {
+		fmt.Fprintf(e.a.err, "\x1b[%dB", down)
+	}
+	fmt.Fprintln(e.a.err)
+}
+
+// tab completes the word before the cursor: a single match replaces it, an
+// ambiguous one extends it to what the matches share, and if that adds
+// nothing, the candidates print below for the line to be drawn under.
+func (e *editor) tab() {
+	if e.o.complete == nil {
+		return
+	}
+	start, cands := e.o.complete(e.buf, e.pos)
+	if len(cands) == 0 {
+		return
+	}
+	typed := string(e.buf[start:e.pos])
+	insert := ""
+	switch {
+	case len(cands) == 1:
+		insert = cands[0]
+	case len(commonPrefix(cands)) > len(typed):
+		insert = commonPrefix(cands)
+	default:
+		e.finish()
+		fmt.Fprintln(e.a.err, strings.Join(cands, "  "))
+		e.row = 0
+		e.draw()
+		return
+	}
+	tail := append([]rune(nil), e.buf[e.pos:]...)
+	e.buf = append(append(e.buf[:start:start], []rune(insert)...), tail...)
+	e.pos = start + utf8.RuneCountInString(insert)
+	e.draw()
 }
 
 // commonPrefix returns the longest prefix shared by every string in ss.
@@ -105,26 +381,14 @@ func commonPrefix(ss []string) string {
 	if len(ss) == 0 {
 		return ""
 	}
-	p := ss[0]
+	p := []rune(ss[0])
 	for _, s := range ss[1:] {
-		for !strings.HasPrefix(s, p) {
-			p = p[:len(p)-1]
+		r := []rune(s)
+		n := 0
+		for n < len(p) && n < len(r) && p[n] == r[n] {
+			n++
 		}
+		p = p[:n]
 	}
-	return p
-}
-
-// skipEscape discards the rest of an escape sequence (an arrow key, a
-// function key) so it cannot leak literal bytes into the line.
-func skipEscape(r *bufio.Reader) {
-	b, err := r.ReadByte()
-	if err != nil || (b != '[' && b != 'O') {
-		return
-	}
-	for {
-		b, err := r.ReadByte()
-		if err != nil || (b >= 0x40 && b <= 0x7e) {
-			return
-		}
-	}
+	return string(p)
 }

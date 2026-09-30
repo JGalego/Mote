@@ -143,7 +143,10 @@ func (a *app) chatCmd(ctx context.Context, args []string) error {
 			if restore, ok := ui.EnterCbreak(f); ok {
 				defer restore()
 				br := bufio.NewReader(f)
-				next = func() (string, bool) { return a.editTurn(br) }
+				var history []string
+				next = func() (string, bool) {
+					return a.editTurnWith(br, a.ue.Accent("› "), lineOpts{complete: slashCompleter(slashCommands), history: &history})
+				}
 			}
 		}
 	}
