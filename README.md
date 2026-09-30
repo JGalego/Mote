@@ -17,6 +17,10 @@
 
 mote runs X-to-Y AI tasks (text, code, images, audio, video, files) on your CPU with small quantized models. It is a single static binary that drives [llama.cpp](https://github.com/ggml-org/llama.cpp) and the tools you already have (`ffmpeg`, `git`, your editor). No accounts, no cloud inference, no telemetry.
 
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=fmUuuhKX80A"><img alt="Watch the mote video on YouTube" src="https://img.youtube.com/vi/fmUuuhKX80A/maxresdefault.jpg" width="640"></a>
+</p>
+
 ## Contents
 
 - [Getting started](#getting-started)
