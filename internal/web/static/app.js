@@ -251,10 +251,10 @@ function outputView(seg, i) {
     const el = m.kind === 'image' ? h('img', { src: m.url, alt: m.path, loading: 'lazy' })
       : m.kind === 'audio' ? h('audio', { src: m.url, controls: true, preload: 'metadata' })
       : h('video', { src: m.url, controls: true, preload: 'metadata' });
-    return h('figure', { class: 'media' }, el, h('figcaption', { class: 'outside', text: m.path }));
+    return h('figure', { class: 'shot' }, el, h('figcaption', { text: m.path }));
   });
   return h('div', { class: 'output' },
-    media.length ? h('div', { class: 'media' }, media) : (out.text ? h('pre', { text: out.text }) : null),
+    media.length ? h('div', { class: 'media' + (media.length > 1 ? ' several' : '') }, media) : (out.text ? h('pre', { text: out.text }) : null),
     (out.outside || []).length ? h('div', { class: 'outside', text: 'Not shown, since it is outside the served folder (see --root): ' + out.outside.join(', ') }) : null);
 }
 
