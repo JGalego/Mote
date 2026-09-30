@@ -8,7 +8,10 @@ Files to try mote on.
 | `clip.mp4` | 10 seconds of animation, with no text in it: a sailboat crossing a sea as the sun sets, gulls overhead, narrated by a voice that says what is on screen | `mote run video examples/clip.mp4` or `mote pipe "frames examples/clip.mp4 3 \| describe -"` |
 | `photo.jpg` | A drawing of a cafe with a sign | `mote run describe examples/photo.jpg "What is written on the sign?"` or `mote run ocr examples/photo.jpg` |
 | `invoice.txt`, `invoice.schema.json` | A small invoice and the fields to pull out of it | `mote run extract examples/invoice.txt examples/invoice.schema.json` |
+| `standup.mote.md`, `standup.ipynb` | A notebook that transcribes `meeting.m4a`, lists its decisions, translates them and drafts a message, with the outputs from a real run; the `.ipynb` is the same notebook exported for Jupyter | `mote nb run examples/standup.mote.md` (every cell is unchanged, so nothing is recomputed), or `mote nb export examples/standup.mote.md` |
 | `setup.json`, `tools.json` | A setup file for `mote setup --config`, and custom tasks that wrap `rg`, `jq` and `git` | see [Extending mote](../docs/extending.md) |
+
+Cells in the notebooks use paths from the repository root, so run them from there.
 
 They chain, which is what a demo wants:
 
