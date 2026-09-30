@@ -223,7 +223,7 @@ func TestWriteFileAtomicKeepsTheMode(t *testing.T) {
 	if err := os.WriteFile(p, []byte("old"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeFileAtomic(p, []byte("new")); err != nil {
+	if err := writeFileAtomic(p, []byte("new"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	fi, err := os.Stat(p)
@@ -233,7 +233,7 @@ func TestWriteFileAtomicKeepsTheMode(t *testing.T) {
 	if left, _ := filepath.Glob(p + ".tmp*"); len(left) != 0 {
 		t.Errorf("temporary files left behind: %v", left)
 	}
-	if err := writeFileAtomic(filepath.Join(t.TempDir(), "no", "such", "dir", "f"), nil); err == nil {
+	if err := writeFileAtomic(filepath.Join(t.TempDir(), "no", "such", "dir", "f"), nil, 0o644); err == nil {
 		t.Error("writing into a missing directory succeeded")
 	}
 }

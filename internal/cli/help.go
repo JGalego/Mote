@@ -157,15 +157,18 @@ var helpTopics = map[string]helpTopic{
 		usage: []string{
 			"mote nb run FILE [-o FILE|-] [--force] [--dry-run] [--yes|-y] [--model ID] [--profile P]",
 			"mote nb edit FILE [--yes|-y] [--model ID] [--profile P]",
+			"mote nb exec [--state FILE] [--yes|-y] [--model ID] [--profile P]",
 		},
 		subs: []helpFlag{
 			{"run FILE", "run the cells in order, saving FILE after each one"},
 			{"edit FILE", "type cells one at a time: each runs as you enter it, its output printed below and kept in FILE"},
+			{"exec", "run the one cell on standard input and print its output; what a Jupyter kernel calls for each cell"},
 		},
 		flags: []helpFlag{
 			{"-o, --output FILE", "with run, write the notebook to FILE instead of FILE itself; - prints it"},
 			{"--force", "with run, run every cell, even those whose text and inputs are unchanged"},
 			{"--dry-run", "with run, show which cells would run, without running them"},
+			{"--state FILE", "with exec, the JSON file holding the values earlier cells bound; read before the cell runs and written after"},
 			{"--yes, -y", "run cells that can change things (shell stages, tasks that ask) without asking"},
 			{"--model ID", "use this model for every capability it provides"},
 			{"--profile P", "use this profile for this run"},
@@ -180,6 +183,7 @@ var helpTopics = map[string]helpTopic{
 			"mote nb run notes.mote.md --dry-run",
 			"mote nb run notes.mote.md -o - --force",
 			"mote nb edit scratch.mote.md",
+			`echo 'city = chat "capital of France"' | mote nb exec --state session.json`,
 		},
 	},
 	"meta": {

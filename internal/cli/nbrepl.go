@@ -142,7 +142,7 @@ func (s *nbSession) restore(text string) error {
 }
 
 func (s *nbSession) save() error {
-	return writeFileAtomic(s.path, []byte(s.book.String()))
+	return writeFileAtomic(s.path, []byte(s.book.String()), 0o644)
 }
 
 func (s *nbSession) undoLast() error {
@@ -177,9 +177,9 @@ func (s *nbSession) run(ctx context.Context, line string) error {
 		}
 		return err
 	}
-	cell, err := prepareCell(idx, s.book.Cells[idx], s.tasks)
+	cell, err := prepareCell(s.book.Cells[idx], s.tasks)
 	if err != nil {
-		return fail(err)
+		return fail(locateCell(idx, s.book.Cells[idx], err))
 	}
 	inputs := map[string]string{}
 	for _, r := range cell.cell.Refs {

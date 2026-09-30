@@ -21,7 +21,9 @@ import (
 // are unchanged since its output was written is not run again, and one that
 // binds a name with as=NAME hands its output to later cells as {{NAME}}.
 
-const nbUsage = "usage: mote nb run FILE [-o FILE|-] [--force] [--dry-run] [--yes] [--model ID] [--profile P]\n       mote nb edit FILE [--yes] [--model ID] [--profile P]"
+const nbUsage = "usage: mote nb run FILE [-o FILE|-] [--force] [--dry-run] [--yes] [--model ID] [--profile P]\n" +
+	"       mote nb edit FILE [--yes] [--model ID] [--profile P]\n" +
+	"       mote nb exec [--state FILE] [--yes] [--model ID] [--profile P]"
 
 // nbCell is a cell ready to run: parsed, with its tasks found.
 type nbCell struct {
@@ -35,25 +37,47 @@ type nbCell struct {
 }
 
 func (a *app) nbCmd(ctx context.Context, args []string) error {
-	vals, pos, err := flags(args, []string{"-o", "--output", "--model", "--profile"}, []string{"--yes", "-y", "--force", "--dry-run"})
+	vals, pos, err := flags(args, []string{"-o", "--output", "--model", "--profile", "--state"}, []string{"--yes", "-y", "--force", "--dry-run"})
 	if err != nil {
 		return err
 	}
-	if len(pos) != 2 {
+	if len(pos) == 0 {
 		return usagef("%s", nbUsage)
 	}
-	switch pos[0] {
-	case "run":
-		return a.nbRun(ctx, pos[1], vals)
-	case "edit":
-		for _, f := range []string{"-o", "--output", "--force", "--dry-run"} {
-			if vals[f] != "" {
-				return usagef("%s does not apply to `mote nb edit`; %s", f, "a session writes the notebook it was given")
-			}
+	// Each subcommand takes the flags that mean something to it.
+	allowed := map[string][]string{
+		"run":  {"-o", "--output", "--force", "--dry-run"},
+		"edit": {},
+		"exec": {"--state"},
+	}
+	own, ok := allowed[pos[0]]
+	if !ok {
+		return usagef("%s", nbUsage)
+	}
+	for _, f := range []string{"-o", "--output", "--force", "--dry-run", "--state"} {
+		if vals[f] == "" || contains(own, f) {
+			continue
 		}
+		return usagef("%s does not apply to `mote nb %s`", f, pos[0])
+	}
+	switch {
+	case pos[0] == "exec" && len(pos) == 1:
+		return a.nbExec(ctx, vals)
+	case pos[0] == "run" && len(pos) == 2:
+		return a.nbRun(ctx, pos[1], vals)
+	case pos[0] == "edit" && len(pos) == 2:
 		return a.nbEdit(ctx, pos[1], vals)
 	}
 	return usagef("%s", nbUsage)
+}
+
+func contains(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
 }
 
 // prepareCells parses every cell and finds its tasks before anything runs,
@@ -62,26 +86,27 @@ func prepareCells(book *motebook.Book, tasks []task.Task) ([]nbCell, error) {
 	cells := make([]nbCell, len(book.Cells))
 	for i, c := range book.Cells {
 		var err error
-		if cells[i], err = prepareCell(i, c, tasks); err != nil {
-			return nil, err
+		if cells[i], err = prepareCell(c, tasks); err != nil {
+			return nil, locateCell(i, c, err)
 		}
 	}
 	return cells, nil
 }
 
-// prepareCell parses one cell and finds its tasks. i is its position, for
-// messages.
-func prepareCell(i int, c motebook.Cell, tasks []task.Task) (nbCell, error) {
-	fail := func(format string, a ...any) error {
-		return usagef("cell %d (line %d): %s", i+1, c.Line, fmt.Sprintf(format, a...))
-	}
+// locateCell says where in a notebook a cell's problem is.
+func locateCell(i int, c motebook.Cell, err error) error {
+	return usagef("cell %d (line %d): %v", i+1, c.Line, err)
+}
+
+// prepareCell parses one cell and finds its tasks.
+func prepareCell(c motebook.Cell, tasks []task.Task) (nbCell, error) {
 	stages, err := parseStages(c.Expr)
 	if err != nil {
-		return nbCell{}, fail("%v", err)
+		return nbCell{}, err
 	}
 	found, err := resolveStages(stages, tasks)
 	if err != nil {
-		return nbCell{}, fail("%v", err)
+		return nbCell{}, err
 	}
 	nc := nbCell{cell: c, stages: stages, found: found}
 	for j, s := range stages {
@@ -89,7 +114,7 @@ func prepareCell(i int, c motebook.Cell, tasks []task.Task) (nbCell, error) {
 			// A shell command is text handed to a shell: a value that came
 			// from a model must not be able to become part of it.
 			if len(motebook.Refs(s.shell)) > 0 {
-				return nbCell{}, fail("{{name}} cannot go into a shell command; pipe the value in and use {} instead")
+				return nbCell{}, usagef("{{name}} cannot go into a shell command; pipe the value in and use {} instead")
 			}
 			nc.changes = true
 		} else if found[j].Asks {
@@ -191,7 +216,7 @@ func (a *app) nbRun(ctx context.Context, path string, vals map[string]string) er
 		if dest == "-" {
 			return nil
 		}
-		return writeFileAtomic(dest, []byte(book.String()))
+		return writeFileAtomic(dest, []byte(book.String()), 0o644)
 	}
 
 	// Models are only loaded when a cell has to run.
@@ -308,9 +333,9 @@ func firstNonEmptyRaw(v ...string) string {
 }
 
 // writeFileAtomic replaces path with data in one step, so a notebook that is
-// saved after every cell is never left half-written, and keeps its mode.
-func writeFileAtomic(path string, data []byte) error {
-	mode := os.FileMode(0o644)
+// saved after every cell is never left half-written. A file that exists
+// keeps its mode; a new one gets mode.
+func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 	if fi, err := os.Stat(path); err == nil {
 		mode = fi.Mode().Perm()
 	}

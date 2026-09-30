@@ -247,7 +247,7 @@ func (a *app) metaCmd(ctx context.Context, args []string) error {
 		fmt.Fprint(a.out, text)
 		return nil
 	}
-	if err := writeFileAtomic(out, []byte(text)); err != nil {
+	if err := writeFileAtomic(out, []byte(text), 0o644); err != nil {
 		return err
 	}
 	fmt.Fprintf(a.err, "%s wrote %s\n", a.ue.OK(), out)
