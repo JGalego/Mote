@@ -248,8 +248,11 @@ func FromIPYNB(data []byte, anyKernel bool) (*Book, error) {
 // a cell with a line of ``` in it ends early, and prose that holds a mote
 // fence turns into a cell of its own.
 func checkCells(book *Book, want []Cell) error {
-	if len(book.Cells) != len(want) {
+	switch {
+	case len(book.Cells) > len(want):
 		return fmt.Errorf("a markdown cell holds a ```mote fence")
+	case len(book.Cells) < len(want):
+		return fmt.Errorf("a cell holds a line of ```, which ends it early and swallows the cells after it")
 	}
 	for i, c := range book.Cells {
 		if c.Name != want[i].Name || c.Expr != want[i].Expr {

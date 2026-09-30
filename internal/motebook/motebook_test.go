@@ -418,6 +418,7 @@ func TestFromSegmentsEdits(t *testing.T) {
 		{"a bad name", []Segment{{Cell: &Cell{Name: "a-b", Expr: "chat x"}}}, "not a name"},
 		{"a cell that would end early", []Segment{{Cell: &Cell{Expr: "chat \"a\n```\nb\""}}}, "line of ```"},
 		{"prose that would be a cell", []Segment{{Prose: "```mote\nchat hi\n```"}}, "```mote fence"},
+		{"a cell that swallows the next", []Segment{{Cell: &Cell{Expr: "chat \"a\n```\nb\""}}, {Cell: &Cell{Expr: "chat x"}}}, "swallows the cells after it"},
 	}
 	for _, c := range cases {
 		if _, err := FromSegments(c.segs); err == nil || !strings.Contains(err.Error(), c.want) {
