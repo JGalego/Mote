@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // nbEnv is a configured environment with a notebook written to disk.
@@ -260,5 +261,87 @@ func TestNbRunRejectsUnknownFlags(t *testing.T) {
 	e, path := nbEnv(t, twoCells)
 	if code, _, _ := e.mote("", "nb", "run", path, "--bogus"); code != ExitUsage {
 		t.Errorf("unknown flag: exit %d", code)
+	}
+}
+
+func TestNbRunFillsInOnlyWhatTheCellsAuthorWrote(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the sh syntax here does not apply to cmd")
+	}
+	// The first stage's output, which a program or a model wrote, holds a
+	// {{secret}}: it reaches the next stage as text, not as the value.
+	src := "```mote as=secret\nchat hunter2\n```\n\n```mote\nchat hi | sh: printf '{{%s}}' secret | chat \"got: {} and {{secret}}\"\n```\n"
+	e, path := nbEnv(t, src)
+	if code, _, errs := e.mote("", "nb", "run", path, "--yes"); code != 0 {
+		t.Fatalf("nb run: %d %s", code, errs)
+	}
+	if got := readFile(t, path); !strings.Contains(got, "echo: got: {{secret}} and echo: hunter2") {
+		t.Errorf("a piped value was filled in:\n%s", got)
+	}
+}
+
+func TestNbRunStopsRatherThanSaveOverAnEdit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the sh syntax here does not apply to cmd")
+	}
+	e, path := nbEnv(t, "```mote\nchat one\n```\n\n```mote\nchat two | sh: /bin/sleep 1; read l; echo \"$l\"\n```\n\n```mote\nchat three\n```\n")
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		// While the second cell sleeps, an editor saves the file.
+		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+			if b, _ := os.ReadFile(path); strings.Contains(string(b), "echo: one") {
+				time.Sleep(200 * time.Millisecond)
+				f, _ := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+				f.WriteString("\nMY EDIT\n")
+				f.Close()
+				future := time.Now().Add(time.Hour)
+				os.Chtimes(path, future, future)
+				return
+			}
+		}
+	}()
+	code, _, errs := e.mote("", "nb", "run", path, "--yes")
+	<-done
+	if code == 0 || !strings.Contains(errs, "changed while the notebook ran") {
+		t.Errorf("exit %d: %s", code, errs)
+	}
+	if got := readFile(t, path); !strings.Contains(got, "MY EDIT") {
+		t.Errorf("the edit was saved over:\n%s", got)
+	}
+}
+
+func TestNbRunWritesThroughALink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("links need privileges on Windows")
+	}
+	e, real := nbEnv(t, "```mote\nchat one\n```\n")
+	link := filepath.Join(t.TempDir(), "link.mote.md")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skip(err)
+	}
+	if code, _, errs := e.mote("", "nb", "run", link); code != 0 {
+		t.Fatalf("nb run: %d %s", code, errs)
+	}
+	if fi, _ := os.Lstat(link); fi.Mode()&os.ModeSymlink == 0 {
+		t.Error("the link was replaced by a file")
+	}
+	if !strings.Contains(readFile(t, real), "echo: one") {
+		t.Error("the notebook the link points to has no output")
+	}
+}
+
+func TestNbRunKeepsLineEndsAsTheFileReadsThemBack(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the sh syntax here does not apply to cmd")
+	}
+	e, path := nbEnv(t, "```mote as=a\nchat x | sh: printf 'one\\r\\ntwo\\r'\n```\n\n```mote\nchat \"{{a}}\"\n```\n")
+	if code, _, errs := e.mote("", "nb", "run", path, "--yes"); code != 0 {
+		t.Fatalf("nb run: %d %s", code, errs)
+	}
+	// The second cell read what the file holds, so it has nothing new to do.
+	code, _, errs := e.mote("", "nb", "run", path, "--yes")
+	if code != 0 || !strings.Contains(errs, "1 run, 1 unchanged") {
+		t.Errorf("second run: %d %s", code, errs)
 	}
 }

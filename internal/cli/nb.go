@@ -205,6 +205,12 @@ func (a *app) confirmNotebook(cells []nbCell, vals map[string]string) error {
 }
 
 func (a *app) nbRun(ctx context.Context, path string, vals map[string]string) error {
+	// Looked at before reading, so a change made between the two is seen
+	// as a change.
+	before, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
 	src, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -232,11 +238,26 @@ func (a *app) nbRun(ctx context.Context, path string, vals map[string]string) er
 	}
 
 	dest := firstNonEmptyRaw(vals["-o"], vals["--output"], path)
+	// The file is saved after every cell, from what was read at the start. If
+	// it changes on disk meanwhile, an edit made in an editor say, the run
+	// stops rather than save over it.
+	var seen os.FileInfo
+	if dest == path {
+		seen = before
+	}
 	save := func() error {
 		if dest == "-" {
 			return nil
 		}
-		return writeFileAtomic(dest, []byte(book.String()), 0o644)
+		if now, err := os.Stat(dest); err == nil && seen != nil && !atomicfile.Same(seen, now) {
+			return fmt.Errorf("%s changed while the notebook ran, so it was not saved over; run it again to pick up the change", dest)
+		}
+		fi, err := atomicfile.WriteStat(dest, []byte(book.String()), 0o644)
+		if err != nil {
+			return err
+		}
+		seen = fi
+		return nil
 	}
 
 	// Models are only loaded when a cell has to run.
@@ -339,7 +360,7 @@ func (a *app) runCell(ctx context.Context, c nbCell, values, vals map[string]str
 	}
 	stages := append([]stage(nil), c.stages...)
 	for i := range stages {
-		stages[i].expand = func(s string) string { return motebook.Substitute(s, lookup) }
+		stages[i].values = lookup
 	}
 	r, err := a.chain(ctx, stages, c.found, vals, m.profile, m.sessions, m.remembered, "", false)
 	if err != nil {
@@ -348,7 +369,10 @@ func (a *app) runCell(ctx context.Context, c nbCell, values, vals map[string]str
 	if len(r.res.Files) > 0 {
 		return strings.Join(r.res.Files, "\n"), true, nil
 	}
-	return strings.TrimRight(r.res.Text, "\n"), false, nil
+	// A notebook keeps \n line ends, and what is read back from it must be what
+	// the cells after this one were given, or their fingerprints would not
+	// match the next time.
+	return strings.TrimRight(strings.ReplaceAll(r.res.Text, "\r\n", "\n"), "\r\n"), false, nil
 }
 
 // firstNonEmptyRaw returns the first argument that is not empty, unlike

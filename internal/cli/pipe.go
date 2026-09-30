@@ -2,11 +2,13 @@ package cli
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"os/exec"
 	"runtime"
 	"strings"
 
+	"github.com/jgalego/mote/internal/motebook"
 	"github.com/jgalego/mote/internal/proc"
 	mrt "github.com/jgalego/mote/internal/runtime"
 	"github.com/jgalego/mote/internal/task"
@@ -34,12 +36,13 @@ type stage struct {
 	id    string   // task id
 	args  []string // arguments as written, before substitution
 
-	// expand, when set, rewrites every argument once the piped value has been
-	// placed in it. A notebook uses it to fill in {{name}}: doing that here
-	// rather than in the text keeps a value containing | or a quote from
-	// changing the pipeline, and a {} inside it from being taken for the
-	// piped value.
-	expand func(string) string
+	// values, when set, fills in the {{name}} the stage's own arguments hold.
+	// A notebook uses it: filling them into parsed arguments rather than into
+	// the text keeps a value containing | or a quote from changing the
+	// pipeline. Only what the stage's author wrote is filled in, never the
+	// value piped in from the stage before, which a model or a command wrote;
+	// and a {} inside a value is not taken for the piped value.
+	values func(name string) (string, bool)
 }
 
 const pipeMarker = "{}"
@@ -200,6 +203,37 @@ func bind(t task.Task, args []string, in task.Value, first bool) ([][]string, er
 		out = append(out, append(append([]string{}, args...), v))
 	}
 	return out, nil
+}
+
+// holdValues puts a placeholder where each {{name}} is in args, for the piped
+// value to be placed around, and returns what fills them in afterwards. The
+// placeholders carry a random nonce, so no text can hold one by chance or by
+// design.
+func holdValues(args []string, values func(string) (string, bool)) ([]string, func(string) string, error) {
+	var nonce [8]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return nil, nil, err
+	}
+	var held []string
+	hold := func(name string) (string, bool) {
+		v, ok := values(name)
+		if !ok {
+			return "", false
+		}
+		held = append(held, v)
+		return fmt.Sprintf("\x00%x:%d\x00", nonce, len(held)-1), true
+	}
+	out := make([]string, len(args))
+	for i, a := range args {
+		out[i] = motebook.Substitute(a, hold)
+	}
+	fill := func(arg string) string {
+		for i, v := range held {
+			arg = strings.ReplaceAll(arg, fmt.Sprintf("\x00%x:%d\x00", nonce, i), v)
+		}
+		return arg
+	}
+	return out, fill, nil
 }
 
 // runShell runs a ! stage, feeding it the piped value on stdin: the text, or
@@ -373,7 +407,14 @@ func (a *app) chain(ctx context.Context, stages []stage, found []task.Task, vals
 			continue
 		}
 		t := found[i]
-		runs, err := bind(t, s.args, val, i == 0)
+		args, fill := s.args, func(arg string) string { return arg }
+		if s.values != nil {
+			var err error
+			if args, fill, err = holdValues(s.args, s.values); err != nil {
+				return chained{}, err
+			}
+		}
+		runs, err := bind(t, args, val, i == 0)
 		if err != nil {
 			return chained{}, err
 		}
@@ -403,13 +444,11 @@ func (a *app) chain(ctx context.Context, stages []stage, found []task.Task, vals
 		}
 		var texts, files []string
 		for _, stageArgs := range runs {
-			if s.expand != nil {
-				expanded := make([]string, len(stageArgs))
-				for j, arg := range stageArgs {
-					expanded[j] = s.expand(arg)
-				}
-				stageArgs = expanded
+			filled := make([]string, len(stageArgs))
+			for j, arg := range stageArgs {
+				filled[j] = fill(arg)
 			}
+			stageArgs = filled
 			r, err := t.Run(ctx, env, stageArgs, opt)
 			if err != nil {
 				return chained{}, fmt.Errorf("stage %d (%s): %w", i+1, t.ID, err)
