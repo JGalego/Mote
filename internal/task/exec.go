@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/jgalego/mote/internal/proc"
 )
 
 // An exec step runs a local program with an argument vector, so a tool
@@ -100,6 +102,7 @@ func opExec(r *run, s Step) (Value, error) {
 		return Value{}, err
 	}
 	cmd := exec.CommandContext(r.ctx, prog, args...)
+	proc.Tree(cmd) // stopping the task stops what the program started
 	if s.Dir != "" {
 		cmd.Dir = r.vars[s.Dir].Text
 	}

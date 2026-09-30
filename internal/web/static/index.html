@@ -1,1 +1,29 @@
-<!doctype html><title>mote</title>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mote notebook</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="logo" aria-hidden="true">·</span> mote</div>
+  <h1 id="title">notebook</h1>
+  <div class="actions">
+    <button id="run-all" type="button" title="Run every cell that is not up to date">▶▶ Run all</button>
+    <button id="stop" type="button" title="Stop the cell that is running" hidden>■ Stop</button>
+  </div>
+  <div id="conn" class="conn" role="status" aria-live="polite">connecting…</div>
+</header>
+<div id="notice" class="notice" role="alert" hidden></div>
+<main id="notebook" aria-label="Notebook"></main>
+<footer class="foot">
+  <span><kbd>Shift</kbd>+<kbd>Enter</kbd> runs a cell and moves on</span>
+  <span><kbd>Ctrl</kbd>+<kbd>Enter</kbd> runs it and stays</span>
+  <span>The file is saved after every change.</span>
+</footer>
+<script src="/highlight.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

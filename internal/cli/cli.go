@@ -14,6 +14,7 @@ import (
 	"runtime/debug"
 	"sort"
 	"strings"
+	"sync/atomic"
 
 	"github.com/jgalego/mote/internal/bench"
 	"github.com/jgalego/mote/internal/config"
@@ -146,10 +147,21 @@ type app struct {
 	// running at once never share one to leak into or delete out from
 	// under each other. Main removes it when the command is done.
 	tempDir string
+	// statusHook, when set, takes the place of the spinner for the status of
+	// what a task is doing, so a page can show it instead of a terminal.
+	statusHook atomic.Pointer[func(string) func(bool)]
 }
 
 // Main runs the CLI and returns the process exit code.
 func Main(args []string, in io.Reader, out, errw io.Writer) int {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	return mainContext(ctx, args, in, out, errw)
+}
+
+// mainContext is Main for a caller that decides when the command is
+// interrupted, which a test of one that runs until then must.
+func mainContext(ctx context.Context, args []string, in io.Reader, out, errw io.Writer) int {
 	a := &app{in: in, out: out, err: errw, cfgDir: config.Dir(),
 		regURL: "https://raw.githubusercontent.com/jgalego/mote/main/registry/models.json"}
 	if u := os.Getenv("MOTE_REGISTRY_URL"); u != "" {
@@ -170,8 +182,6 @@ func Main(args []string, in io.Reader, out, errw io.Writer) int {
 	a.tempDir = tmp
 	defer cleanupTemp()
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
 	err := a.dispatch(ctx, args)
 	if err == nil {
 		return ExitOK

@@ -152,7 +152,7 @@ func (st *site) post(path string, body any) (*http.Response, []byte) {
 func TestSessionNeedsTheToken(t *testing.T) {
 	st := newSite(t, "")
 	anon := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	for _, path := range []string{"/", "/api/notebook", "/app.js", "/app.css", "/api/events", "/file?p=a.png"} {
+	for _, path := range []string{"/", "/api/notebook", "/app.js", "/highlight.js", "/app.css", "/api/events", "/file?p=a.png"} {
 		resp, err := anon.Get(st.ts.URL + path)
 		if err != nil {
 			t.Fatal(err)
@@ -179,7 +179,12 @@ func TestSessionNeedsTheToken(t *testing.T) {
 	if len(cs) != 1 || !cs[0].HttpOnly || cs[0].SameSite != http.SameSiteStrictMode || cs[0].Value != st.s.Token() {
 		t.Errorf("session cookie: %+v", cs)
 	}
-	// With the session, the page and the notebook open.
+	// With the session, the page, its scripts and the notebook open.
+	for _, asset := range []string{"/app.js", "/highlight.js", "/app.css"} {
+		if resp, body := st.get(asset); resp.StatusCode != http.StatusOK || len(body) == 0 {
+			t.Errorf("%s: %d, %d bytes", asset, resp.StatusCode, len(body))
+		}
+	}
 	if resp, body := st.get("/"); resp.StatusCode != http.StatusOK || !strings.Contains(resp.Header.Get("Content-Type"), "text/html") || len(body) == 0 {
 		t.Errorf("index: %d %q", resp.StatusCode, resp.Header.Get("Content-Type"))
 	}

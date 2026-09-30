@@ -17,6 +17,9 @@ func (b barProgress) Start(label string, have, total int64) mrt.Tracker {
 
 // status returns a task.Env.Status implementation drawing spinners on stderr.
 func (a *app) status(msg string) func(bool) {
+	if hook := a.statusHook.Load(); hook != nil {
+		return (*hook)(msg)
+	}
 	sp := a.ue.Spin(msg)
 	return func(ok bool) {
 		if strings.HasPrefix(msg, "thinking") && ok {

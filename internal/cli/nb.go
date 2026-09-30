@@ -25,6 +25,7 @@ import (
 const nbUsage = "usage: mote nb run FILE [-o FILE|-] [--force] [--dry-run] [--yes] [--model ID] [--profile P]\n" +
 	"       mote nb console [FILE | -o FILE] [--yes] [--model ID] [--profile P]\n" +
 	"       mote nb exec [--state FILE] [--yes] [--model ID] [--profile P]\n" +
+	"       mote nb serve FILE [--port N] [--root DIR] [--open] [--yes] [--model ID] [--profile P]\n" +
 	"       mote nb export FILE [-o FILE|-] [--force]\n" +
 	"       mote nb import FILE.ipynb [-o FILE|-] [--force] [--any-kernel]"
 
@@ -40,7 +41,7 @@ type nbCell struct {
 }
 
 func (a *app) nbCmd(ctx context.Context, args []string) error {
-	vals, pos, err := flags(args, []string{"-o", "--output", "--model", "--profile", "--state"}, []string{"--yes", "-y", "--force", "--dry-run", "--any-kernel"})
+	vals, pos, err := flags(args, []string{"-o", "--output", "--model", "--profile", "--state", "--port", "--root"}, []string{"--yes", "-y", "--force", "--dry-run", "--any-kernel", "--open"})
 	if err != nil {
 		return err
 	}
@@ -52,6 +53,7 @@ func (a *app) nbCmd(ctx context.Context, args []string) error {
 		"run":     {"-o", "--output", "--force", "--dry-run"},
 		"console": {"-o", "--output"},
 		"exec":    {"--state"},
+		"serve":   {"--port", "--root", "--open"},
 		"export":  {"-o", "--output", "--force"},
 		"import":  {"-o", "--output", "--force", "--any-kernel"},
 	}
@@ -59,7 +61,7 @@ func (a *app) nbCmd(ctx context.Context, args []string) error {
 	if !ok {
 		return usagef("%s", nbUsage)
 	}
-	for _, f := range []string{"-o", "--output", "--force", "--dry-run", "--state", "--any-kernel"} {
+	for _, f := range []string{"-o", "--output", "--force", "--dry-run", "--state", "--any-kernel", "--port", "--root", "--open"} {
 		if vals[f] == "" || contains(own, f) {
 			continue
 		}
@@ -70,6 +72,8 @@ func (a *app) nbCmd(ctx context.Context, args []string) error {
 		return a.nbExec(ctx, vals)
 	case pos[0] == "run" && len(pos) == 2:
 		return a.nbRun(ctx, pos[1], vals)
+	case pos[0] == "serve" && len(pos) == 2:
+		return a.nbServe(ctx, pos[1], vals)
 	case pos[0] == "export" && len(pos) == 2:
 		return a.nbExport(pos[1], vals)
 	case pos[0] == "import" && len(pos) == 2:

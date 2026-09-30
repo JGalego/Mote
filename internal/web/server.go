@@ -172,6 +172,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.index)
 	mux.Handle("GET /app.js", s.guard(s.asset("static/app.js", "text/javascript; charset=utf-8")))
+	mux.Handle("GET /highlight.js", s.guard(s.asset("static/highlight.js", "text/javascript; charset=utf-8")))
 	mux.Handle("GET /app.css", s.guard(s.asset("static/app.css", "text/css; charset=utf-8")))
 	mux.Handle("GET /api/notebook", s.guard(http.HandlerFunc(s.getNotebook)))
 	mux.Handle("POST /api/edit", s.guard(http.HandlerFunc(s.edit)))

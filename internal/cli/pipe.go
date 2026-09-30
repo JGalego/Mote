@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/jgalego/mote/internal/proc"
 	mrt "github.com/jgalego/mote/internal/runtime"
 	"github.com/jgalego/mote/internal/task"
 	"github.com/jgalego/mote/internal/ui"
@@ -214,6 +215,7 @@ func (a *app) runShell(ctx context.Context, s stage, in task.Value) (task.Value,
 		shell, flag = "cmd", "/c"
 	}
 	cmd := exec.CommandContext(ctx, shell, flag, line)
+	proc.Tree(cmd) // stopping the stage stops what the shell started
 	cmd.Stdin = strings.NewReader(stdin)
 	cmd.Stderr = a.err
 	done := a.status("running " + s.shell)
