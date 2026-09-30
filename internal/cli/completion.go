@@ -12,7 +12,7 @@ import (
 var topLevelCommands = []string{
 	"help", "version", "setup", "config", "doctor", "tasks", "mcp", "update",
 	"run", "pipe", "listen", "do", "agent", "memory", "remember", "forget",
-	"models", "bench", "tune", "serve", "chat", "index", "ask", "completion", "guide", "nb",
+	"models", "bench", "tune", "serve", "chat", "index", "ask", "completion", "guide", "nb", "meta",
 }
 
 // commandFlags lists the flags each command's flags() call accepts, kept
@@ -25,6 +25,7 @@ var commandFlags = map[string][]string{
 	"listen":  {"--wake", "--device", "--chunk", "--model", "--profile", "--once", "--help", "-h"},
 	"chat":    {"--model", "--profile", "--system", "--continue", "--recall", "--tools", "--steps", "--yes", "-y", "--help", "-h"},
 	"nb":      {"-o", "--output", "--model", "--profile", "--force", "--dry-run", "--yes", "-y", "--help", "-h"},
+	"meta":    {"-o", "--output", "--model", "--profile", "--run", "--force", "--yes", "-y", "--help", "-h"},
 	"guide":   {"--model", "--profile", "--help", "-h"},
 	"ask":     {"--in", "--top", "--model", "--profile", "-o", "--output", "--sources", "--help", "-h"},
 	"index":   {"--profile", "--help", "-h"},

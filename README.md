@@ -43,6 +43,7 @@ mote runs X-to-Y AI tasks (text, code, images, audio, video, files) on your CPU 
   - [patch](#patch---)
   - [chained](#chained-)
   - [motebooks](#motebooks-)
+  - [metamote](#metamote-)
   - [chosen](#chosen-)
   - [agent](#agent-)
   - [spoken](#spoken-)
@@ -96,6 +97,7 @@ In a clone, `go install ./cmd/mote` does the same into `$(go env GOPATH)/bin`. `
 | `mote chat [--system "..."]` | Talk with the text model; it sees the earlier turns. `/new` starts over, `/exit` or Ctrl-D ends, a line ending in `\` continues, Tab completes a `/command`. `--tools a,b\|all` lets it run mote tasks to answer, on the same think/act/observe loop as `mote agent`; off by default, and a task marked `"asks"` is confirmed before each call unless `--yes` |
 | `mote guide` | Ask the text model about mote itself: which command or task fits a goal, or whether one task's output can feed another's input |
 | `mote nb run FILE [-o FILE\|-] [--force] [--dry-run] [--yes]` | Run a motebook: a Markdown file whose `mote` cells are tasks or pipelines, with each output written into the file under its cell |
+| `mote meta "GOAL" [-o FILE] [--run] [--force]` | Write a motebook for a complex goal in one shot; `--run` runs it |
 | `mote pipe "A \| B \| sh: cmd"` | Chain tasks in one process, each stage receiving the last one's value: `{}` or `-` places it, `sh:` runs a shell command, `--trace` shows each step |
 | `mote do "REQUEST"` | Pick the task that fits a request written in plain words and run it; `--router embed` chooses with the encoder, `--plan` writes a pipeline of several tasks, `--dry-run` shows the choice |
 | `mote agent "GOAL"` | Work towards a goal in steps, calling tasks and local tools and reading what they return; `--tools` picks them, `--allow-sh` offers the shell |
@@ -300,6 +302,20 @@ mote nb run meeting.mote.md -o -       # print the result instead of rewriting t
 Each output goes into an `output` fence below its cell, the way Jupyter shows it. The fence's `key` fingerprints the cell and the values it read, so running the notebook again computes only the cells that changed or read something that did; `--force` computes them all. A cell that fails leaves the outputs before it in the file.
 
 A value is filled into a cell's arguments, so one that contains a `|`, a quote or a `{}` stays text. It cannot be filled into an `sh:` stage: pipe it in and use `{}`. Cells with an `sh:` stage, or a task that asks, run every time, and mote asks once before starting unless you pass `--yes`.
+
+### metamote 🪞
+
+`mote meta GOAL` — Have mote write the motebook for a complex goal.
+
+```sh
+mote meta "summarise talk.mp3, then translate the summary to French" -o talk.mote.md
+mote nb run talk.mote.md
+mote meta "explain what a mutex is, then write a Go example" -o mutex.mote.md --run
+```
+
+The text model writes the whole plan in one constrained generation, at most six cells, each with a sentence saying what it does. Later cells read earlier ones as `{{step1}}`, `{{step2}}`. mote checks the plan before writing anything: the tasks exist, their arguments fit, the files exist, and no cell reads one that comes after it. It then reads the notebook back and insists on the cells it started with. The model writes tasks, never shell commands, so a generated notebook does only what its tasks do. Without `-o` the notebook is printed; an existing file is only replaced with `--force`.
+
+Read it, edit it, and run it with `mote nb run`; `--run` does both at once.
 
 ### chosen 🎯
 

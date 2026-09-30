@@ -176,6 +176,26 @@ var helpTopics = map[string]helpTopic{
 			"mote nb run notes.mote.md -o - --force",
 		},
 	},
+	"meta": {
+		summary: "Write a motebook for a complex goal in one shot: the cells that, run in order, get it done.",
+		usage:   []string{`mote meta "GOAL" [-o FILE] [--run] [--force] [--yes|-y] [--model ID] [--profile P]`},
+		flags: []helpFlag{
+			{"-o, --output FILE", "write the notebook to FILE instead of printing it; an existing FILE is not replaced without --force"},
+			{"--run", "run the notebook once it is written (needs -o)"},
+			{"--force", "replace FILE if it exists"},
+			{"--yes, -y", "with --run, run cells that can change things without asking"},
+			{"--model ID", "use this model for every capability it provides"},
+			{"--profile P", "use this profile for this run"},
+		},
+		notes: []string{
+			"The text model writes a plan of tasks, at most six cells, and mote checks it (real tasks, arguments that fit, files that exist, cells that read only earlier cells) before anything is written. It writes tasks, never shell commands. Run the result with `mote nb run`.",
+		},
+		examples: []string{
+			`mote meta "summarise talk.mp3, then translate the summary to French" -o talk.mote.md`,
+			`mote meta "explain what a mutex is, then write a Go example" -o mutex.mote.md --run`,
+			`mote meta "review my last commit and draft a changelog entry"`,
+		},
+	},
 	"do": {
 		summary: "Pick the task that fits a request written in plain words, and run it.",
 		usage:   []string{`mote do "REQUEST" [-o FILE] [--model ID] [--profile P] [--router text|embed] [--plan [--trace]] [--dry-run] [--apply] [--continue] [--recall] [--yes|-y]`},
