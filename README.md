@@ -353,7 +353,7 @@ mote nb serve notes.mote.md --open
 
 opens the notebook as a page: the text rendered, an audio or video player where the notebook embeds one, and the cells as editors coloured as you type (tasks, strings, `{{names}}`, `|`, `sh:`). **Run** runs a cell and shows what the tasks say they are doing while it goes, **Run all** runs those that are not up to date, and **Stop** stops one, including anything it started. Whatever a cell prints that is an image, audio or video is shown, not its path. You can edit and add text and cells, move and delete them, and press <kbd>Shift</kbd>+<kbd>Enter</kbd> to run a cell and go on. The file is saved after every change, and a change made to it in an editor appears in the page.
 
-It listens on `127.0.0.1` only and is opened by the address it prints, which holds a secret; other names for this machine, and pages on other sites, are refused. Only images, audio and video from the notebook's folder are handed out (`--root DIR` widens it), and a cell that can change things asks in the page before it runs unless you gave `--yes`.
+It listens on `127.0.0.1` only and is opened by the address it prints, which holds a secret; other names for this machine, and pages on other sites, are refused. Only images, audio and video from the notebook's folder are handed out (`--root DIR` widens it), and images from the web are not loaded, since fetching one tells its server the notebook was opened. A cell that can change things asks in the page before it runs unless you gave `--yes`. Stopping the server with Ctrl-C stops a cell that is running.
 
 #### Moving between the two
 
