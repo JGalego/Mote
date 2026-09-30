@@ -292,3 +292,58 @@ func TestSplitBinding(t *testing.T) {
 		}
 	}
 }
+
+func TestAppendProseAddsTextThatReadsBackTheSame(t *testing.T) {
+	for name, start := range map[string]string{
+		"empty":               "",
+		"prose":               "# Notes\n",
+		"no trailing newline": "# Notes",
+		"after a cell":        "```mote as=a\nchat hi\n```\n",
+		"after an output":     "```mote as=a\nchat hi\n```\n\n```output key=k\nhello\n```\n",
+		"before prose":        "```mote\nchat hi\n```\n\ntrailing prose\n",
+	} {
+		b, err := Parse(start)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if err := b.AppendProse("  A note\nover two lines.  "); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if _, err := b.Append("z", "chat again"); err != nil { // a cell after the text keeps working
+			t.Fatalf("%s: %v", name, err)
+		}
+		text := b.String()
+		if strings.Contains(text, "\n\n\n") {
+			t.Errorf("%s: doubled blank line:\n%q", name, text)
+		}
+		again, err := Parse(text)
+		if err != nil || again.String() != text || len(again.Cells) != len(b.Cells) {
+			t.Fatalf("%s: does not read back the same: %v\n%s", name, err, text)
+		}
+		var found bool
+		for _, seg := range again.Segments() {
+			found = found || strings.Contains(seg.Prose, "A note\nover two lines.")
+		}
+		if !found {
+			t.Errorf("%s: the note is not prose after reading back:\n%s", name, text)
+		}
+	}
+}
+
+func TestAppendProseRefuses(t *testing.T) {
+	b, _ := Parse("```mote\nchat hi\n```\n")
+	before := b.String()
+	for text, want := range map[string]string{
+		"  \n ":                   "empty text",
+		"a\n```mote\nchat x\n```": "fenced block",
+		"~~~\nx":                  "fenced block",
+		"   ```":                  "fenced block",
+	} {
+		if err := b.AppendProse(text); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("AppendProse(%q) = %v, want %q", text, err, want)
+		}
+		if b.String() != before {
+			t.Errorf("a refused AppendProse changed the book")
+		}
+	}
+}

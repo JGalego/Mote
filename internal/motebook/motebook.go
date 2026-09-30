@@ -269,6 +269,31 @@ func (b *Book) Append(name, expr string) (int, error) {
 	return len(b.Cells) - 1, nil
 }
 
+// AppendProse adds a paragraph of Markdown at the end, set apart from what
+// precedes it. It refuses text with a line that opens a fenced block, since
+// that could turn into a cell, or swallow the cells after it.
+func (b *Book) AppendProse(text string) error {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return fmt.Errorf("empty text")
+	}
+	body := strings.Split(text, "\n")
+	for _, l := range body {
+		if t := strings.TrimSpace(l); strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~") {
+			return fmt.Errorf("text cannot hold a fenced block")
+		}
+	}
+	lines := b.lines
+	if n := len(lines); n > 0 && lines[n-1] == "" {
+		lines = lines[:n-1]
+	}
+	if len(lines) > 0 {
+		lines = append(lines, "")
+	}
+	b.lines = append(append(lines, body...), "")
+	return nil
+}
+
 // Set keeps o under the cell at index i, replacing what was there.
 func (b *Book) Set(i int, o Output) { b.Cells[i].Output = &o }
 
