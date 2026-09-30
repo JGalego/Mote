@@ -269,3 +269,13 @@ func TestPipeTraceShowsIntermediateValues(t *testing.T) {
 		t.Errorf("traced without the flag: %s", quiet)
 	}
 }
+
+func TestParseStagesAcceptsASingleStage(t *testing.T) {
+	stages, err := parseStages(`chat "what is the capital of France"`)
+	if err != nil || len(stages) != 1 || stages[0].id != "chat" {
+		t.Fatalf("single stage: %v %+v", err, stages)
+	}
+	if _, err := parseStages(`chat a | `); err == nil {
+		t.Error("empty stage accepted")
+	}
+}

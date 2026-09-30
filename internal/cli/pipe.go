@@ -107,8 +107,8 @@ func splitArgs(s string) ([]string, error) {
 	return args, nil
 }
 
-// parsePipeline splits an expression into stages.
-func parsePipeline(expr string) ([]stage, error) {
+// parseStages splits an expression into one or more stages.
+func parseStages(expr string) ([]stage, error) {
 	var stages []stage
 	for _, part := range splitOutsideQuotes(expr, '|') {
 		text := strings.TrimSpace(part)
@@ -128,6 +128,16 @@ func parsePipeline(expr string) ([]stage, error) {
 			return nil, usagef("%s: %v", text, err)
 		}
 		stages = append(stages, stage{text: text, id: args[0], args: args[1:]})
+	}
+	return stages, nil
+}
+
+// parsePipeline splits an expression into the two or more stages of a
+// pipeline.
+func parsePipeline(expr string) ([]stage, error) {
+	stages, err := parseStages(expr)
+	if err != nil {
+		return nil, err
 	}
 	if len(stages) < 2 {
 		return nil, usagef("a pipeline needs at least two stages; use `mote run` for one")
@@ -284,7 +294,32 @@ func resolveStages(stages []stage, tasks []task.Task) ([]task.Task, error) {
 func (a *app) runStages(ctx context.Context, stages []stage, found []task.Task, vals map[string]string,
 	profile string, sessions map[string]mrt.Session, remembered, request string) error {
 	out := firstNonEmpty(vals["-o"], vals["--output"])
+	c, err := a.chain(ctx, stages, found, vals, profile, sessions, remembered, out, true)
+	if err != nil {
+		return err
+	}
+	// A pipeline that ended with a shell stage produced plain text and has
+	// no task to record it under.
+	if c.task.ID != "" {
+		a.record(c.task, request, c.res)
+	}
+	return a.emit(c.task, c.res, out, c.code)
+}
 
+// chained is what a run of stages left behind: the last stage's task (zero
+// for a shell command), its result, and the stream that already showed it.
+type chained struct {
+	task task.Task
+	res  task.Result
+	code *ui.CodeStream
+}
+
+// chain runs resolved stages in order, each receiving the value of the one
+// before. With stream the last stage shows its output as it is produced;
+// without, the result is only returned, for callers that keep it. out is a
+// file the last stage writes its result to.
+func (a *app) chain(ctx context.Context, stages []stage, found []task.Task, vals map[string]string,
+	profile string, sessions map[string]mrt.Session, remembered, out string, stream bool) (chained, error) {
 	last := len(stages) - 1
 	var val task.Value
 	var res task.Result
@@ -316,10 +351,10 @@ func (a *app) runStages(ctx context.Context, stages []stage, found []task.Task, 
 		if s.shell != "" {
 			var err error
 			if val, err = a.runShell(ctx, s, val); err != nil {
-				return err
+				return chained{}, err
 			}
 			if err := empty(i, s.shell, val); err != nil {
-				return err
+				return chained{}, err
 			}
 			trace(i, s.shell, val)
 			res = task.Result{Value: val}
@@ -328,12 +363,12 @@ func (a *app) runStages(ctx context.Context, stages []stage, found []task.Task, 
 		t := found[i]
 		runs, err := bind(t, s.args, val, i == 0)
 		if err != nil {
-			return err
+			return chained{}, err
 		}
 		env := a.env(profile, sessions)
 		env.Memory = remembered
 		var code *ui.CodeStream
-		if i == last {
+		if i == last && stream {
 			if out == "" && (t.Out == "code" || t.Out == "data") {
 				code = a.uo.CodeStream(highlightLang(t, langHint(runs[0])))
 			}
@@ -355,7 +390,7 @@ func (a *app) runStages(ctx context.Context, stages []stage, found []task.Task, 
 		for _, stageArgs := range runs {
 			r, err := t.Run(ctx, env, stageArgs, opt)
 			if err != nil {
-				return fmt.Errorf("stage %d (%s): %w", i+1, t.ID, err)
+				return chained{}, fmt.Errorf("stage %d (%s): %w", i+1, t.ID, err)
 			}
 			res = r
 			if strings.TrimSpace(r.Text) != "" {
@@ -366,17 +401,15 @@ func (a *app) runStages(ctx context.Context, stages []stage, found []task.Task, 
 		val = task.Value{Text: strings.Join(texts, "\n"), Files: files}
 		res.Value = val
 		if err := empty(i, t.ID, val); err != nil {
-			return err
+			return chained{}, err
 		}
 		trace(i, t.ID, val)
 		if i == last {
 			if res.Lang == "" && len(runs) > 0 {
 				res.Lang = langHint(runs[0])
 			}
-			a.record(t, request, res)
-			return a.emit(t, res, out, code)
+			return chained{task: t, res: res, code: code}, nil
 		}
 	}
-	// The pipeline ended with a shell stage, which produced plain text.
-	return a.emit(task.Task{}, res, out, nil)
+	return chained{res: res}, nil
 }
