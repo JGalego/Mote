@@ -347,3 +347,85 @@ func TestAppendProseRefuses(t *testing.T) {
 		}
 	}
 }
+
+func TestKind(t *testing.T) {
+	for path, want := range map[string]string{
+		"a.png": "image", "dir/B.JPG": "image", "x.svg": "image",
+		"m.m4a": "audio", "n.MP3": "audio",
+		"clip.mp4": "video", "v.webm": "video",
+		"notes.txt": "", "noext": "", "": "", "archive.png.zip": "",
+	} {
+		if got := Kind(path); got != want {
+			t.Errorf("Kind(%q) = %q, want %q", path, got, want)
+		}
+	}
+}
+
+func TestFromSegmentsRebuildsTheNotebookItCameFrom(t *testing.T) {
+	b, err := Parse(converted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := FromSegments(b.Segments())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.String() != b.String() {
+		t.Errorf("segments do not give the notebook back:\n%s\nwant:\n%s", again.String(), b.String())
+	}
+	if again.Cells[0].Output == nil || again.Cells[0].Output.Key != "abc123" {
+		t.Errorf("an output was lost: %+v", again.Cells[0].Output)
+	}
+	if empty, err := FromSegments(nil); err != nil || len(empty.Cells) != 0 || len(empty.Segments()) != 0 {
+		t.Errorf("no segments: %v", err)
+	}
+}
+
+func TestFromSegmentsEdits(t *testing.T) {
+	b, _ := Parse("```mote as=a\nchat hi\n```\n\n```mote\nchat \"{{a}}\"\n```\n")
+	segs := b.Segments()
+
+	// Insert, in the middle, a cell and some text.
+	added := []Segment{segs[0], {Prose: "Between."}, {Cell: &Cell{Name: "b", Expr: "chat two"}}, segs[1]}
+	got, err := FromSegments(added)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "```mote as=a\nchat hi\n```\n\nBetween.\n\n```mote as=b\nchat two\n```\n\n```mote\nchat \"{{a}}\"\n```\n"
+	if got.String() != want {
+		t.Errorf("insert:\n%s\nwant:\n%s", got.String(), want)
+	}
+	// Edit a cell and drop its output, which no longer belongs to it.
+	edited := &Cell{Name: "a", Expr: "chat changed"}
+	if got, err := FromSegments([]Segment{{Cell: edited}, segs[1]}); err != nil || got.Cells[0].Output != nil || got.Cells[0].Expr != "chat changed" {
+		t.Errorf("edit: %v", err)
+	}
+	// Move a cell after the one that reads it, and delete the one it reads.
+	if _, err := FromSegments([]Segment{segs[1], segs[0]}); err == nil || !strings.Contains(err.Error(), "{{a}} is not bound") {
+		t.Errorf("reader before binder: %v", err)
+	}
+	if _, err := FromSegments([]Segment{segs[1]}); err == nil || !strings.Contains(err.Error(), "not bound") {
+		t.Errorf("deleting what is read: %v", err)
+	}
+
+	cases := []struct {
+		name string
+		segs []Segment
+		want string
+	}{
+		{"the same name twice", []Segment{segs[0], {Cell: &Cell{Name: "a", Expr: "chat x"}}}, "already bound"},
+		{"an empty cell", []Segment{{Cell: &Cell{Expr: " \n"}}}, "empty cell"},
+		{"a bad name", []Segment{{Cell: &Cell{Name: "a-b", Expr: "chat x"}}}, "not a name"},
+		{"a cell that would end early", []Segment{{Cell: &Cell{Expr: "chat \"a\n```\nb\""}}}, "line of ```"},
+		{"prose that would be a cell", []Segment{{Prose: "```mote\nchat hi\n```"}}, "```mote fence"},
+	}
+	for _, c := range cases {
+		if _, err := FromSegments(c.segs); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: %v, want %q", c.name, err, c.want)
+		}
+	}
+	// Blank text is not a segment worth keeping.
+	if got, err := FromSegments([]Segment{{Prose: "  \n"}, segs[0]}); err != nil || strings.HasPrefix(got.String(), "\n") {
+		t.Errorf("blank prose: %v", err)
+	}
+}

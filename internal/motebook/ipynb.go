@@ -237,16 +237,24 @@ func FromIPYNB(data []byte, anyKernel bool) (*Book, error) {
 	if err != nil {
 		return nil, fmt.Errorf("the notebook cannot be read as a motebook: %w", err)
 	}
-	// Text that Parse would read differently from how it was written: a code
-	// cell with a line of ``` in it ends early, and prose that holds a mote
-	// fence turns into a cell of its own.
+	if err := checkCells(book, want); err != nil {
+		return nil, fmt.Errorf("the notebook cannot be read as a motebook: %w", err)
+	}
+	return book, nil
+}
+
+// checkCells insists that a notebook built from text has the cells it was
+// built from. Parse would read some text differently from how it was written:
+// a cell with a line of ``` in it ends early, and prose that holds a mote
+// fence turns into a cell of its own.
+func checkCells(book *Book, want []Cell) error {
 	if len(book.Cells) != len(want) {
-		return nil, fmt.Errorf("the notebook cannot be read as a motebook: a markdown cell holds a ```mote fence")
+		return fmt.Errorf("a markdown cell holds a ```mote fence")
 	}
 	for i, c := range book.Cells {
 		if c.Name != want[i].Name || c.Expr != want[i].Expr {
-			return nil, fmt.Errorf("the notebook cannot be read as a motebook: code cell %d holds a line of ```", i+1)
+			return fmt.Errorf("code cell %d holds a line of ```", i+1)
 		}
 	}
-	return book, nil
+	return nil
 }

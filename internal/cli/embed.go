@@ -7,12 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-)
 
-var (
-	imageExts = map[string]bool{".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".webp": true, ".svg": true}
-	audioExts = map[string]bool{".m4a": true, ".mp3": true, ".wav": true, ".ogg": true, ".flac": true, ".aac": true, ".opus": true}
-	videoExts = map[string]bool{".mp4": true, ".webm": true, ".mov": true, ".m4v": true}
+	"github.com/jgalego/mote/internal/motebook"
 )
 
 // embedMarkup is the Markdown that shows the file at link in a notebook: an
@@ -20,16 +16,15 @@ var (
 // viewers give the controls of a player. name is the file as it was given,
 // for the message when it is not one of those.
 func embedMarkup(link, name string) (string, error) {
-	ext := strings.ToLower(filepath.Ext(link))
 	// A path is a URL here: spaces and the like are escaped, slashes are not.
 	src := (&url.URL{Path: link}).String()
-	switch {
-	case imageExts[ext]:
+	switch motebook.Kind(link) {
+	case "image":
 		alt := strings.TrimSpace(strings.NewReplacer("[", " ", "]", " ", "\n", " ").Replace(strings.TrimSuffix(filepath.Base(link), filepath.Ext(link))))
 		return fmt.Sprintf("![%s](%s)", alt, src), nil
-	case audioExts[ext]:
+	case "audio":
 		return fmt.Sprintf(`<audio controls src="%s"></audio>`, html.EscapeString(src)), nil
-	case videoExts[ext]:
+	case "video":
 		return fmt.Sprintf(`<video controls src="%s"></video>`, html.EscapeString(src)), nil
 	}
 	return "", fmt.Errorf("%s is not an image, audio or video file mote knows how to show; add a link with /note", name)

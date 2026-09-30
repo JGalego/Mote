@@ -372,3 +372,46 @@ func Key(c Cell, inputs map[string]string) string {
 	}
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }
+
+// FromSegments builds a notebook from prose and cells, the way a page that
+// edits one hands it back. It fails, naming the problem, when the result would
+// not be a valid notebook: a name read before it is bound, bound twice, or a
+// line that would turn prose into a cell or end a cell early.
+func FromSegments(segs []Segment) (*Book, error) {
+	var parts []string
+	var want []Cell
+	for _, seg := range segs {
+		if seg.Cell == nil {
+			if text := strings.TrimSpace(seg.Prose); text != "" {
+				parts = append(parts, text)
+			}
+			continue
+		}
+		c := seg.Cell
+		expr := strings.TrimSpace(c.Expr)
+		if expr == "" {
+			return nil, fmt.Errorf("empty cell")
+		}
+		if c.Name != "" && !nameRe.MatchString(c.Name) {
+			return nil, fmt.Errorf("%q is not a name; use letters, digits and _", c.Name)
+		}
+		fence := "```mote"
+		if c.Name != "" {
+			fence += " as=" + c.Name
+		}
+		part := fence + "\n" + expr + "\n```"
+		if c.Output != nil {
+			part += "\n\n" + strings.Join(c.Output.render(), "\n")
+		}
+		parts = append(parts, part)
+		want = append(want, Cell{Name: c.Name, Expr: expr})
+	}
+	book, err := Parse(strings.Join(parts, "\n\n") + "\n")
+	if err != nil {
+		return nil, err
+	}
+	if err := checkCells(book, want); err != nil {
+		return nil, err
+	}
+	return book, nil
+}
