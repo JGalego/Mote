@@ -10,7 +10,7 @@ import (
 
 // event is what the page is told as it happens.
 type event struct {
-	Type    string `json:"type"` // status, changed or done
+	Type    string `json:"type"` // status, changed, warning or done
 	Message string `json:"message,omitempty"`
 	Rev     int    `json:"rev,omitempty"`
 }

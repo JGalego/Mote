@@ -167,6 +167,37 @@ func (s *Server) saveLocked(book *motebook.Book) error {
 	return nil
 }
 
+// Watch notices changes made to the notebook file by anything else, and tells
+// the pages that are listening, until ctx ends. It looks at the file every so
+// often rather than being told, which works the same everywhere.
+func (s *Server) Watch(ctx context.Context, every time.Duration) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+	warned := ""
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		s.mu.Lock()
+		before := s.rev
+		warning := ""
+		if err := s.syncLocked(); err != nil {
+			warning = err.Error()
+		}
+		rev := s.rev
+		s.mu.Unlock()
+		if warning != warned {
+			s.events.publish(event{Type: "warning", Message: warning})
+		}
+		if rev != before {
+			s.events.publish(event{Type: "changed", Rev: rev})
+		}
+		warned = warning
+	}
+}
+
 // Handler serves the page, its API and the files it shows.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()

@@ -75,6 +75,7 @@ Usage:
   mote nb run FILE [-o FILE|-] [--force] [--dry-run] [--yes] [--model ID] [--profile P]
   mote nb console [FILE | -o FILE] [--yes] [--model ID] [--profile P]
   mote nb exec [--state FILE] [--yes] [--model ID] [--profile P]
+  mote nb serve FILE [--port N] [--root DIR] [--open] [--yes] [--model ID] [--profile P]
   mote nb export FILE [-o FILE|-] [--force] | import FILE.ipynb [-o FILE|-] [--force] [--any-kernel]
   mote meta "GOAL" [-o FILE] [--chat] [--run] [--force] [--yes] [--model ID] [--profile P]
   mote do "REQUEST" [-o OUTPUT] [--apply] [--dry-run] [--plan [--trace]] [--yes] [--model ID] [--profile P]

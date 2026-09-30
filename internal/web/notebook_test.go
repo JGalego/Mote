@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"strings"
@@ -293,5 +294,60 @@ func TestAnUnreadableFileBlocksEdits(t *testing.T) {
 	code, _, msg := edit(t, st, map[string]any{"rev": rev, "op": "delete", "index": 0})
 	if code != 409 || !strings.Contains(msg, "cannot be read") {
 		t.Errorf("%d %q", code, msg)
+	}
+}
+
+func TestWatchTellsPagesAboutChangesMadeElsewhere(t *testing.T) {
+	st := newSite(t, sample)
+	events := st.s.events.subscribe()
+	ctx, cancel := context.WithCancel(context.Background())
+	stopped := make(chan struct{})
+	go func() { st.s.Watch(ctx, 10*time.Millisecond); close(stopped) }()
+	defer func() { cancel(); <-stopped }()
+
+	next := func(what string) event {
+		t.Helper()
+		select {
+		case e := <-events:
+			return e
+		case <-time.After(3 * time.Second):
+			t.Fatalf("no event for %s", what)
+			return event{}
+		}
+	}
+	// Nothing changes, so nothing is said.
+	select {
+	case e := <-events:
+		t.Fatalf("an event with nothing changed: %+v", e)
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	before := notebook(t, st).Rev
+	future := time.Now().Add(time.Hour)
+	os.WriteFile(st.path, []byte("# Rewritten\n"), 0o644)
+	os.Chtimes(st.path, future, future)
+	if e := next("a rewritten file"); e.Type != "changed" || e.Rev <= before {
+		t.Errorf("rewritten: %+v (was rev %d)", e, before)
+	}
+	// A file that cannot be read is said so once, and again when it can.
+	os.WriteFile(st.path, []byte("```mote\nchat {{nope}}\n```\n"), 0o644)
+	os.Chtimes(st.path, future.Add(time.Hour), future.Add(time.Hour))
+	if e := next("an unreadable file"); e.Type != "warning" || !strings.Contains(e.Message, "cannot be read") {
+		t.Errorf("unreadable: %+v", e)
+	}
+	select {
+	case e := <-events:
+		t.Errorf("the same warning was said again: %+v", e)
+	case <-time.After(150 * time.Millisecond):
+	}
+	os.WriteFile(st.path, []byte("# Fixed\n"), 0o644)
+	os.Chtimes(st.path, future.Add(2*time.Hour), future.Add(2*time.Hour))
+	got := map[string]event{}
+	for len(got) < 2 {
+		e := next("a file that is readable again")
+		got[e.Type] = e
+	}
+	if got["warning"].Message != "" || got["changed"].Rev == 0 {
+		t.Errorf("fixed: %+v", got)
 	}
 }

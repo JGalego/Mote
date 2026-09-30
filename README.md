@@ -97,6 +97,7 @@ In a clone, `go install ./cmd/mote` does the same into `$(go env GOPATH)/bin`. `
 | `mote chat [--system "..."]` | Talk with the text model; it sees the earlier turns. `/new` starts over, `/exit` or Ctrl-D ends, a line ending in `\` continues, Tab completes a `/command`. `--tools a,b\|all` lets it run mote tasks to answer, on the same think/act/observe loop as `mote agent`; off by default, and a task marked `"asks"` is confirmed before each call unless `--yes` |
 | `mote guide` | Ask the text model about mote itself: which command or task fits a goal, or whether one task's output can feed another's input |
 | `mote nb run FILE [-o FILE\|-] [--force] [--dry-run] [--yes]` | Run a motebook: a Markdown file whose `mote` cells are tasks or pipelines, with each output written into the file under its cell |
+| `mote nb serve FILE [--port N] [--root DIR] [--open]` | Open a motebook in the browser: read the text, edit and run the cells, see the images, audio and video they make |
 | `mote nb exec [--state FILE]` | Run the one cell on stdin and print its output; what the Jupyter kernel calls |
 | `mote nb console [FILE \| -o FILE] [--yes]` | An interactive session, like `jupyter console`: each line is a cell that runs as you enter it, its output printed below; kept in FILE, or offered to be saved when you leave if there is none |
 | `mote nb export FILE` / `mote nb import FILE.ipynb` | Convert a motebook to a Jupyter notebook for the mote kernel and back |
@@ -351,6 +352,16 @@ chat "how tall is it? {{city}}"
 ```
 
 An image a task writes, such as `draw`'s, is shown as an image. Cells run without asking first, being the ones you type, and restarting the kernel starts the session over. Each cell is a call to `mote nb exec`, and models stay loaded between cells in the [resident server](#serving). `mote kernel uninstall` removes it.
+
+#### In the browser
+
+```sh
+mote nb serve notes.mote.md --open
+```
+
+opens the notebook as a page: the text rendered, an audio or video player where the notebook embeds one, and the cells as editors coloured as you type (tasks, strings, `{{names}}`, `|`, `sh:`). **Run** runs a cell and shows what the tasks say they are doing while it goes, **Run all** runs those that are not up to date, and **Stop** stops one, including anything it started. Whatever a cell prints that is an image, audio or video is shown, not its path. You can edit and add text and cells, move and delete them, and press <kbd>Shift</kbd>+<kbd>Enter</kbd> to run a cell and go on. The file is saved after every change, and a change made to it in an editor appears in the page.
+
+It listens on `127.0.0.1` only and is opened by the address it prints, which holds a secret; other names for this machine, and pages on other sites, are refused. Only images, audio and video from the notebook's folder are handed out (`--root DIR` widens it), and a cell that can change things asks in the page before it runs unless you gave `--yes`.
 
 #### Moving between the two
 

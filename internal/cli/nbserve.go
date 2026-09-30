@@ -105,6 +105,7 @@ func (a *app) nbServe(ctx context.Context, path string, vals map[string]string) 
 		}
 	}
 
+	go srv.Watch(ctx, time.Second) // a change made in an editor shows in the page
 	hs := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		<-ctx.Done()

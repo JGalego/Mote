@@ -9,6 +9,7 @@ let editing = null;           // index of the text being edited
 let pending = null;           // {index, type}: being added, not yet in the notebook
 let busy = null;              // {index, controller, message} while a cell runs
 let connected = false;
+let warned = false;           // the notice on show is about the file on disk
 let focusRequest = null;      // {seg, field}: where to put the cursor after the next render
 
 const root = document.getElementById('notebook');
@@ -59,7 +60,8 @@ async function load() {
     return;
   }
   nb = r.data;
-  if (nb.warning) say(nb.warning);
+  if (nb.warning) { say(nb.warning); warned = true; }
+  else if (warned) { say(''); warned = false; }
   render();
 }
 
@@ -389,6 +391,9 @@ function listen() {
       updateChrome();
       const w = root.querySelector('.working');
       if (w) w.textContent = ev.message;
+    } else if (ev.type === 'warning') {
+      say(ev.message || '');
+      warned = !!ev.message;
     } else if (ev.type === 'changed' && !busy && nb && ev.rev !== nb.rev) {
       load(); // another page, or an editor, changed the notebook
     }
