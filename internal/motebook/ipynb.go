@@ -88,9 +88,10 @@ func splitLines(s string) lines {
 }
 
 type ipynbOutput struct {
-	OutputType string `json:"output_type"`
-	Name       string `json:"name,omitempty"`
-	Text       lines  `json:"text,omitempty"`
+	OutputType string           `json:"output_type"`
+	Name       string           `json:"name,omitempty"`
+	Text       lines            `json:"text,omitempty"`
+	Data       map[string]lines `json:"data,omitempty"`
 }
 
 type ipynbCell struct {
@@ -143,6 +144,7 @@ func (b *Book) IPYNB() ([]byte, error) {
 			},
 		},
 	}
+	nb.Cells = []ipynbCell{} // an empty notebook has cells, none of them
 	for _, seg := range b.Segments() {
 		if seg.Cell == nil {
 			nb.Cells = append(nb.Cells, ipynbCell{CellType: "markdown", Metadata: map[string]any{}, Source: splitLines(seg.Prose)})
@@ -152,6 +154,10 @@ func (b *Book) IPYNB() ([]byte, error) {
 		source := c.Expr
 		if c.Name != "" {
 			source = c.Name + " = " + c.Expr
+		} else if name, _ := SplitBinding(c.Expr); name != "" {
+			// A Jupyter cell binds a name by starting with "name =", so this one
+			// would come back as a binding of its first word.
+			return nil, fmt.Errorf("cell %d (line %d) reads as a binding of %q in a Jupyter cell; give it a name with as=, or change its first argument", c.Index+1, c.Line, name)
 		}
 		cell := ipynbCell{CellType: "code", Metadata: map[string]any{}, Source: splitLines(source)}
 		if c.Output != nil {
@@ -202,7 +208,7 @@ func FromIPYNB(data []byte, anyKernel bool) (*Book, error) {
 	for i, c := range nb.Cells {
 		switch c.CellType {
 		case "markdown":
-			if text := strings.TrimSpace(c.Source.String()); text != "" {
+			if text := trimBlankLines(c.Source.String()); text != "" {
 				parts = append(parts, text)
 			}
 		case "code":
@@ -211,22 +217,31 @@ func FromIPYNB(data []byte, anyKernel bool) (*Book, error) {
 				continue
 			}
 			name, expr := SplitBinding(source)
-			fence := "```mote"
+			open := "```mote"
 			if name != "" {
-				fence += " as=" + name
+				open += " as=" + name
 			}
-			part := fence + "\n" + expr + "\n```"
+			part := open + "\n" + expr + "\n```"
+			// What the cell printed, and what the mote kernel shows as an image
+			// or a player, whose text is the path mote printed.
 			var printed strings.Builder
 			for _, o := range c.Outputs {
-				if o.OutputType == "stream" && o.Name == "stdout" {
+				switch {
+				case o.OutputType == "stream" && o.Name == "stdout":
 					printed.WriteString(o.Text.String())
+				case o.OutputType == "display_data" || o.OutputType == "execute_result":
+					if text, ok := o.Data["text/plain"]; ok {
+						printed.WriteString(strings.TrimRight(text.String(), "\n") + "\n")
+					}
 				}
 			}
-			if text := strings.TrimRight(printed.String(), "\n"); text != "" {
-				part += "\n\n" + strings.Join(Output{Text: text}.render(), "\n")
+			var out *Output
+			if text := strings.TrimRight(printed.String(), "\n"); text != "" || c.ExecutionCount != nil {
+				out = &Output{Text: text} // a cell that ran and printed nothing still ran
+				part += "\n\n" + strings.Join(out.render(), "\n")
 			}
 			parts = append(parts, part)
-			want = append(want, Cell{Name: name, Expr: expr})
+			want = append(want, Cell{Name: name, Expr: expr, Output: out})
 		case "raw":
 			// Not for a reader of the notebook, and not a cell.
 		default:
@@ -257,6 +272,9 @@ func checkCells(book *Book, want []Cell) error {
 	for i, c := range book.Cells {
 		if c.Name != want[i].Name || c.Expr != want[i].Expr {
 			return fmt.Errorf("code cell %d holds a line of ```", i+1)
+		}
+		if (c.Output == nil) != (want[i].Output == nil) || (c.Output != nil && c.Output.Text != want[i].Output.Text) {
+			return fmt.Errorf("the text after cell %d starts with an output fence, which would be read as the cell's output", i+1)
 		}
 	}
 	return nil

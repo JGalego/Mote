@@ -441,3 +441,88 @@ func TestValuesAreWhatRunCellsBound(t *testing.T) {
 		t.Error("an empty notebook binds something")
 	}
 }
+
+func TestFencesAreReadTheWayMarkdownReadsThem(t *testing.T) {
+	cases := map[string]string{
+		// An example of a cell, in a longer fence, is an example.
+		"four backticks around an example": "````markdown\n```sh\nls\n```\n```mote\nsay example\n```\n````\n",
+		"a four-backtick mote fence":       "````mote\nsay example\n```\n````\n",
+		// Indented four spaces, a fence is code.
+		"an indented fence": "Text.\n\n    ```mote\n    say example\n    ```\n",
+		// A tilde block closes on tildes, not backticks.
+		"a tilde block": "~~~\n```\n```mote\nsay example\n```\n~~~\n",
+	}
+	for name, src := range cases {
+		b, err := Parse(src)
+		if err != nil {
+			t.Errorf("%s: %v", name, err)
+			continue
+		}
+		if len(b.Cells) != 0 {
+			t.Errorf("%s: %d cells, want none: %+v", name, len(b.Cells), b.Cells)
+		}
+		if b.String() != src {
+			t.Errorf("%s: does not render back the same", name)
+		}
+	}
+	// A fence indented up to three spaces is still a fence, and a longer
+	// closing fence closes it.
+	b, err := Parse("   ```mote\nsay hi\n````\n\n``````output\nhello\n```````\n")
+	if err != nil || len(b.Cells) != 1 || b.Cells[0].Output == nil || b.Cells[0].Output.Text != "hello" {
+		t.Errorf("indented and longer fences: %v %+v", err, b)
+	}
+}
+
+func TestNothingIsAddedInsideAFenceThatIsNeverClosed(t *testing.T) {
+	b, err := Parse("intro\n\n```sh\nls\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := b.String()
+	if _, err := b.Append("", "say hi"); err == nil || !strings.Contains(err.Error(), "line 3 is never closed") {
+		t.Errorf("Append: %v", err)
+	}
+	if err := b.AppendProse("more"); err == nil || !strings.Contains(err.Error(), "never closed") {
+		t.Errorf("AppendProse: %v", err)
+	}
+	if b.String() != before {
+		t.Error("a refused addition changed the notebook")
+	}
+}
+
+func TestAppendRefusesAnyLineThatWouldEndTheCell(t *testing.T) {
+	b, _ := Parse("")
+	for _, expr := range []string{"say \"\n````\n\"", "say \"\n  ```\n\""} {
+		if _, err := b.Append("", expr); err == nil {
+			t.Errorf("Append(%q) was accepted", expr)
+		}
+	}
+}
+
+func TestProseKeepsItsIndentAndItsLineBreaks(t *testing.T) {
+	src := "    indented code\n    more code\n\n```mote\nsay hi\n```\n\nSee:  \nthe next line.\n"
+	b, err := Parse(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := FromSegments(b.Segments())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.String() != src {
+		t.Errorf("rebuilt:\n%q\nwant:\n%q", again.String(), src)
+	}
+	if err := b.AppendProse("\n\n    code block\n  \n"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(b.String(), "the next line.\n\n    code block\n") {
+		t.Errorf("appended:\n%q", b.String())
+	}
+}
+
+func TestFromSegmentsDoesNotTakeTextForAnOutput(t *testing.T) {
+	segs := []Segment{{Cell: &Cell{Expr: "say x"}}, {Prose: "```output\nnot an output\n```"}}
+	if _, err := FromSegments(segs); err == nil || !strings.Contains(err.Error(), "read as the cell's output") {
+		t.Errorf("%v", err)
+	}
+}

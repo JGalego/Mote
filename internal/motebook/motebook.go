@@ -61,10 +61,59 @@ type Output struct {
 type Book struct {
 	Cells []Cell
 	lines []string
+	// openAt is the line, from 1, of a fenced block that is never closed, 0
+	// if there is none. Markdown runs such a block to the end of the file, so
+	// nothing added at the end would be outside it.
+	openAt int
 }
 
-// bindingRe reads "name = pipeline". A task id or a shell stage never has an
-// = after its first word, so a cell cannot be taken for a binding.
+// fence reads a line as the fence of a fenced code block: up to three spaces
+// of indent, then three or more backticks or tildes, then the info string.
+// More indent than that makes the line code, not a fence.
+func fence(raw string) (char byte, n int, info string, ok bool) {
+	indent := len(raw) - len(strings.TrimLeft(raw, " "))
+	if indent > 3 {
+		return 0, 0, "", false
+	}
+	t := raw[indent:]
+	if t == "" || (t[0] != '`' && t[0] != '~') {
+		return 0, 0, "", false
+	}
+	char = t[0]
+	n = len(t) - len(strings.TrimLeft(t, string(char)))
+	if n < 3 {
+		return 0, 0, "", false
+	}
+	info = strings.TrimSpace(t[n:])
+	if char == '`' && strings.Contains(info, "`") {
+		return 0, 0, "", false // not a fence in Markdown: a code span
+	}
+	return char, n, info, true
+}
+
+// closes reports whether a line ends a block opened by a fence of n chars.
+func closes(raw string, char byte, n int) bool {
+	c, m, info, ok := fence(raw)
+	return ok && c == char && m >= n && info == ""
+}
+
+// trimBlankLines drops the blank lines around text, and nothing else: the
+// indent of its first line and the spaces that end its last are Markdown.
+func trimBlankLines(text string) string {
+	lines := strings.Split(text, "\n")
+	start, end := 0, len(lines)
+	for start < end && strings.TrimSpace(lines[start]) == "" {
+		start++
+	}
+	for end > start && strings.TrimSpace(lines[end-1]) == "" {
+		end--
+	}
+	return strings.Join(lines[start:end], "\n")
+}
+
+// bindingRe reads "name = pipeline". A cell whose first argument is a lone =
+// reads the same way, which is why a cell like that cannot be written in a
+// Jupyter cell without a name: see IPYNB.
 var bindingRe = regexp.MustCompile(`(?s)^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(\S.*)$`)
 
 // SplitBinding separates "name = pipeline", the way a cell is typed where
@@ -87,24 +136,26 @@ var (
 // reference to a name no earlier cell binds.
 func Parse(src string) (*Book, error) {
 	var (
-		b       = Book{lines: strings.Split(strings.ReplaceAll(src, "\r\n", "\n"), "\n")}
-		bound   = map[string]int{} // name -> line of the cell that binds it
-		inCell  bool
-		other   string // fence marker of a non-mote block we are inside
-		cur     Cell
-		body    []string
-		outOpen = -1 // fence length of the output block being read, if any
-		outBody []string
-		outLine int
-		fresh   bool // the last thing seen was a cell, or blank lines after one
+		b         = Book{lines: strings.Split(strings.ReplaceAll(src, "\r\n", "\n"), "\n")}
+		bound     = map[string]int{} // name -> line of the cell that binds it
+		inCell    bool
+		otherChar byte // the fence of a non-mote block we are inside, if any
+		otherLen  int
+		otherLine int
+		cur       Cell
+		body      []string
+		outOpen   = -1 // fence length of the output block being read, if any
+		outBody   []string
+		outLine   int
+		fresh     bool // the last thing seen was a cell, or blank lines after one
 	)
 	last := func() *Cell { return &b.Cells[len(b.Cells)-1] }
 	for i, raw := range b.lines {
 		ln := i + 1
-		t := strings.TrimSpace(raw)
+		char, n, info, isFence := fence(raw)
 		switch {
 		case inCell:
-			if t == "```" {
+			if closes(raw, '`', 3) {
 				inCell = false
 				cur.Expr = strings.TrimSpace(strings.Join(body, "\n"))
 				if cur.Expr == "" {
@@ -127,39 +178,40 @@ func Parse(src string) (*Book, error) {
 			}
 			body = append(body, raw)
 		case outOpen >= 0:
-			if n := fenceLen(t); n >= outOpen && n == len(t) {
+			if closes(raw, '`', outOpen) {
 				last().Output.Text = strings.Join(outBody, "\n")
 				last().spanEnd = i + 1
 				outOpen = -1
 				continue
 			}
 			outBody = append(outBody, raw)
-		case other != "":
+		case otherChar != 0:
 			// Inside some other fenced block (a ```sh example, say): a mote
 			// fence there is text, not a cell.
-			if strings.HasPrefix(t, other) && strings.Trim(t, other[:1]) == "" {
-				other = ""
+			if closes(raw, otherChar, otherLen) {
+				otherChar = 0
 			}
-		case fresh && t == "":
+		case fresh && strings.TrimSpace(raw) == "":
 			// Blank lines may separate a cell from its output.
-		case fresh && isOutputFence(t):
+		case fresh && isFence && char == '`' && strings.HasPrefix(info+" ", "output "):
 			fresh = false
-			key, err := outputKey(t)
+			key, err := outputKey(info)
 			if err != nil {
 				return nil, fmt.Errorf("line %d: %v", ln, err)
 			}
 			last().Output = &Output{Key: key}
-			outOpen, outBody, outLine = fenceLen(t), nil, ln
-		case strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~"):
+			outOpen, outBody, outLine = n, nil, ln
+		case isFence:
 			fresh = false
-			marker := t[:3]
-			info := strings.Fields(strings.TrimLeft(t, marker[:1]))
-			if len(info) == 0 || info[0] != "mote" || marker != "```" {
-				other = marker
+			fields := strings.Fields(info)
+			// A cell is exactly three backticks: a longer fence is how an
+			// example of a cell is written in a notebook's text.
+			if char != '`' || n != 3 || len(fields) == 0 || fields[0] != "mote" {
+				otherChar, otherLen, otherLine = char, n, ln
 				continue
 			}
 			c := Cell{Line: ln}
-			for _, attr := range info[1:] {
+			for _, attr := range fields[1:] {
 				k, v, ok := strings.Cut(attr, "=")
 				if !ok || k != "as" {
 					return nil, fmt.Errorf("line %d: unknown cell attribute %q; the only one is as=NAME", ln, attr)
@@ -183,7 +235,18 @@ func Parse(src string) (*Book, error) {
 	if outOpen >= 0 {
 		return nil, fmt.Errorf("line %d: output is never closed", outLine)
 	}
+	if otherChar != 0 {
+		b.openAt = otherLine
+	}
 	return &b, nil
+}
+
+// unclosed refuses to add to a notebook that ends inside a fenced block.
+func (b *Book) unclosed() error {
+	if b.openAt > 0 {
+		return fmt.Errorf("the fenced block at line %d is never closed, so anything added after it would be inside it; close it first", b.openAt)
+	}
+	return nil
 }
 
 // fenceLen is the length of the run of backticks a line starts with.
@@ -191,18 +254,10 @@ func fenceLen(t string) int {
 	return len(t) - len(strings.TrimLeft(t, "`"))
 }
 
-func isOutputFence(t string) bool {
-	if fenceLen(t) < 3 {
-		return false
-	}
-	info := strings.Fields(t[fenceLen(t):])
-	return len(info) > 0 && info[0] == "output"
-}
-
-// outputKey reads the key= attribute of an output fence.
-func outputKey(t string) (string, error) {
+// outputKey reads the key= attribute of an output fence's info string.
+func outputKey(info string) (string, error) {
 	var key string
-	for _, attr := range strings.Fields(t[fenceLen(t):])[1:] {
+	for _, attr := range strings.Fields(info)[1:] {
 		k, v, ok := strings.Cut(attr, "=")
 		if !ok || k != "key" {
 			return "", fmt.Errorf("unknown output attribute %q; the only one is key=HASH", attr)
@@ -233,9 +288,12 @@ func (b *Book) Append(name, expr string) (int, error) {
 	if line, dup := bound[name]; name != "" && dup {
 		return 0, fmt.Errorf("%q is already bound at line %d", name, line)
 	}
+	if err := b.unclosed(); err != nil {
+		return 0, err
+	}
 	body := strings.Split(expr, "\n")
 	for _, l := range body {
-		if strings.TrimSpace(l) == "```" {
+		if closes(l, '`', 3) {
 			return 0, fmt.Errorf("a line of ``` would end the cell")
 		}
 	}
@@ -273,13 +331,16 @@ func (b *Book) Append(name, expr string) (int, error) {
 // precedes it. It refuses text with a line that opens a fenced block, since
 // that could turn into a cell, or swallow the cells after it.
 func (b *Book) AppendProse(text string) error {
-	text = strings.TrimSpace(text)
+	text = trimBlankLines(text)
 	if text == "" {
 		return fmt.Errorf("empty text")
 	}
+	if err := b.unclosed(); err != nil {
+		return err
+	}
 	body := strings.Split(text, "\n")
 	for _, l := range body {
-		if t := strings.TrimSpace(l); strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~") {
+		if _, _, _, ok := fence(l); ok {
 			return fmt.Errorf("text cannot hold a fenced block")
 		}
 	}
@@ -394,7 +455,7 @@ func FromSegments(segs []Segment) (*Book, error) {
 	var want []Cell
 	for _, seg := range segs {
 		if seg.Cell == nil {
-			if text := strings.TrimSpace(seg.Prose); text != "" {
+			if text := trimBlankLines(seg.Prose); text != "" {
 				parts = append(parts, text)
 			}
 			continue
@@ -416,7 +477,7 @@ func FromSegments(segs []Segment) (*Book, error) {
 			part += "\n\n" + strings.Join(c.Output.render(), "\n")
 		}
 		parts = append(parts, part)
-		want = append(want, Cell{Name: c.Name, Expr: expr})
+		want = append(want, Cell{Name: c.Name, Expr: expr, Output: c.Output})
 	}
 	book, err := Parse(strings.Join(parts, "\n\n") + "\n")
 	if err != nil {

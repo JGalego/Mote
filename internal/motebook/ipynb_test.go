@@ -155,7 +155,9 @@ func TestFromIPYNBReadsWhatJupyterWrites(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "# Title\n\n```mote as=city\nchat capital\n```\n\n```output\nParis\n```\n\n```mote\nchat \"{{city}}\"\n```\n"
+	// What the mote kernel shows as an image or a player comes back as the path
+	// it stands for: its text/plain.
+	want := "# Title\n\n```mote as=city\nchat capital\n```\n\n```output\nParis\nx\n```\n\n```mote\nchat \"{{city}}\"\n```\n"
 	if b.String() != want {
 		t.Errorf("got:\n%s\nwant:\n%s", b.String(), want)
 	}
@@ -210,5 +212,50 @@ func TestSplitLines(t *testing.T) {
 	}
 	if b, _ := (lines)(nil).MarshalJSON(); string(b) != "[]" {
 		t.Errorf("nil lines marshal to %s, not an empty list", b)
+	}
+}
+
+func TestIPYNBOfAnEmptyNotebookHasAListOfCells(t *testing.T) {
+	b, _ := Parse("")
+	data, err := b.IPYNB()
+	if err != nil || !strings.Contains(string(data), `"cells": []`) {
+		t.Errorf("%v\n%s", err, data)
+	}
+}
+
+func TestIPYNBRoundTripsImagesAndEmptyOutputs(t *testing.T) {
+	src := `{"nbformat": 4, "metadata": {"kernelspec": {"name": "mote"}}, "cells": [
+	  {"cell_type": "code", "metadata": {}, "execution_count": 1, "source": "frames clip.mp4 2", "outputs": [
+	    {"output_type": "display_data", "metadata": {}, "data": {"image/png": "iVBOR", "text/plain": "frames/frame_001.png"}},
+	    {"output_type": "display_data", "metadata": {}, "data": {"image/png": "iVBOR", "text/plain": ["frames/frame_002.png"]}}
+	  ]},
+	  {"cell_type": "code", "metadata": {}, "execution_count": 2, "source": "sh: true", "outputs": []}
+	]}`
+	b, err := FromIPYNB([]byte(src), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o := b.Cells[0].Output; o == nil || o.Text != "frames/frame_001.png\nframes/frame_002.png" {
+		t.Errorf("images: %+v", o)
+	}
+	if o := b.Cells[1].Output; o == nil || o.Text != "" {
+		t.Errorf("a cell that ran and printed nothing: %+v", o)
+	}
+	// And out again: it still ran.
+	data, _ := b.IPYNB()
+	back, err := FromIPYNB(data, false)
+	if err != nil || back.Cells[1].Output == nil {
+		t.Errorf("round trip: %v %+v", err, back)
+	}
+}
+
+func TestIPYNBRefusesACellAJupyterCellWouldReadAsABinding(t *testing.T) {
+	b, _ := Parse("```mote\nsay = hi\n```\n")
+	if _, err := b.IPYNB(); err == nil || !strings.Contains(err.Error(), `binding of "say"`) {
+		t.Errorf("%v", err)
+	}
+	named, _ := Parse("```mote as=x\nsay = hi\n```\n")
+	if _, err := named.IPYNB(); err != nil {
+		t.Errorf("a named cell: %v", err)
 	}
 }

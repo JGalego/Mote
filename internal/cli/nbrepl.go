@@ -364,6 +364,9 @@ func (s *nbSession) addProse(text, label string) error {
 
 // note adds text.
 func (s *nbSession) note(text string) error {
+	// What separates the command from the text is not part of it; the lines
+	// after the first keep their indent.
+	text = strings.TrimLeft(text, " \t")
 	if strings.TrimSpace(text) == "" {
 		return errors.New("usage: /note TEXT")
 	}
