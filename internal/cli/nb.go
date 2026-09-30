@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/jgalego/mote/internal/motebook"
 	mrt "github.com/jgalego/mote/internal/runtime"
@@ -278,9 +279,9 @@ func (a *app) nbRun(ctx context.Context, path string, vals map[string]string) er
 		if err := models.load(ctx); err != nil {
 			return err
 		}
-		done := a.status(label)
+		started := time.Now()
 		res, err := a.runToOutput(ctx, c, key, values, vals, models)
-		done(err == nil)
+		a.cellDone(label, started, err == nil)
 		if err != nil {
 			return fmt.Errorf("cell %d (line %d): %w", i+1, c.cell.Line, err)
 		}
@@ -296,6 +297,17 @@ func (a *app) nbRun(ctx context.Context, path string, vals map[string]string) er
 	}
 	fmt.Fprintf(a.err, "%s %d run, %d unchanged\n", a.ue.OK(), ran, kept)
 	return nil
+}
+
+// cellDone reports how long a cell took, once it is done. A cell is not a
+// spinner while it runs: the tasks in it draw their own, loading a model and
+// thinking, and two spinners on one line overwrite each other.
+func (a *app) cellDone(label string, started time.Time, ok bool) {
+	mark := a.ue.OK()
+	if !ok {
+		mark = a.ue.Fail()
+	}
+	fmt.Fprintf(a.err, "%s %s %s\n", mark, label, a.ue.Dim(fmt.Sprintf("%.1fs", time.Since(started).Seconds())))
 }
 
 // runToOutput runs a cell and returns the output to keep under it. key is

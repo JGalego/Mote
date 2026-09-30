@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -364,6 +365,11 @@ func TestConsoleTagline(t *testing.T) {
 // consoleStderr runs a session with stdout and stderr as real files, which is
 // what it takes for mote to think it has a terminal to decorate.
 func consoleStderr(t *testing.T, e *env, env map[string]string, args ...string) string {
+	return liveStderr(t, e, env, "", args...)
+}
+
+// liveStderr is consoleStderr with input for the session.
+func liveStderr(t *testing.T, e *env, env map[string]string, stdin string, args ...string) string {
 	t.Helper()
 	t.Setenv("MOTE_FORCE_LIVE", "1")
 	t.Setenv("CLICOLOR_FORCE", "1")
@@ -382,7 +388,7 @@ func consoleStderr(t *testing.T, e *env, env map[string]string, args ...string) 
 	}
 	defer out.Close()
 	defer errf.Close()
-	if code := Main(args, strings.NewReader(""), out, errf); code != 0 {
+	if code := Main(args, strings.NewReader(stdin), out, errf); code != 0 {
 		t.Fatalf("%v: exit %d\n%s", args, code, readFile(t, errf.Name()))
 	}
 	return readFile(t, errf.Name())
@@ -412,5 +418,45 @@ func TestConsoleHasNoBannerWhenPiped(t *testing.T) {
 	code, out, errs := e.mote("chat hi\n", "nb", "console", path)
 	if code != 0 || strings.Contains(errs, "notebook console") || strings.Contains(out, "notebook console") {
 		t.Errorf("a piped session was decorated: %d %q %s", code, out, errs)
+	}
+}
+
+var ansi = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
+
+// spinnerOnCell finds a spinner frame drawn for a cell. A cell is not a
+// spinner: the tasks in it draw their own, and two spinners on one line
+// overwrite each other, which shows as flicker and as text run together.
+func spinnerOnCell(stderr string) (string, bool) {
+	stderr = ansi.ReplaceAllString(stderr, "")
+	for _, frame := range []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"} {
+		if i := strings.Index(stderr, frame+" cell "); i >= 0 {
+			return stderr[i : i+len(frame)+12], true
+		}
+	}
+	return "", false
+}
+
+func TestConsoleCellsAreNotSpinnersOverTheirTasks(t *testing.T) {
+	e, path := nbSessionEnv(t)
+	got := liveStderr(t, e, nil, "chat one\nchat two\n", "nb", "console", path)
+	if frame, bad := spinnerOnCell(got); bad {
+		t.Errorf("a cell draws a spinner over the ones its tasks draw: %q\n%q", frame, got)
+	}
+	// What the cell took is still reported, once, when it is done.
+	if strings.Count(got, "cell 1 ") < 1 || !strings.Contains(got, "cell 2 ") {
+		t.Errorf("cells are not reported:\n%q", got)
+	}
+}
+
+func TestNbRunCellsAreNotSpinnersOverTheirTasks(t *testing.T) {
+	e, path := nbSessionEnv(t)
+	book := "```mote\nchat one\n```\n\n```mote\nchat two\n```\n"
+	os.WriteFile(path, []byte(book), 0o644)
+	got := liveStderr(t, e, nil, "", "nb", "run", path)
+	if frame, bad := spinnerOnCell(got); bad {
+		t.Errorf("a cell draws a spinner over the ones its tasks draw: %q\n%q", frame, got)
+	}
+	if !strings.Contains(got, "cell 1/2") || !strings.Contains(got, "cell 2/2") {
+		t.Errorf("cells are not reported:\n%q", got)
 	}
 }

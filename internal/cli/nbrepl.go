@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/jgalego/mote/internal/motebook"
 	"github.com/jgalego/mote/internal/task"
@@ -305,9 +306,9 @@ func (s *nbSession) run(ctx context.Context, line string) error {
 	if err := s.models.load(ctx); err != nil {
 		return fail(err)
 	}
-	done := s.a.status(fmt.Sprintf("cell %d", idx+1))
+	started := time.Now()
 	out, err := s.a.runToOutput(ctx, cell, motebook.Key(cell.cell, inputs), s.values, s.vals, s.models)
-	done(err == nil)
+	s.a.cellDone(fmt.Sprintf("cell %d", idx+1), started, err == nil)
 	if err != nil {
 		return fail(err)
 	}
