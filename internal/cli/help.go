@@ -224,9 +224,10 @@ var helpTopics = map[string]helpTopic{
 	},
 	"meta": {
 		summary: "Write a motebook for a complex goal in one shot: the cells that, run in order, get it done.",
-		usage:   []string{`mote meta "GOAL" [-o FILE] [--run] [--force] [--yes|-y] [--model ID] [--profile P]`},
+		usage:   []string{`mote meta "GOAL" [-o FILE] [--chat] [--run] [--force] [--yes|-y] [--model ID] [--profile P]`},
 		flags: []helpFlag{
 			{"-o, --output FILE", "write the notebook to FILE instead of printing it; an existing FILE is not replaced without --force"},
+			{"--chat", "show the notebook and ask what to change before writing it; Enter keeps it, q gives it up (needs a terminal)"},
 			{"--run", "run the notebook once it is written (needs -o)"},
 			{"--force", "replace FILE if it exists"},
 			{"--yes, -y", "with --run, run cells that can change things without asking"},
@@ -235,10 +236,12 @@ var helpTopics = map[string]helpTopic{
 		},
 		notes: []string{
 			"The text model writes a plan of tasks, at most six cells, and mote checks it (real tasks, arguments that fit, files that exist, cells that read only earlier cells) before anything is written. It writes tasks, never shell commands. Run the result with `mote nb run`.",
+			"With --chat each change you ask for goes to the model with the current plan and comes back checked the same way; one that cannot run is reported and the last good plan stays.",
 		},
 		examples: []string{
 			`mote meta "summarise talk.mp3, then translate the summary to French" -o talk.mote.md`,
 			`mote meta "explain what a mutex is, then write a Go example" -o mutex.mote.md --run`,
+			`mote meta "summarise talk.mp3, then translate it" --chat -o talk.mote.md`,
 			`mote meta "review my last commit and draft a changelog entry"`,
 		},
 	},

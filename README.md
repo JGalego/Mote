@@ -101,7 +101,7 @@ In a clone, `go install ./cmd/mote` does the same into `$(go env GOPATH)/bin`. `
 | `mote nb console [FILE \| -o FILE] [--yes]` | An interactive session, like `jupyter console`: each line is a cell that runs as you enter it, its output printed below; kept in FILE, or offered to be saved when you leave if there is none |
 | `mote nb export FILE` / `mote nb import FILE.ipynb` | Convert a motebook to a Jupyter notebook for the mote kernel and back |
 | `mote kernel install [--python PATH]` | Register mote as a Jupyter kernel, so a notebook cell can be a mote task and its output shows below it |
-| `mote meta "GOAL" [-o FILE] [--run] [--force]` | Write a motebook for a complex goal in one shot; `--run` runs it |
+| `mote meta "GOAL" [-o FILE] [--chat] [--run] [--force]` | Write a motebook for a complex goal in one shot; `--chat` lets you change the plan first, `--run` runs it |
 | `mote pipe "A \| B \| sh: cmd"` | Chain tasks in one process, each stage receiving the last one's value: `{}` or `-` places it, `sh:` runs a shell command, `--trace` shows each step |
 | `mote do "REQUEST"` | Pick the task that fits a request written in plain words and run it; `--router embed` chooses with the encoder, `--plan` writes a pipeline of several tasks, `--dry-run` shows the choice |
 | `mote agent "GOAL"` | Work towards a goal in steps, calling tasks and local tools and reading what they return; `--tools` picks them, `--allow-sh` offers the shell |
@@ -374,6 +374,12 @@ mote meta "explain what a mutex is, then write a Go example" -o mutex.mote.md --
 The text model writes the whole plan in one constrained generation, at most six cells, each with a sentence saying what it does. Later cells read earlier ones as `{{step1}}`, `{{step2}}`. mote checks the plan before writing anything: the tasks exist, their arguments fit, the files exist, and no cell reads one that comes after it. It then reads the notebook back and insists on the cells it started with. The model writes tasks, never shell commands, so a generated notebook does only what its tasks do. Without `-o` the notebook is printed; an existing file is only replaced with `--force`.
 
 Read it, edit it, and run it with `mote nb run`; `--run` does both at once.
+
+To shape the plan before it is written, add `--chat`: mote shows the notebook and asks what to change, and each change goes to the model with the current plan and comes back checked the same way. Enter keeps the plan, `q` gives it up. A change that produces a plan that cannot run is reported and the last good plan stays, so asking costs nothing.
+
+```sh
+mote meta "summarise talk.mp3, then translate the summary to French" --chat -o talk.mote.md
+```
 
 ### chosen 🎯
 

@@ -75,7 +75,7 @@ Usage:
   mote nb console [FILE | -o FILE] [--yes] [--model ID] [--profile P]
   mote nb exec [--state FILE] [--yes] [--model ID] [--profile P]
   mote nb export FILE [-o FILE|-] [--force] | import FILE.ipynb [-o FILE|-] [--force] [--any-kernel]
-  mote meta "GOAL" [-o FILE] [--run] [--force] [--yes] [--model ID] [--profile P]
+  mote meta "GOAL" [-o FILE] [--chat] [--run] [--force] [--yes] [--model ID] [--profile P]
   mote do "REQUEST" [-o OUTPUT] [--apply] [--dry-run] [--plan [--trace]] [--yes] [--model ID] [--profile P]
   mote agent "GOAL" [-o OUTPUT] [--tools a,b] [--mcp SERVER,...] [--steps N] [--allow-sh [--sandbox auto|on|off] [--sandbox-net]] [--yes] [--model ID]
   mote mcp [tools [NAME...]]

@@ -128,31 +128,10 @@ func TestBuildNotebookRefusesWhatCannotRun(t *testing.T) {
 	}
 }
 
-// plan builds a script line for the fake model.
+// metaReply is a script line for the fake model: the plan as JSON.
 func metaReply(t *testing.T, np metaPlan) string {
 	t.Helper()
-	type stageJSON = planStage
-	type cellJSON struct {
-		Note  string      `json:"note"`
-		First stageJSON   `json:"first"`
-		Then  []stageJSON `json:"then"`
-	}
-	out := struct {
-		Title string     `json:"title"`
-		Cells []cellJSON `json:"cells"`
-	}{Title: np.Title}
-	for _, c := range np.Cells {
-		then := c.Then
-		if then == nil {
-			then = []stageJSON{}
-		}
-		out.Cells = append(out.Cells, cellJSON{Note: c.Note, First: c.First, Then: then})
-	}
-	b, err := json.Marshal(out)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(b)
+	return np.JSON()
 }
 
 var mutexPlan = metaPlan{Title: "Mutexes", Cells: []metaCell{
@@ -312,5 +291,141 @@ func TestMetaOffersFilesTheGoalNames(t *testing.T) {
 	script(t, metaReply(t, metaPlan{Cells: []metaCell{cell("", stg("transcribe", filepath.Join(dir, "ghost.mp3")))}}))
 	if code, _, errs := e.mote("", "meta", "summarise "+audio); code == 0 || !strings.Contains(errs, "does not exist") {
 		t.Errorf("invented file: %d %s", code, errs)
+	}
+}
+
+// With --chat the plan is shown and can be changed before anything is
+// written. The input stands in for a terminal, so MOTE_FORCE_LIVE.
+
+var threeStepPlan = metaPlan{Title: "Mutexes, three ways", Cells: []metaCell{
+	cell("Explain what a mutex is.", stg("chat", "What is a mutex?")),
+	cell("Retell it for a child.", stg("chat", "Explain to a child: {{step1}}")),
+	cell("Give a Go example.", stg("chat", "Show a Go example of: {{step1}}")),
+}}
+
+func chatEnv(t *testing.T, replies ...metaPlan) (*env, string) {
+	t.Helper()
+	t.Setenv("MOTE_FORCE_LIVE", "1")
+	e := newEnv(t)
+	e.setup()
+	e.install("qwen3.5-0.8b")
+	lines := make([]string, len(replies))
+	for i, r := range replies {
+		lines[i] = metaReply(t, r)
+	}
+	return e, script(t, lines...)
+}
+
+func TestMetaChatRevisesThePlanBeforeWritingIt(t *testing.T) {
+	e, log := chatEnv(t, mutexPlan, threeStepPlan)
+	path := filepath.Join(t.TempDir(), "m.mote.md")
+
+	code, out, errs := e.mote("add a third step with a Go example\n\n", "meta", "explain a mutex", "--chat", "-o", path)
+	if code != 0 || out != "" {
+		t.Fatalf("meta --chat: %d %q %s", code, out, errs)
+	}
+	got := readFile(t, path)
+	if !strings.HasPrefix(got, "# Mutexes, three ways\n") || strings.Count(got, "```mote") != 3 {
+		t.Errorf("the revised plan was not written:\n%s", got)
+	}
+	// Both plans were shown before the choice was made.
+	if !strings.Contains(errs, "# Mutexes\n") || !strings.Contains(errs, "# Mutexes, three ways") || !strings.Contains(errs, "change something?") {
+		t.Errorf("preview:\n%s", errs)
+	}
+	reqs := requests(t, log)
+	if len(reqs) != 2 {
+		t.Fatalf("%d requests, want the plan and one revision", len(reqs))
+	}
+	revise := reqs[1]["prompt"].(string)
+	for _, want := range []string{"Goal: explain a mutex", "Current plan:\n" + mutexPlan.JSON(), "Change requested: add a third step with a Go example"} {
+		if !strings.Contains(revise, want) {
+			t.Errorf("the revision was not shown %q:\n%s", want, revise)
+		}
+	}
+	if reqs[1]["format"] == nil {
+		t.Error("the revision was not constrained to a plan")
+	}
+}
+
+func TestMetaChatKeepsTheLastGoodPlanWhenARevisionFails(t *testing.T) {
+	bad := metaPlan{Cells: []metaCell{cell("", stg("chat", "{{step2}}")), cell("", stg("chat", "x"))}}
+	e, log := chatEnv(t, mutexPlan, bad)
+	path := filepath.Join(t.TempDir(), "m.mote.md")
+
+	code, _, errs := e.mote("make it worse\n\n", "meta", "explain a mutex", "--chat", "-o", path)
+	if code != 0 || !strings.Contains(errs, "the revised plan cannot run") || !strings.Contains(errs, "keeping the last plan") {
+		t.Fatalf("bad revision: %d %s", code, errs)
+	}
+	if got := readFile(t, path); !strings.HasPrefix(got, "# Mutexes\n") || strings.Count(got, "```mote") != 2 {
+		t.Errorf("the last good plan was lost:\n%s", got)
+	}
+	if len(requests(t, log)) != 2 {
+		t.Error("the revision was not asked for")
+	}
+}
+
+func TestMetaChatKeepsThePlanWhenTheModelIsNotAPlan(t *testing.T) {
+	t.Setenv("MOTE_FORCE_LIVE", "1")
+	e := newEnv(t)
+	e.setup()
+	e.install("qwen3.5-0.8b")
+	script(t, metaReply(t, mutexPlan), "not json")
+	path := filepath.Join(t.TempDir(), "m.mote.md")
+	code, _, errs := e.mote("change it\n\n", "meta", "explain a mutex", "--chat", "-o", path)
+	if code != 0 || !strings.Contains(errs, "planning:") || !strings.HasPrefix(readFile(t, path), "# Mutexes\n") {
+		t.Errorf("garbage revision: %d %s", code, errs)
+	}
+}
+
+func TestMetaChatCanBeGivenUp(t *testing.T) {
+	e, _ := chatEnv(t, mutexPlan)
+	path := filepath.Join(t.TempDir(), "m.mote.md")
+	code, out, errs := e.mote("q\n", "meta", "explain a mutex", "--chat", "-o", path)
+	if code != 0 || out != "" || !strings.Contains(errs, "nothing written") {
+		t.Errorf("q: %d %q %s", code, out, errs)
+	}
+	if _, err := os.Stat(path); err == nil {
+		t.Error("a notebook was written after q")
+	}
+}
+
+func TestMetaChatPrintsTheResultOnStdout(t *testing.T) {
+	e, _ := chatEnv(t, mutexPlan, threeStepPlan)
+	// Running out of input keeps what there is, as Enter does.
+	code, out, errs := e.mote("one more step please\n", "meta", "explain a mutex", "--chat")
+	if code != 0 || !strings.HasPrefix(out, "# Mutexes, three ways\n") || strings.Count(out, "```mote") != 3 {
+		t.Fatalf("stdout: %d %q %s", code, out, errs)
+	}
+	if strings.Count(out, "# Mutexes") != 1 {
+		t.Errorf("stdout holds more than the result:\n%s", out)
+	}
+}
+
+func TestMetaChatSaysWhenAChangeChangesNothing(t *testing.T) {
+	e, _ := chatEnv(t, mutexPlan, mutexPlan)
+	code, _, errs := e.mote("same again\n\n", "meta", "explain a mutex", "--chat")
+	if code != 0 || !strings.Contains(errs, "no change") {
+		t.Errorf("no change: %d %s", code, errs)
+	}
+}
+
+func TestMetaChatCanRunTheResult(t *testing.T) {
+	e, _ := chatEnv(t, mutexPlan, threeStepPlan)
+	path := filepath.Join(t.TempDir(), "m.mote.md")
+	code, _, errs := e.mote("add a step\n\n", "meta", "explain a mutex", "--chat", "-o", path, "--run")
+	if code != 0 {
+		t.Fatalf("meta --chat --run: %d %s", code, errs)
+	}
+	if got := readFile(t, path); strings.Count(got, "```output key=") != 3 {
+		t.Errorf("the revised notebook was not run:\n%s", got)
+	}
+}
+
+func TestMetaChatNeedsATerminal(t *testing.T) {
+	e := newEnv(t)
+	e.setup()
+	code, _, errs := e.mote("", "meta", "a goal", "--chat")
+	if code != ExitUsage || !strings.Contains(errs, "not a terminal") {
+		t.Errorf("--chat without a terminal: %d %s", code, errs)
 	}
 }

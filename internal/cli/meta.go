@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"os"
@@ -24,7 +25,7 @@ import (
 // maxMetaCells bounds a notebook, for the same reason as maxPlanStages.
 const maxMetaCells = 6
 
-const metaUsage = `usage: mote meta "GOAL" [-o FILE] [--run] [--force] [--yes] [--model ID] [--profile P]`
+const metaUsage = `usage: mote meta "GOAL" [-o FILE] [--chat] [--run] [--force] [--yes] [--model ID] [--profile P]`
 
 const metaSystem = "You turn a goal into a notebook: a short list of cells run in order, each a task or a short pipeline of tasks. " +
 	"Use as few cells as possible."
@@ -53,6 +54,29 @@ type metaPlan struct {
 type metaCell struct {
 	Note string `json:"note"`
 	plan
+}
+
+// JSON writes the plan the way the model is asked to, which is how it is
+// shown back to it to be revised.
+func (p metaPlan) JSON() string {
+	type stageJSON = planStage
+	type cellJSON struct {
+		Note  string      `json:"note"`
+		First stageJSON   `json:"first"`
+		Then  []stageJSON `json:"then"`
+	}
+	out := struct {
+		Title string     `json:"title"`
+		Cells []cellJSON `json:"cells"`
+	}{Title: p.Title, Cells: make([]cellJSON, 0, len(p.Cells))}
+	for _, c := range p.Cells {
+		then := c.Then
+		if then == nil {
+			then = []stageJSON{}
+		}
+		out.Cells = append(out.Cells, cellJSON{Note: c.Note, First: c.First, Then: then})
+	}
+	return mustJSON(out)
 }
 
 // metaTasks are the tasks a cell can run: those a request can drive, minus
@@ -95,6 +119,16 @@ func metaPrompt(goal string, tasks []task.Task, files []string) string {
 	}
 	fmt.Fprintf(&b, "Goal: %s", goal)
 	return b.String()
+}
+
+// metaRevisePrompt asks for a plan again with a change made to the last one.
+// The plan carries every change asked for so far, so only the latest is
+// needed with it.
+func metaRevisePrompt(goal string, tasks []task.Task, files []string, current metaPlan, change string) string {
+	return metaPrompt(goal, tasks, files) +
+		"\n\nCurrent plan:\n" + current.JSON() +
+		"\n\nChange requested: " + change +
+		"\n\nWrite the complete revised plan, changing only what was asked."
 }
 
 // plainLine reduces text a model wrote to one line that cannot open a code
@@ -194,7 +228,7 @@ func buildNotebook(goal string, np metaPlan, tasks []task.Task) (string, error) 
 }
 
 func (a *app) metaCmd(ctx context.Context, args []string) error {
-	vals, pos, err := flags(args, []string{"-o", "--output", "--model", "--profile"}, []string{"--run", "--force", "--yes", "-y"})
+	vals, pos, err := flags(args, []string{"-o", "--output", "--model", "--profile"}, []string{"--chat", "--run", "--force", "--yes", "-y"})
 	if err != nil {
 		return err
 	}
@@ -208,6 +242,10 @@ func (a *app) metaCmd(ctx context.Context, args []string) error {
 	}
 	if vals["--run"] == "true" && out == "" {
 		return usagef("--run needs -o FILE: the notebook has to be somewhere to run")
+	}
+	chat := vals["--chat"] == "true"
+	if chat && !a.tty {
+		return usagef("--chat asks what to change, and stdin is not a terminal")
 	}
 	if out != "" && vals["--force"] != "true" {
 		if _, err := os.Stat(out); err == nil {
@@ -235,13 +273,28 @@ func (a *app) metaCmd(ctx context.Context, args []string) error {
 		goal = resolved
 	}
 	files := namedFiles(goal)
-	var np metaPlan
-	if err := a.generateJSON(ctx, profile, sessions, metaSystem, metaPrompt(goal, usable, files), metaSchema(usable, files), &np); err != nil {
-		return fmt.Errorf("planning: %w", err)
+	schema := metaSchema(usable, files)
+	replan := func(prompt string) (metaPlan, error) {
+		var np metaPlan
+		if err := a.generateJSON(ctx, profile, sessions, metaSystem, prompt, schema, &np); err != nil {
+			return np, fmt.Errorf("planning: %w", err)
+		}
+		return np, nil
+	}
+	np, err := replan(metaPrompt(goal, usable, files))
+	if err != nil {
+		return err
 	}
 	text, err := buildNotebook(goal, np, usable)
 	if err != nil {
 		return fmt.Errorf("the plan cannot run: %w", err)
+	}
+	if chat {
+		var kept bool
+		if text, kept = a.metaChat(goal, np, text, usable, files, replan); !kept {
+			fmt.Fprintf(a.err, "%s nothing written\n", a.ue.Dim("·"))
+			return nil
+		}
 	}
 	if out == "" {
 		fmt.Fprint(a.out, text)
@@ -263,4 +316,41 @@ func (a *app) metaCmd(ctx context.Context, args []string) error {
 		}
 	}
 	return a.nbRun(ctx, out, runVals)
+}
+
+// metaChat shows the notebook a plan makes and asks what to change, until
+// you accept it, which Enter or the end of input does, or give it up with q.
+// A change goes to the model with the current plan, and comes back checked
+// like the first: one that cannot run is reported and the last good plan
+// stays, so nothing is lost by asking. The notebook is shown on stderr, which
+// leaves stdout for the result.
+func (a *app) metaChat(goal string, np metaPlan, text string, tasks []task.Task, files []string,
+	replan func(prompt string) (metaPlan, error)) (string, bool) {
+	sc := bufio.NewScanner(a.in)
+	sc.Buffer(make([]byte, 1<<20), 1<<20)
+	for {
+		fmt.Fprintf(a.err, "\n%s\n", text)
+		prompt := a.ue.Accent("change something? describe it, Enter to keep it, q to quit › ")
+		line, _ := a.readTurnPrompt(sc, true, prompt)
+		switch strings.ToLower(line) {
+		case "":
+			return text, true // Enter, or the end of the input
+		case "q", "quit":
+			return "", false
+		}
+		revised, err := replan(metaRevisePrompt(goal, tasks, files, np, line))
+		if err == nil {
+			var next string
+			if next, err = buildNotebook(goal, revised, tasks); err == nil {
+				if next == text {
+					fmt.Fprintf(a.err, "%s no change\n", a.ue.Dim("·"))
+					continue
+				}
+				np, text = revised, next
+				continue
+			}
+			err = fmt.Errorf("the revised plan cannot run: %w", err)
+		}
+		fmt.Fprintf(a.err, "%s %v; keeping the last plan\n", a.ue.Fail(), err)
+	}
 }
