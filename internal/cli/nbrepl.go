@@ -35,17 +35,6 @@ Tab completes commands, tasks, {{names}} and file names; the arrow keys move and
   /undo  drop the last thing added   /save FILE  keep them in a file   /help  this   /exit  or Ctrl-D
 With no file the cells live in memory; on exit you are asked whether to save them.`
 
-// valuesOf reads back what a notebook's cells have bound.
-func valuesOf(book *motebook.Book) map[string]string {
-	values := map[string]string{}
-	for _, c := range book.Cells {
-		if c.Name != "" && c.Output != nil {
-			values[c.Name] = c.Output.Text
-		}
-	}
-	return values
-}
-
 // cellCount says how many cells, in words that agree.
 func cellCount(n int) string {
 	if n == 1 {
@@ -112,7 +101,7 @@ func (a *app) nbConsole(ctx context.Context, path string, vals map[string]string
 		return err
 	}
 	s := &nbSession{
-		a: a, path: path, book: book, tasks: tasks, values: valuesOf(book),
+		a: a, path: path, book: book, tasks: tasks, values: book.Values(),
 		models: a.newNbModels(vals), vals: vals,
 		yes: vals["--yes"] == "true" || vals["-y"] == "true",
 	}
@@ -243,7 +232,7 @@ func (s *nbSession) restore(text string) error {
 	if err != nil {
 		return err
 	}
-	s.book, s.values = book, valuesOf(book)
+	s.book, s.values = book, book.Values()
 	return nil
 }
 

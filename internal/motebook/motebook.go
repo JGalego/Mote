@@ -294,6 +294,18 @@ func (b *Book) AppendProse(text string) error {
 	return nil
 }
 
+// Values are what the cells that have run have bound: each name, with the
+// text its cell printed.
+func (b *Book) Values() map[string]string {
+	values := map[string]string{}
+	for _, c := range b.Cells {
+		if c.Name != "" && c.Output != nil {
+			values[c.Name] = c.Output.Text
+		}
+	}
+	return values
+}
+
 // Set keeps o under the cell at index i, replacing what was there.
 func (b *Book) Set(i int, o Output) { b.Cells[i].Output = &o }
 

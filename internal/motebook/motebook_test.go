@@ -429,3 +429,14 @@ func TestFromSegmentsEdits(t *testing.T) {
 		t.Errorf("blank prose: %v", err)
 	}
 }
+
+func TestValuesAreWhatRunCellsBound(t *testing.T) {
+	b, _ := Parse("```mote as=a\nchat hi\n```\n\n```output key=k\nhello\n```\n\n```mote as=b\nchat x\n```\n\n```mote\nchat y\n```\n\n```output\nunnamed\n```\n")
+	got := b.Values()
+	if len(got) != 1 || got["a"] != "hello" {
+		t.Errorf("values %v: only a named cell that has run binds anything", got)
+	}
+	if empty, _ := Parse(""); len(empty.Values()) != 0 {
+		t.Error("an empty notebook binds something")
+	}
+}
