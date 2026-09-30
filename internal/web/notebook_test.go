@@ -329,6 +329,15 @@ func TestWatchTellsPagesAboutChangesMadeElsewhere(t *testing.T) {
 	if e := next("a rewritten file"); e.Type != "changed" || e.Rev <= before {
 		t.Errorf("rewritten: %+v (was rev %d)", e, before)
 	}
+	// The watcher can see the write and then the new time separately, so let
+	// any second "changed" settle before the next step looks for a warning.
+	for settled := false; !settled; {
+		select {
+		case <-events:
+		case <-time.After(100 * time.Millisecond):
+			settled = true
+		}
+	}
 	// A file that cannot be read is said so once, and again when it can.
 	os.WriteFile(st.path, []byte("```mote\nchat {{nope}}\n```\n"), 0o644)
 	os.Chtimes(st.path, future.Add(time.Hour), future.Add(time.Hour))
