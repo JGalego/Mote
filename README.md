@@ -99,6 +99,7 @@ In a clone, `go install ./cmd/mote` does the same into `$(go env GOPATH)/bin`. `
 | `mote nb run FILE [-o FILE\|-] [--force] [--dry-run] [--yes]` | Run a motebook: a Markdown file whose `mote` cells are tasks or pipelines, with each output written into the file under its cell |
 | `mote nb exec [--state FILE]` | Run the one cell on stdin and print its output; what the Jupyter kernel calls |
 | `mote nb console [FILE \| -o FILE] [--yes]` | An interactive session, like `jupyter console`: each line is a cell that runs as you enter it, its output printed below; kept in FILE, or offered to be saved when you leave if there is none |
+| `mote nb export FILE` / `mote nb import FILE.ipynb` | Convert a motebook to a Jupyter notebook for the mote kernel and back |
 | `mote kernel install [--python PATH]` | Register mote as a Jupyter kernel, so a notebook cell can be a mote task and its output shows below it |
 | `mote meta "GOAL" [-o FILE] [--run] [--force]` | Write a motebook for a complex goal in one shot; `--run` runs it |
 | `mote pipe "A \| B \| sh: cmd"` | Chain tasks in one process, each stage receiving the last one's value: `{}` or `-` places it, `sh:` runs a shell command, `--trace` shows each step |
@@ -346,6 +347,17 @@ chat "how tall is it? {{city}}"
 ```
 
 An image a task writes, such as `draw`'s, is shown as an image. Cells run without asking first, being the ones you type, and restarting the kernel starts the session over. Each cell is a call to `mote nb exec`, and models stay loaded between cells in the [resident server](#serving). `mote kernel uninstall` removes it.
+
+#### Moving between the two
+
+A motebook is Markdown you can read and diff; a Jupyter notebook is what Jupyter and VS Code open. `mote nb export` and `mote nb import` convert one to the other:
+
+```sh
+mote nb export notes.mote.md          # notes.ipynb, for the mote kernel
+mote nb import analysis.ipynb         # analysis.mote.md
+```
+
+Prose becomes markdown cells, a cell becomes a code cell written the way the kernel takes it (`name = pipeline` where the motebook has `as=name`), and what a cell printed goes with it. Going the other way, an imported output has no fingerprint, so `mote nb run` runs that cell again rather than trust what it cannot check. A notebook for another kernel is refused unless you pass `--any-kernel`, and nothing is replaced without `--force`.
 
 A value is filled into a cell's arguments, so one that contains a `|`, a quote or a `{}` stays text. It cannot be filled into an `sh:` stage: pipe it in and use `{}`. Cells with an `sh:` stage, or a task that asks, run every time, and mote asks once before starting unless you pass `--yes`.
 

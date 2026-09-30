@@ -23,7 +23,9 @@ import (
 
 const nbUsage = "usage: mote nb run FILE [-o FILE|-] [--force] [--dry-run] [--yes] [--model ID] [--profile P]\n" +
 	"       mote nb console [FILE | -o FILE] [--yes] [--model ID] [--profile P]\n" +
-	"       mote nb exec [--state FILE] [--yes] [--model ID] [--profile P]"
+	"       mote nb exec [--state FILE] [--yes] [--model ID] [--profile P]\n" +
+	"       mote nb export FILE [-o FILE|-] [--force]\n" +
+	"       mote nb import FILE.ipynb [-o FILE|-] [--force] [--any-kernel]"
 
 // nbCell is a cell ready to run: parsed, with its tasks found.
 type nbCell struct {
@@ -37,7 +39,7 @@ type nbCell struct {
 }
 
 func (a *app) nbCmd(ctx context.Context, args []string) error {
-	vals, pos, err := flags(args, []string{"-o", "--output", "--model", "--profile", "--state"}, []string{"--yes", "-y", "--force", "--dry-run"})
+	vals, pos, err := flags(args, []string{"-o", "--output", "--model", "--profile", "--state"}, []string{"--yes", "-y", "--force", "--dry-run", "--any-kernel"})
 	if err != nil {
 		return err
 	}
@@ -49,12 +51,14 @@ func (a *app) nbCmd(ctx context.Context, args []string) error {
 		"run":     {"-o", "--output", "--force", "--dry-run"},
 		"console": {"-o", "--output"},
 		"exec":    {"--state"},
+		"export":  {"-o", "--output", "--force"},
+		"import":  {"-o", "--output", "--force", "--any-kernel"},
 	}
 	own, ok := allowed[pos[0]]
 	if !ok {
 		return usagef("%s", nbUsage)
 	}
-	for _, f := range []string{"-o", "--output", "--force", "--dry-run", "--state"} {
+	for _, f := range []string{"-o", "--output", "--force", "--dry-run", "--state", "--any-kernel"} {
 		if vals[f] == "" || contains(own, f) {
 			continue
 		}
@@ -65,6 +69,10 @@ func (a *app) nbCmd(ctx context.Context, args []string) error {
 		return a.nbExec(ctx, vals)
 	case pos[0] == "run" && len(pos) == 2:
 		return a.nbRun(ctx, pos[1], vals)
+	case pos[0] == "export" && len(pos) == 2:
+		return a.nbExport(pos[1], vals)
+	case pos[0] == "import" && len(pos) == 2:
+		return a.nbImport(pos[1], vals)
 	case pos[0] == "console" && len(pos) <= 2:
 		path := ""
 		if len(pos) == 2 {
