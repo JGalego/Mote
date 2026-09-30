@@ -122,7 +122,7 @@ func TestNbRejectsFlagsForTheWrongSubcommand(t *testing.T) {
 	e, path := nbSessionEnv(t)
 	for _, args := range [][]string{
 		{"nb", "run", path, "--state", "s.json"},
-		{"nb", "edit", path, "--state", "s.json"},
+		{"nb", "console", path, "--state", "s.json"},
 		{"nb", "frobnicate"},
 		{"nb"},
 	} {

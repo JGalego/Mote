@@ -22,7 +22,7 @@ import (
 // binds a name with as=NAME hands its output to later cells as {{NAME}}.
 
 const nbUsage = "usage: mote nb run FILE [-o FILE|-] [--force] [--dry-run] [--yes] [--model ID] [--profile P]\n" +
-	"       mote nb edit FILE [--yes] [--model ID] [--profile P]\n" +
+	"       mote nb console [FILE | -o FILE] [--yes] [--model ID] [--profile P]\n" +
 	"       mote nb exec [--state FILE] [--yes] [--model ID] [--profile P]"
 
 // nbCell is a cell ready to run: parsed, with its tasks found.
@@ -46,9 +46,9 @@ func (a *app) nbCmd(ctx context.Context, args []string) error {
 	}
 	// Each subcommand takes the flags that mean something to it.
 	allowed := map[string][]string{
-		"run":  {"-o", "--output", "--force", "--dry-run"},
-		"edit": {},
-		"exec": {"--state"},
+		"run":     {"-o", "--output", "--force", "--dry-run"},
+		"console": {"-o", "--output"},
+		"exec":    {"--state"},
 	}
 	own, ok := allowed[pos[0]]
 	if !ok {
@@ -65,8 +65,15 @@ func (a *app) nbCmd(ctx context.Context, args []string) error {
 		return a.nbExec(ctx, vals)
 	case pos[0] == "run" && len(pos) == 2:
 		return a.nbRun(ctx, pos[1], vals)
-	case pos[0] == "edit" && len(pos) == 2:
-		return a.nbEdit(ctx, pos[1], vals)
+	case pos[0] == "console" && len(pos) <= 2:
+		path := ""
+		if len(pos) == 2 {
+			if firstNonEmptyRaw(vals["-o"], vals["--output"]) != "" {
+				return usagef("-o names where a session with no FILE is saved; a session on FILE saves to it")
+			}
+			path = pos[1]
+		}
+		return a.nbConsole(ctx, path, vals)
 	}
 	return usagef("%s", nbUsage)
 }

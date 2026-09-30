@@ -156,16 +156,16 @@ var helpTopics = map[string]helpTopic{
 		summary: "Run a motebook, or type into one: a Markdown file whose `mote` cells are tasks or pipelines, with each output kept under its cell.",
 		usage: []string{
 			"mote nb run FILE [-o FILE|-] [--force] [--dry-run] [--yes|-y] [--model ID] [--profile P]",
-			"mote nb edit FILE [--yes|-y] [--model ID] [--profile P]",
+			"mote nb console [FILE | -o FILE] [--yes|-y] [--model ID] [--profile P]",
 			"mote nb exec [--state FILE] [--yes|-y] [--model ID] [--profile P]",
 		},
 		subs: []helpFlag{
 			{"run FILE", "run the cells in order, saving FILE after each one"},
-			{"edit FILE", "type cells one at a time: each runs as you enter it, its output printed below and kept in FILE"},
+			{"console [FILE]", "type cells one at a time, like `jupyter console`: each runs as you enter it, its output printed below; kept in FILE, or asked about when you leave if there is none"},
 			{"exec", "run the one cell on standard input and print its output; what a Jupyter kernel calls for each cell"},
 		},
 		flags: []helpFlag{
-			{"-o, --output FILE", "with run, write the notebook to FILE instead of FILE itself; - prints it"},
+			{"-o, --output FILE", "with run, write the notebook to FILE instead of FILE itself; - prints it. With console and no FILE, save the session to FILE when it ends"},
 			{"--force", "with run, run every cell, even those whose text and inputs are unchanged"},
 			{"--dry-run", "with run, show which cells would run, without running them"},
 			{"--state FILE", "with exec, the JSON file holding the values earlier cells bound; read before the cell runs and written after"},
@@ -176,13 +176,16 @@ var helpTopics = map[string]helpTopic{
 		notes: []string{
 			"A cell is a ```mote fence holding a task or a pipeline, as `mote pipe` takes it; ```mote as=NAME keeps its output for later cells as {{NAME}}. Values are filled into arguments, never into `sh:` stages.",
 			"The output goes in an output fence right below the cell. Its key fingerprints the cell and what it read, so a rerun skips cells that have nothing new to compute.",
-			"In `nb edit`, a line is a cell, `NAME = pipeline` binds its output, and a line ending in \\ continues. /cells lists them, /undo drops the last one added, /help and /exit do what they say. A cell that fails is not kept.",
+			"In `nb console`, a line is a cell, `NAME = pipeline` binds its output, and a line ending in \\ continues. /cells lists them, /undo drops the last one added, /save FILE keeps them in a file, /help and /exit do what they say. A cell that fails is not kept.",
+			"With no FILE a console session lives in memory: on exit at a terminal mote asks whether to save the cells you ran, and where; without a terminal it says they were dropped unless you gave -o FILE.",
 		},
 		examples: []string{
 			"mote nb run notes.mote.md",
 			"mote nb run notes.mote.md --dry-run",
 			"mote nb run notes.mote.md -o - --force",
-			"mote nb edit scratch.mote.md",
+			"mote nb console",
+			"mote nb console scratch.mote.md",
+			"mote nb console -o today.mote.md",
 			`echo 'city = chat "capital of France"' | mote nb exec --state session.json`,
 		},
 	},

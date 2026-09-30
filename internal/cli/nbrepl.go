@@ -14,16 +14,21 @@ import (
 	"github.com/jgalego/mote/internal/task"
 )
 
-// `mote nb edit FILE` is a motebook you type into: each line is a cell, run
+// `mote nb console FILE` is a motebook you type into: each line is a cell, run
 // as soon as it is entered, its output printed below it and both kept in the
 // file, the way a Jupyter cell is. Cells share what they bind by name, as in
 // `mote nb run`, and models stay loaded from one cell to the next.
+//
+// With no FILE the session lives in memory. When it ends at a terminal mote
+// asks whether to keep what was run, and where; /save FILE does it at any
+// point, after which the session is a notebook on that file like any other.
 
-const nbEditHelp = `Type a cell and press Enter to run it; a line ending in \ continues onto the next.
+const nbConsoleHelp = `Type a cell and press Enter to run it; a line ending in \ continues onto the next.
   chat "what is the capital of France"           a task
   code "reverse a string" | chat "explain: {}"   or a pipeline
   city = chat "capital of France"                keep the output as {{city}} for later cells
-  /cells  list the cells   /undo  drop the last one   /help  this   /exit  or Ctrl-D`
+  /cells  list the cells   /undo  drop the last one   /save FILE  keep them in a file   /help  this   /exit  or Ctrl-D
+With no file the cells live in memory; on exit you are asked whether to save them.`
 
 // bindingRe reads "name = pipeline". A task id or a shell stage never has
 // an = after its first word, so this cannot take a cell for a binding.
@@ -47,7 +52,19 @@ func valuesOf(book *motebook.Book) map[string]string {
 	return values
 }
 
-// nbSession is a notebook being typed into.
+// cellCount says how many cells, in words that agree.
+func cellCount(n int) string {
+	if n == 1 {
+		return "1 cell"
+	}
+	return fmt.Sprintf("%d cells", n)
+}
+
+// defaultSessionName is what saving a session offers as its file name.
+const defaultSessionName = "session.mote.md"
+
+// nbSession is a notebook being typed into. Its path is empty while it lives
+// only in memory.
 type nbSession struct {
 	a      *app
 	path   string
@@ -61,10 +78,20 @@ type nbSession struct {
 	undo   []string // the notebook as it was before each cell added here
 }
 
-func (a *app) nbEdit(ctx context.Context, path string, vals map[string]string) error {
-	src, err := os.ReadFile(path)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return err
+func (a *app) nbConsole(ctx context.Context, path string, vals map[string]string) error {
+	var src []byte
+	if path != "" {
+		var err error
+		if src, err = os.ReadFile(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+	}
+	// A session with no file is saved to -o when it ends, without asking.
+	saveTo := firstNonEmptyRaw(vals["-o"], vals["--output"])
+	if saveTo != "" {
+		if _, err := os.Stat(saveTo); err == nil {
+			return usagef("%s already exists; open it with `mote nb console %s`, or pick another name", saveTo, saveTo)
+		}
 	}
 	book, err := motebook.Parse(string(src))
 	if err != nil {
@@ -85,22 +112,34 @@ func (a *app) nbEdit(ctx context.Context, path string, vals map[string]string) e
 
 	live := a.tty && a.uo.Live()
 	if live {
-		fmt.Fprintln(a.err, a.ue.Dim(fmt.Sprintf("%s · %d cells · /help", path, len(book.Cells))))
+		where := path
+		if where == "" {
+			where = "not saved"
+		}
+		fmt.Fprintln(a.err, a.ue.Dim(fmt.Sprintf("%s · %s · /help", where, cellCount(len(book.Cells)))))
 	}
 	for {
 		prompt := a.ue.Accent(fmt.Sprintf("In [%d]: ", len(s.book.Cells)+1))
 		line, ok := a.readTurnPrompt(s.sc, live, prompt)
 		if !ok {
-			return s.sc.Err()
+			// Ctrl-D ends the scanner for good, so what is asked next is
+			// read afresh.
+			if err := s.sc.Err(); err != nil {
+				return err
+			}
+			s.sc = bufio.NewScanner(a.in)
+			return s.finish(saveTo)
 		}
 		var err error
 		switch {
 		case line == "":
 			continue
 		case line == "/exit" || line == "/quit" || line == "/bye":
-			return nil
+			return s.finish(saveTo)
+		case line == "/save" || strings.HasPrefix(line, "/save "):
+			err = s.save(strings.TrimSpace(strings.TrimPrefix(line, "/save")))
 		case line == "/help" || line == "/?":
-			fmt.Fprintln(a.err, nbEditHelp)
+			fmt.Fprintln(a.err, nbConsoleHelp)
 			continue
 		case line == "/cells":
 			s.list()
@@ -141,8 +180,83 @@ func (s *nbSession) restore(text string) error {
 	return nil
 }
 
-func (s *nbSession) save() error {
+// flush writes the notebook to its file, if it has one yet.
+func (s *nbSession) flush() error {
+	if s.path == "" {
+		return nil
+	}
 	return writeFileAtomic(s.path, []byte(s.book.String()), 0o644)
+}
+
+// save keeps a session that lives in memory in a file, which it is from then
+// on backed by. It does not replace a file that is there.
+func (s *nbSession) save(path string) error {
+	if s.path != "" {
+		return fmt.Errorf("this session is already saved in %s", s.path)
+	}
+	if path == "" {
+		return errors.New("usage: /save FILE")
+	}
+	if _, err := os.Stat(path); err == nil {
+		return fmt.Errorf("%s already exists; pick another name", path)
+	}
+	if err := writeFileAtomic(path, []byte(s.book.String()), 0o644); err != nil {
+		return err
+	}
+	s.path = path
+	fmt.Fprintf(s.a.err, "%s saved %s in %s\n", s.a.ue.OK(), cellCount(len(s.book.Cells)), path)
+	return nil
+}
+
+// finish ends a session. One that lives in memory and ran something is kept
+// if saveTo says where, or if you say where when asked; without a terminal
+// to ask at, it says what is being dropped rather than dropping it quietly.
+func (s *nbSession) finish(saveTo string) error {
+	n := len(s.book.Cells)
+	if s.path != "" || n == 0 {
+		return nil
+	}
+	if saveTo != "" {
+		return s.save(saveTo)
+	}
+	if !s.a.tty {
+		fmt.Fprintf(s.a.err, "%s %s not saved; pass -o FILE to keep them\n", s.a.ue.Warn(), cellCount(n))
+		return nil
+	}
+	if !s.ask(fmt.Sprintf("save the %s you ran to a file? [y/N] ", cellCount(n))) {
+		return nil
+	}
+	for {
+		name := strings.TrimSpace(s.answer(fmt.Sprintf("file name [%s], or n to discard: ", defaultSessionName)))
+		switch strings.ToLower(name) {
+		case "n", "no":
+			return nil
+		case "":
+			name = defaultSessionName
+		}
+		err := s.save(name)
+		if err == nil {
+			return nil
+		}
+		// Say why and ask again: the work is only in memory.
+		fmt.Fprintf(s.a.err, "%s %v\n", s.a.ue.Fail(), err)
+	}
+}
+
+// answer prints a prompt and reads the reply, empty if there is none.
+func (s *nbSession) answer(prompt string) string {
+	fmt.Fprint(s.a.err, prompt)
+	if !s.sc.Scan() {
+		fmt.Fprintln(s.a.err)
+		return "n" // no more input: an answer that keeps nothing and asks nothing more
+	}
+	return s.sc.Text()
+}
+
+// ask is answer for a question with a yes or a no.
+func (s *nbSession) ask(prompt string) bool {
+	l := strings.ToLower(strings.TrimSpace(s.answer(prompt)))
+	return l == "y" || l == "yes"
 }
 
 func (s *nbSession) undoLast() error {
@@ -154,7 +268,7 @@ func (s *nbSession) undoLast() error {
 		return err
 	}
 	s.undo = s.undo[:len(s.undo)-1]
-	if err := s.save(); err != nil {
+	if err := s.flush(); err != nil {
 		return err
 	}
 	fmt.Fprintf(s.a.err, "%s dropped cell %d\n", s.a.ue.OK(), n)
@@ -204,7 +318,7 @@ func (s *nbSession) run(ctx context.Context, line string) error {
 		return fail(err)
 	}
 	s.book.Set(idx, out)
-	if err := s.save(); err != nil {
+	if err := s.flush(); err != nil {
 		return fail(err)
 	}
 	s.undo = append(s.undo, before)
