@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/jgalego/mote/internal/motebook"
 	"github.com/jgalego/mote/internal/task"
+	"github.com/jgalego/mote/internal/ui"
 )
 
 // `mote nb console FILE` is a motebook you type into: each line is a cell, run
@@ -27,7 +29,9 @@ const nbConsoleHelp = `Type a cell and press Enter to run it; a line ending in \
   chat "what is the capital of France"           a task
   code "reverse a string" | chat "explain: {}"   or a pipeline
   city = chat "capital of France"                keep the output as {{city}} for later cells
-  /cells  list the cells   /undo  drop the last one   /save FILE  keep them in a file   /help  this   /exit  or Ctrl-D
+Tab completes commands, tasks, {{names}} and file names; the arrow keys move and recall earlier cells.
+  /tasks  what a cell can run   /examples  cells to try   /vars  what you have bound   /cells  what you have run
+  /undo  drop the last cell   /save FILE  keep them in a file   /help  this   /exit  or Ctrl-D
 With no file the cells live in memory; on exit you are asked whether to save them.`
 
 // valuesOf reads back what a notebook's cells have bound.
@@ -73,7 +77,7 @@ type nbSession struct {
 	models *nbModels
 	vals   map[string]string
 	yes    bool
-	sc     *bufio.Scanner
+	in     nbInput
 	undo   []string // the notebook as it was before each cell added here
 }
 
@@ -104,25 +108,31 @@ func (a *app) nbConsole(ctx context.Context, path string, vals map[string]string
 		a: a, path: path, book: book, tasks: tasks, values: valuesOf(book),
 		models: a.newNbModels(vals), vals: vals,
 		yes: vals["--yes"] == "true" || vals["-y"] == "true",
-		sc:  bufio.NewScanner(a.in),
 	}
 	defer s.models.close()
-	s.sc.Buffer(make([]byte, 1<<20), 1<<20)
 
 	live := a.tty && a.uo.Live()
+	s.in = newPlainInput(a, live)
 	if live {
+		// At a terminal the line is edited here, not by the terminal, so the
+		// arrow keys and Tab do something; a question is read the same way.
+		if f, ok := a.in.(*os.File); ok {
+			if restore, ok := ui.EnterCbreak(f); ok {
+				defer restore()
+				s.in = &editorInput{a: a, r: bufio.NewReader(f), complete: s.complete}
+			}
+		}
 		fmt.Fprint(a.err, a.ue.Banner(consoleTagline(path, len(book.Cells))))
 	}
 	for {
 		prompt := a.ue.Accent(fmt.Sprintf("In [%d]: ", len(s.book.Cells)+1))
-		line, ok := a.readTurnPrompt(s.sc, live, prompt)
+		line, ok := s.in.turn(prompt)
 		if !ok {
-			// Ctrl-D ends the scanner for good, so what is asked next is
-			// read afresh.
-			if err := s.sc.Err(); err != nil {
+			if err := s.in.err(); err != nil {
 				return err
 			}
-			s.sc = bufio.NewScanner(a.in)
+			// Ctrl-D ends the input, and what is asked next is read afresh.
+			s.in.resume()
 			return s.finish(saveTo)
 		}
 		var err error
@@ -135,6 +145,15 @@ func (a *app) nbConsole(ctx context.Context, path string, vals map[string]string
 			err = s.save(strings.TrimSpace(strings.TrimPrefix(line, "/save")))
 		case line == "/help" || line == "/?":
 			fmt.Fprintln(a.err, nbConsoleHelp)
+			continue
+		case line == "/tasks":
+			s.listTasks()
+			continue
+		case line == "/examples":
+			s.showExamples()
+			continue
+		case line == "/vars":
+			s.listVars()
 			continue
 		case line == "/cells":
 			s.list()
@@ -152,6 +171,41 @@ func (a *app) nbConsole(ctx context.Context, path string, vals map[string]string
 			}
 			fmt.Fprintf(a.err, "%s %v\n", a.ue.Fail(), err)
 		}
+	}
+}
+
+// listTasks prints what a cell can run, each with the arguments it takes.
+func (s *nbSession) listTasks() {
+	tasks := cellTasks(s.tasks)
+	width := 0
+	for _, t := range tasks {
+		width = max(width, len(strings.TrimSpace(t.ID+" "+t.Usage())))
+	}
+	for _, t := range tasks {
+		fmt.Fprintf(s.a.out, "%s  %s\n", pad(strings.TrimSpace(t.ID+" "+t.Usage()), width), t.Summary)
+	}
+}
+
+// showExamples prints cells to try.
+func (s *nbSession) showExamples() {
+	for _, e := range consoleExamples {
+		fmt.Fprintln(s.a.out, e)
+	}
+}
+
+// listVars prints what the cells run so far have bound.
+func (s *nbSession) listVars() {
+	names := make([]string, 0, len(s.values))
+	for name := range s.values {
+		names = append(names, name)
+	}
+	if len(names) == 0 {
+		fmt.Fprintln(s.a.err, "nothing is bound yet; write NAME = task ... to keep a cell's output as {{NAME}}")
+		return
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		fmt.Fprintf(s.a.out, "%s = %s\n", name, oneLine(s.values[name]))
 	}
 }
 
@@ -238,14 +292,14 @@ func (s *nbSession) finish(saveTo string) error {
 	}
 }
 
-// answer prints a prompt and reads the reply, empty if there is none.
+// answer asks a question and returns the reply, "n" if there is none: an
+// answer that keeps nothing and asks nothing more.
 func (s *nbSession) answer(prompt string) string {
-	fmt.Fprint(s.a.err, prompt)
-	if !s.sc.Scan() {
-		fmt.Fprintln(s.a.err)
-		return "n" // no more input: an answer that keeps nothing and asks nothing more
+	line, ok := s.in.line(prompt)
+	if !ok {
+		return "n"
 	}
-	return s.sc.Text()
+	return line
 }
 
 // ask is answer for a question with a yes or a no.
@@ -275,6 +329,9 @@ func (s *nbSession) undoLast() error {
 // holds only cells with an output to show.
 func (s *nbSession) run(ctx context.Context, line string) error {
 	name, expr := motebook.SplitBinding(line)
+	if err := s.unknownTask(expr); err != nil {
+		return err
+	}
 	before := s.book.String()
 	idx, err := s.book.Append(name, expr)
 	if err != nil {
@@ -288,7 +345,7 @@ func (s *nbSession) run(ctx context.Context, line string) error {
 	}
 	cell, err := prepareCell(s.book.Cells[idx], s.tasks)
 	if err != nil {
-		return fail(locateCell(idx, s.book.Cells[idx], err))
+		return fail(err)
 	}
 	inputs := map[string]string{}
 	for _, r := range cell.cell.Refs {
@@ -335,11 +392,7 @@ func (s *nbSession) confirm(c nbCell) error {
 	if !s.a.tty {
 		return usagef("this cell can change things, so mote asks before running it, and stdin is not a terminal; pass --yes to run it")
 	}
-	fmt.Fprintf(s.a.err, "%s run %s? [y/N] ", s.a.ue.Warn(), s.a.ue.Bold(oneLine(c.cell.Expr)))
-	if !s.sc.Scan() {
-		return errors.New("not run")
-	}
-	if l := strings.ToLower(strings.TrimSpace(s.sc.Text())); l != "y" && l != "yes" {
+	if !s.ask(fmt.Sprintf("%s run %s? [y/N] ", s.a.ue.Warn(), s.a.ue.Bold(oneLine(c.cell.Expr)))) {
 		return errors.New("not run")
 	}
 	return nil

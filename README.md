@@ -321,6 +321,8 @@ file name [session.mote.md], or n to discard: capital.mote.md
 ✓ saved 3 cells in capital.mote.md
 ```
 
+At a terminal the line is yours to edit: the arrow keys, Home, End and Delete move and change it, Up and Down recall earlier cells, and **Tab** completes what the cursor is on: a `/command`, a task at the start of a cell or after a `|`, the name of a value inside `{{ }}`, or a file name. Type `/tasks` to see what a cell can run, `/examples` for cells to try, and `/vars` for what you have bound. If you type a sentence as if to a person, the console says so and shows the cell it would take, `chat "..."`.
+
 Each line runs as you enter it and its output is printed below. With no file, as above, the session lives in memory and, when you leave, mote asks whether to save the cells you ran and where; `/save FILE` does it at any point, and `-o FILE` saves on exit without asking, which is how to keep a session that has no terminal. With `mote nb console FILE` the cell and its output are added to that file as you go. Either way the file is a notebook that `mote nb run` can run again later. `NAME = pipeline` binds an output for later cells, a line ending in `\` continues onto the next, `/cells` lists what you have, and `/undo` drops the last cell added. A cell that fails is not kept. Models stay loaded from one cell to the next, and opening an existing notebook picks up the values it has already computed.
 
 #### In Jupyter

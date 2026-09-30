@@ -81,15 +81,7 @@ func (p metaPlan) JSON() string {
 
 // metaTasks are the tasks a cell can run: those a request can drive, minus
 // the ones that need an output path, which a cell has no place to give.
-func metaTasks(tasks []task.Task) []task.Task {
-	var out []task.Task
-	for _, t := range routable(tasks) {
-		if t.Output != "required" {
-			out = append(out, t)
-		}
-	}
-	return out
-}
+func metaTasks(tasks []task.Task) []task.Task { return routable(cellTasks(tasks)) }
 
 // metaSchema constrains a notebook plan. Every cell is held to the same
 // grammar, so where a cell may read an earlier one is checked afterwards,
