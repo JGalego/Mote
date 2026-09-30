@@ -97,3 +97,113 @@ func TestKey(t *testing.T) {
 		t.Error("key ignores the cell text")
 	}
 }
+
+const ran = "# Notes\n\n" +
+	"```mote as=a\nchat hi\n```\n\n```output key=abc123\nhello\nthere\n```\n\nprose\n\n" +
+	"```mote\nchat {{a}}\n```\n\nno output yet\n"
+
+func TestParseReadsOutputs(t *testing.T) {
+	b, err := Parse(ran)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o := b.Cells[0].Output; o == nil || o.Key != "abc123" || o.Text != "hello\nthere" {
+		t.Errorf("output 0 = %+v", o)
+	}
+	if b.Cells[1].Output != nil {
+		t.Errorf("output 1 = %+v, want none", b.Cells[1].Output)
+	}
+}
+
+func TestOutputFenceOnlyBelongsToTheCellRightAbove(t *testing.T) {
+	src := "```mote\nchat hi\n```\n\nprose\n\n```output\nstray\n```\n"
+	b, err := Parse(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.Cells[0].Output != nil {
+		t.Errorf("a stray output fence was taken for the cell's: %+v", b.Cells[0].Output)
+	}
+	if b.String() != src {
+		t.Errorf("stray fence not left alone:\n%s", b.String())
+	}
+}
+
+func TestRenderIsStable(t *testing.T) {
+	b, err := Parse(ran)
+	if err != nil {
+		t.Fatal(err)
+	}
+	once := b.String()
+	if once != ran {
+		t.Errorf("rendering a parsed book changed it:\n%s", once)
+	}
+	// Blank lines between a cell and its output are the one thing normalised.
+	tight := strings.Replace(ran, "```\n\n```output", "```\n```output", 1)
+	b2, err := Parse(tight)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b2.String() != ran {
+		t.Errorf("output not set apart from its cell:\n%s", b2.String())
+	}
+}
+
+func TestSetReplacesAndInserts(t *testing.T) {
+	b, err := Parse(ran)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Set(0, Output{Key: "new", Text: "changed"})
+	b.Set(1, Output{Text: "fresh"})
+	got := b.String()
+	want := strings.Replace(ran, "```output key=abc123\nhello\nthere\n```", "```output key=new\nchanged\n```", 1)
+	want = strings.Replace(want, "```\n\nno output yet", "```\n\n```output\nfresh\n```\n\nno output yet", 1)
+	if got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+	again, err := Parse(got)
+	if err != nil || again.String() != got {
+		t.Errorf("rendered book does not read back the same: %v", err)
+	}
+	if o := again.Cells[1].Output; o == nil || o.Key != "" || o.Text != "fresh" {
+		t.Errorf("read back %+v", o)
+	}
+}
+
+func TestOutputWithBackticksGetsALongerFence(t *testing.T) {
+	b, err := Parse("```mote\nchat hi\n```\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := "here:\n```go\nx := 1\n```\n````\nfour\n````"
+	b.Set(0, Output{Key: "k", Text: text})
+	again, err := Parse(b.String())
+	if err != nil || len(again.Cells) != 1 || again.Cells[0].Output == nil || again.Cells[0].Output.Text != text {
+		t.Fatalf("round trip failed: %v\n%s", err, b.String())
+	}
+	if !strings.HasPrefix(b.String(), "```mote\nchat hi\n```\n\n`````output key=k\n") {
+		t.Errorf("fence not lengthened:\n%s", b.String())
+	}
+}
+
+func TestEmptyOutputRoundTrips(t *testing.T) {
+	b, _ := Parse("```mote\nchat hi\n```\n")
+	b.Set(0, Output{Key: "k"})
+	again, err := Parse(b.String())
+	if err != nil || again.Cells[0].Output == nil || again.Cells[0].Output.Text != "" {
+		t.Fatalf("round trip failed: %v\n%s", err, b.String())
+	}
+}
+
+func TestOutputErrors(t *testing.T) {
+	cases := map[string]string{
+		"```mote\nx\n```\n```output\nnever closed":    "line 4: output is never closed",
+		"```mote\nx\n```\n```output color=red\n\n```": "line 4: unknown output attribute",
+	}
+	for src, want := range cases {
+		if _, err := Parse(src); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("Parse(%q) error = %v, want %q", src, err, want)
+		}
+	}
+}

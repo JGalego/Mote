@@ -11,9 +11,18 @@
 //	```
 //
 // A cell with as=NAME binds its output to {{NAME}} for the cells after it.
-// The package only parses and fingerprints; running a cell is the CLI's job,
-// because a value must be substituted into parsed arguments, never into the
-// pipeline text, or a value containing a | or a quote would change its shape.
+// After a run the output sits right under its cell, the way a Jupyter
+// notebook shows it, in a fence of its own:
+//
+//	```output key=3fa9c1d2e4b5a678
+//	Paris.
+//	```
+//
+// The key fingerprints the cell and the values it read, so a cell whose key
+// still matches has nothing new to compute. The package only parses,
+// fingerprints and re-renders; running a cell is the CLI's job, because a
+// value must be substituted into parsed arguments, never into the pipeline
+// text, or a value containing a | or a quote would change its shape.
 package motebook
 
 import (
@@ -32,11 +41,26 @@ type Cell struct {
 	Name  string // the as= binding, empty if the output is not kept
 	Expr  string // the pipeline or single task, as written
 	Refs  []string
+
+	// Output is what the cell produced the last time it ran, nil if it has
+	// not run.
+	Output *Output
+
+	closeLine int // line index of the closing fence
+	spanEnd   int // line index just past the cell and its output block
+}
+
+// Output is the result kept under a cell. An empty Key never matches, which
+// is how a cell with side effects is made to run every time.
+type Output struct {
+	Key  string
+	Text string
 }
 
 // Book is a parsed notebook.
 type Book struct {
 	Cells []Cell
+	lines []string
 }
 
 var (
@@ -49,15 +73,19 @@ var (
 // reference to a name no earlier cell binds.
 func Parse(src string) (*Book, error) {
 	var (
-		b      Book
-		bound  = map[string]int{} // name -> line of the cell that binds it
-		lines  = strings.Split(strings.ReplaceAll(src, "\r\n", "\n"), "\n")
-		inCell bool
-		other  string // fence marker of a non-mote block we are inside
-		cur    Cell
-		body   []string
+		b       = Book{lines: strings.Split(strings.ReplaceAll(src, "\r\n", "\n"), "\n")}
+		bound   = map[string]int{} // name -> line of the cell that binds it
+		inCell  bool
+		other   string // fence marker of a non-mote block we are inside
+		cur     Cell
+		body    []string
+		outOpen = -1 // fence length of the output block being read, if any
+		outBody []string
+		outLine int
+		fresh   bool // the last thing seen was a cell, or blank lines after one
 	)
-	for i, raw := range lines {
+	last := func() *Cell { return &b.Cells[len(b.Cells)-1] }
+	for i, raw := range b.lines {
 		ln := i + 1
 		t := strings.TrimSpace(raw)
 		switch {
@@ -78,17 +106,38 @@ func Parse(src string) (*Book, error) {
 					bound[cur.Name] = cur.Line
 				}
 				cur.Index = len(b.Cells)
+				cur.closeLine, cur.spanEnd = i, i+1
 				b.Cells = append(b.Cells, cur)
+				fresh = true
 				continue
 			}
 			body = append(body, raw)
+		case outOpen >= 0:
+			if n := fenceLen(t); n >= outOpen && n == len(t) {
+				last().Output.Text = strings.Join(outBody, "\n")
+				last().spanEnd = i + 1
+				outOpen = -1
+				continue
+			}
+			outBody = append(outBody, raw)
 		case other != "":
 			// Inside some other fenced block (a ```sh example, say): a mote
 			// fence there is text, not a cell.
 			if strings.HasPrefix(t, other) && strings.Trim(t, other[:1]) == "" {
 				other = ""
 			}
+		case fresh && t == "":
+			// Blank lines may separate a cell from its output.
+		case fresh && isOutputFence(t):
+			fresh = false
+			key, err := outputKey(t)
+			if err != nil {
+				return nil, fmt.Errorf("line %d: %v", ln, err)
+			}
+			last().Output = &Output{Key: key}
+			outOpen, outBody, outLine = fenceLen(t), nil, ln
 		case strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~"):
+			fresh = false
 			marker := t[:3]
 			info := strings.Fields(strings.TrimLeft(t, marker[:1]))
 			if len(info) == 0 || info[0] != "mote" || marker != "```" {
@@ -110,12 +159,82 @@ func Parse(src string) (*Book, error) {
 				c.Name = v
 			}
 			cur, body, inCell = c, nil, true
+		default:
+			fresh = false
 		}
 	}
 	if inCell {
 		return nil, fmt.Errorf("line %d: cell is never closed", cur.Line)
 	}
+	if outOpen >= 0 {
+		return nil, fmt.Errorf("line %d: output is never closed", outLine)
+	}
 	return &b, nil
+}
+
+// fenceLen is the length of the run of backticks a line starts with.
+func fenceLen(t string) int {
+	return len(t) - len(strings.TrimLeft(t, "`"))
+}
+
+func isOutputFence(t string) bool {
+	if fenceLen(t) < 3 {
+		return false
+	}
+	info := strings.Fields(t[fenceLen(t):])
+	return len(info) > 0 && info[0] == "output"
+}
+
+// outputKey reads the key= attribute of an output fence.
+func outputKey(t string) (string, error) {
+	var key string
+	for _, attr := range strings.Fields(t[fenceLen(t):])[1:] {
+		k, v, ok := strings.Cut(attr, "=")
+		if !ok || k != "key" {
+			return "", fmt.Errorf("unknown output attribute %q; the only one is key=HASH", attr)
+		}
+		key = v
+	}
+	return key, nil
+}
+
+// Set keeps o under the cell at index i, replacing what was there.
+func (b *Book) Set(i int, o Output) { b.Cells[i].Output = &o }
+
+// String renders the notebook: everything as it was read, with each cell's
+// output beneath it after one blank line. Rendering a book that was just
+// parsed changes nothing but the blank lines between a cell and its output,
+// and line ends are always \n.
+func (b *Book) String() string {
+	var out []string
+	pos := 0
+	for _, c := range b.Cells {
+		out = append(out, b.lines[pos:c.closeLine+1]...)
+		if c.Output != nil {
+			out = append(out, "")
+			out = append(out, c.Output.render()...)
+		}
+		pos = c.spanEnd
+	}
+	out = append(out, b.lines[pos:]...)
+	return strings.Join(out, "\n")
+}
+
+// render writes an output as a fence longer than any run of backticks in
+// its text, so the text can never close it early.
+func (o Output) render() []string {
+	n := 3
+	for _, line := range strings.Split(o.Text, "\n") {
+		if l := fenceLen(strings.TrimSpace(line)); l >= n {
+			n = l + 1
+		}
+	}
+	fence := strings.Repeat("`", n)
+	open := fence + "output"
+	if o.Key != "" {
+		open += " key=" + o.Key
+	}
+	return []string{open, o.Text, fence}
 }
 
 // refs lists the distinct names a cell uses, in order of first use.
