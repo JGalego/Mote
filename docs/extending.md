@@ -11,6 +11,7 @@ internal/task         tasks.json pipelines and the ops they use
 internal/bench        local benchmark cases, results, tuning proposals
 internal/memory       facts, history and search over past exchanges
 internal/motebook     reads and re-renders notebooks: cells, outputs, cache keys
+internal/cli/kernel   the Jupyter kernel (Python), embedded and installed by `mote kernel`
 internal/mcp          a client for local MCP servers (stdio JSON-RPC)
 internal/sandbox      runs the agent's shell commands under bwrap or sandbox-exec
 internal/serve        the resident server: keeps models loaded, OpenAI API
@@ -154,3 +155,15 @@ otherwise good run. `Search` ranks stored passages against a query vector by
 cosine similarity, optionally scoped under a directory. `cli.ask.go` builds
 on this for `mote index`/`mote ask` and offers the same search to `mote
 agent` as a `files` tool once something is indexed.
+
+**The Jupyter kernel** is `internal/cli/kernel/mote_kernel.py`, embedded in the
+binary and written out by `mote kernel install`. It runs `mote nb exec` for
+each cell and keeps no logic of its own, so what a cell does is tested in Go;
+the Python holds only the protocol, and its testable parts have unit tests
+that `go test` runs wherever Python is found. The one test that drives a live
+kernel needs `ipykernel` and `jupyter_client`, so it runs only when
+`MOTE_TEST_JUPYTER` names a Python that has them:
+
+```sh
+MOTE_TEST_JUPYTER=$(which python3) go test -run KernelWithAJupyterClient ./internal/cli
+```

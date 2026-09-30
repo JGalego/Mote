@@ -97,7 +97,9 @@ In a clone, `go install ./cmd/mote` does the same into `$(go env GOPATH)/bin`. `
 | `mote chat [--system "..."]` | Talk with the text model; it sees the earlier turns. `/new` starts over, `/exit` or Ctrl-D ends, a line ending in `\` continues, Tab completes a `/command`. `--tools a,b\|all` lets it run mote tasks to answer, on the same think/act/observe loop as `mote agent`; off by default, and a task marked `"asks"` is confirmed before each call unless `--yes` |
 | `mote guide` | Ask the text model about mote itself: which command or task fits a goal, or whether one task's output can feed another's input |
 | `mote nb run FILE [-o FILE\|-] [--force] [--dry-run] [--yes]` | Run a motebook: a Markdown file whose `mote` cells are tasks or pipelines, with each output written into the file under its cell |
+| `mote nb exec [--state FILE]` | Run the one cell on stdin and print its output; what the Jupyter kernel calls |
 | `mote nb edit FILE [--yes]` | Type into a motebook: each line is a cell that runs as you enter it, its output printed below and kept in the file |
+| `mote kernel install [--python PATH]` | Register mote as a Jupyter kernel, so a notebook cell can be a mote task and its output shows below it |
 | `mote meta "GOAL" [-o FILE] [--run] [--force]` | Write a motebook for a complex goal in one shot; `--run` runs it |
 | `mote pipe "A \| B \| sh: cmd"` | Chain tasks in one process, each stage receiving the last one's value: `{}` or `-` places it, `sh:` runs a shell command, `--trace` shows each step |
 | `mote do "REQUEST"` | Pick the task that fits a request written in plain words and run it; `--router embed` chooses with the encoder, `--plan` writes a pipeline of several tasks, `--dry-run` shows the choice |
@@ -316,6 +318,31 @@ In [4]: /undo
 ```
 
 Each line runs as you enter it, its output is printed below, and the cell and its output are added to the file, which `mote nb run` can run again later. `NAME = pipeline` binds an output for later cells, a line ending in `\` continues onto the next, `/cells` lists what you have, and `/undo` drops the last cell added. A cell that fails is not kept. Models stay loaded from one cell to the next, and opening an existing notebook picks up the values it has already computed.
+
+#### In Jupyter
+
+To have the same thing in a Jupyter or VS Code notebook, where you type a cell and its output appears below it, install mote as a kernel:
+
+```sh
+python3 -m pip install ipykernel   # if the Python you will use lacks it
+mote kernel install                # or: --python ~/venvs/notebooks/bin/python
+```
+
+then choose the **mote** kernel for a notebook. A cell is one task or pipeline, or `name = pipeline` to keep its output for later cells:
+
+```
+chat "what's the capital of France"
+```
+
+```
+city = chat "name a landmark in the capital of France"
+```
+
+```
+chat "how tall is it? {{city}}"
+```
+
+An image a task writes, such as `draw`'s, is shown as an image. Cells run without asking first, being the ones you type, and restarting the kernel starts the session over. Each cell is a call to `mote nb exec`, and models stay loaded between cells in the [resident server](#serving). `mote kernel uninstall` removes it.
 
 A value is filled into a cell's arguments, so one that contains a `|`, a quote or a `{}` stays text. It cannot be filled into an `sh:` stage: pipe it in and use `{}`. Cells with an `sh:` stage, or a task that asks, run every time, and mote asks once before starting unless you pass `--yes`.
 

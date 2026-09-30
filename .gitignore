@@ -3,3 +3,4 @@
 /dist/
 *.part
 *.gguf
+__pycache__/

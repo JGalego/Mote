@@ -87,6 +87,7 @@ Usage:
   mote tune [--apply]
   mote doctor
   mote config [show | path | set KEY VALUE | history | rollback [N] | edit]
+  mote kernel install [--python PATH] [--dir DIR] | uninstall | path
   mote completion bash|zsh|fish
   mote update [--check]
   mote version
@@ -229,6 +230,8 @@ func (a *app) dispatch(ctx context.Context, args []string) error {
 		return a.update(ctx, rest)
 	case "completion":
 		return a.completionCmd(rest)
+	case "kernel":
+		return a.kernelCmd(rest)
 	case "__complete":
 		return a.completeCmd(rest)
 	}

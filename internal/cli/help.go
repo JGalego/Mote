@@ -186,6 +186,31 @@ var helpTopics = map[string]helpTopic{
 			`echo 'city = chat "capital of France"' | mote nb exec --state session.json`,
 		},
 	},
+	"kernel": {
+		summary: "Register mote as a Jupyter kernel, so a notebook cell can be a mote task and its output shows below it.",
+		usage: []string{
+			"mote kernel install [--python PATH] [--dir DIR]",
+			"mote kernel uninstall [--dir DIR]",
+			"mote kernel path [--dir DIR]",
+		},
+		subs: []helpFlag{
+			{"install", "write the kernel into Jupyter's data directory"},
+			{"uninstall", "remove it"},
+			{"path", "print where it is (or would be) installed"},
+		},
+		flags: []helpFlag{
+			{"--python PATH", "the Python the kernel runs under, which needs ipykernel; the first python3 or python on your PATH by default"},
+			{"--dir DIR", "Jupyter's data directory, instead of $JUPYTER_DATA_DIR or your platform's usual one"},
+		},
+		notes: []string{
+			"Each cell is one task or pipeline written as `mote pipe` takes it, or `name = pipeline` to keep its output as {{name}} for later cells; images a task writes are shown as images. Cells run without asking first, being the ones you type. Restarting the kernel starts a session over.",
+		},
+		examples: []string{
+			"mote kernel install",
+			"mote kernel install --python ~/venvs/notebooks/bin/python",
+			"mote kernel uninstall",
+		},
+	},
 	"meta": {
 		summary: "Write a motebook for a complex goal in one shot: the cells that, run in order, get it done.",
 		usage:   []string{`mote meta "GOAL" [-o FILE] [--run] [--force] [--yes|-y] [--model ID] [--profile P]`},
