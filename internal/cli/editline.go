@@ -13,10 +13,11 @@ import (
 // completes them there.
 var slashCommands = []string{"/exit", "/quit", "/bye", "/new", "/reset", "/clear", "/help", "/?"}
 
-// completer proposes what the word that ends at pos in line could become:
-// start is where that word begins, and cands are the whole replacements for
-// line[start:pos], each with any suffix it should carry.
-type completer func(line []rune, pos int) (start int, cands []string)
+// completer proposes what the word at pos in line could become: it runs from
+// start to end, which is pos unless the word goes on past the cursor, and
+// cands are the whole replacements for line[start:end], each with any
+// suffix it should carry.
+type completer func(line []rune, pos int) (start, end int, cands []string)
 
 // lineOpts says what a line editor offers besides typing.
 type lineOpts struct {
@@ -32,12 +33,12 @@ type highlighter func(line []rune) string
 
 // slashCompleter completes a command at the start of a line.
 func slashCompleter(cmds []string) completer {
-	return func(line []rune, pos int) (int, []string) {
+	return func(line []rune, pos int) (int, int, []string) {
 		typed := string(line[:pos])
 		if !strings.HasPrefix(typed, "/") || strings.ContainsAny(typed, " \t") {
-			return 0, nil
+			return 0, pos, nil
 		}
-		return 0, filterPrefix(cmds, typed)
+		return 0, pos, filterPrefix(cmds, typed)
 	}
 }
 
@@ -434,7 +435,7 @@ func (e *editor) tab() {
 	if e.o.complete == nil {
 		return
 	}
-	start, cands := e.o.complete(e.buf, e.pos)
+	start, end, cands := e.o.complete(e.buf, e.pos)
 	if len(cands) == 0 {
 		return
 	}
@@ -452,7 +453,7 @@ func (e *editor) tab() {
 		e.draw()
 		return
 	}
-	tail := append([]rune(nil), e.buf[e.pos:]...)
+	tail := append([]rune(nil), e.buf[end:]...)
 	e.buf = append(append(e.buf[:start:start], []rune(insert)...), tail...)
 	e.pos = start + utf8.RuneCountInString(insert)
 	e.draw()

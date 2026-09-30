@@ -156,7 +156,7 @@ func TestSlashCompleter(t *testing.T) {
 		{"/exit now", ""},
 		{"/zzz", ""},
 	} {
-		if _, got := complete([]rune(c.line), len(c.line)); strings.Join(got, ",") != c.want {
+		if _, _, got := complete([]rune(c.line), len(c.line)); strings.Join(got, ",") != c.want {
 			t.Errorf("%q: %v, want %q", c.line, got, c.want)
 		}
 	}
@@ -179,12 +179,12 @@ func TestEditLineCompletesOnTab(t *testing.T) {
 		t.Errorf("got %q listing %q", line, out)
 	}
 	// An ambiguous match is extended to what the candidates share.
-	two := lineOpts{complete: func(line []rune, pos int) (int, []string) { return 0, []string{"chat-a", "chat-b"} }}
+	two := lineOpts{complete: func(line []rune, pos int) (int, int, []string) { return 0, pos, []string{"chat-a", "chat-b"} }}
 	if line, _, out := read("ch\t\r", two); line != "chat-" || strings.Contains(out, "chat-a  chat-b") {
 		t.Errorf("common prefix: got %q listing %q", line, out)
 	}
 	// Completion replaces the word before the cursor and keeps what follows.
-	word := lineOpts{complete: func(line []rune, pos int) (int, []string) { return 2, []string{"complete"} }}
+	word := lineOpts{complete: func(line []rune, pos int) (int, int, []string) { return 2, pos, []string{"complete"} }}
 	if line, _, _ := read("a co rest"+strings.Repeat(left, 5)+"\t\r", word); line != "a complete rest" {
 		t.Errorf("mid-line completion: %q", line)
 	}
@@ -344,5 +344,13 @@ func TestEditTurnEndsAContinuationOnCtrlD(t *testing.T) {
 	line, ok := a.editTurnWith(bufio.NewReader(strings.NewReader("first \\\r\x04")), "> ", lineOpts{})
 	if !ok || line != "first" || !strings.HasSuffix(out.String(), "\n") {
 		t.Errorf("got %q %v, drew %q", line, ok, out.String())
+	}
+}
+
+func TestTabReplacesTheWholeWordTheCompleterNames(t *testing.T) {
+	// The completer says the word runs past the cursor: all of it goes.
+	o := lineOpts{complete: func(line []rune, pos int) (int, int, []string) { return 4, pos + 2, []string{"city}}"} }}
+	if line, _, _ := read("x {{ci}} y"+strings.Repeat(left, 4)+"\t\r", o); line != "x {{city}} y" {
+		t.Errorf("got %q", line)
 	}
 }

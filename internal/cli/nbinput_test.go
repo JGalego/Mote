@@ -19,7 +19,7 @@ func completion(t *testing.T, s *nbSession, line string) (int, string) {
 		line = strings.Replace(line, "^", "", 1)
 		pos = len([]rune(line[:i]))
 	}
-	start, cands := s.complete([]rune(line), pos)
+	start, _, cands := s.complete([]rune(line), pos)
 	return start, strings.Join(cands, "|")
 }
 
@@ -391,6 +391,60 @@ func TestConsoleColoursHelpAndTasks(t *testing.T) {
 		}
 		if at != col {
 			t.Errorf("misaligned: %q", plain[i])
+		}
+	}
+}
+
+func TestConsoleCompletesANameWithoutDoublingItsBraces(t *testing.T) {
+	s := completionSession(t)
+	for _, c := range []struct{ line, want string }{
+		{`chat "{{ci^}}"`, `chat "{{city}}"`},     // closed already
+		{`chat "{{ci^ty}}"`, `chat "{{city}}"`},   // the rest of the name is after the cursor
+		{`chat "{{ci^ and`, `chat "{{city}} and`}, // not closed: closed for you
+	} {
+		i := strings.Index(c.line, "^")
+		line := []rune(strings.Replace(c.line, "^", "", 1))
+		pos := len([]rune(c.line[:i]))
+		start, end, cands := s.complete(line, pos)
+		if len(cands) != 1 {
+			t.Fatalf("%q: %v", c.line, cands)
+		}
+		got := string(line[:start]) + cands[0] + string(line[end:])
+		if got != c.want {
+			t.Errorf("%q: got %q, want %q", c.line, got, c.want)
+		}
+	}
+}
+
+func TestConsoleCompletesAQuotedFileNameWithSpaces(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	os.WriteFile(filepath.Join(dir, "my file.jpg"), nil, 0o644)
+	os.WriteFile(filepath.Join(dir, "foo.jpg"), nil, 0o644)
+	s := completionSession(t)
+	for _, c := range []struct {
+		line  string
+		start int
+		want  string
+	}{
+		{`describe "my f`, 10, "my file.jpg"},
+		{`describe "my`, 10, "my file.jpg"},
+		{`/embed "my f`, 8, "my file.jpg"},
+		{`describe f`, 9, "foo.jpg"},
+		{`describe "done" f`, 16, "foo.jpg"}, // a closed quote before is not open
+		{`chat "{{x}} said \"my f`, 0, ""},
+	} {
+		start, got := completion(t, s, c.line)
+		if got != c.want || (got != "" && start != c.start) {
+			t.Errorf("%q: %d %q, want %d %q", c.line, start, got, c.start, c.want)
+		}
+	}
+}
+
+func TestOpenQuote(t *testing.T) {
+	for s, want := range map[string]int{`a "b`: 2, `a "b"`: -1, `'x' "y`: 4, `a \"b`: -1, `"a \" b`: 0, ``: -1} {
+		if got := openQuote(s); got != want {
+			t.Errorf("openQuote(%q) = %d, want %d", s, got, want)
 		}
 	}
 }

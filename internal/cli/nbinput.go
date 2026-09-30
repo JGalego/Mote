@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/jgalego/mote/internal/task"
@@ -168,27 +169,42 @@ func stageStart(prefix string) bool {
 
 // complete is what Tab does in a console: it finishes a /command, a task, the
 // name of a value in {{ }}, or a file name, according to where the cursor is.
-func (s *nbSession) complete(line []rune, pos int) (int, []string) {
+func (s *nbSession) complete(line []rune, pos int) (int, int, []string) {
 	before := string(line[:pos])
 	runes := func(byteIdx int) int { return utf8.RuneCountInString(before[:byteIdx]) }
+	// A file name in quotes may hold spaces: the word then runs from the quote.
+	path := func(sep string) (int, int, []string) {
+		ws, quoted := strings.LastIndexAny(before, sep)+1, false
+		if q := openQuote(before); q >= 0 {
+			ws, quoted = q+1, true
+		}
+		if word := before[ws:]; word != "" {
+			return runes(ws), pos, completePath(word, quoted)
+		}
+		return 0, pos, nil
+	}
 
 	if strings.HasPrefix(before, "/") {
 		// After a command that takes a file, complete the file.
 		if i := strings.IndexAny(before, " \t"); i > 0 {
 			if cmd := before[:i]; cmd != "/embed" && cmd != "/save" {
-				return 0, nil
+				return 0, pos, nil
 			}
-			ws := strings.LastIndexAny(before, " \t\"'") + 1
-			if word := before[ws:]; word != "" {
-				quoted := before[ws-1] == '"' || before[ws-1] == '\''
-				return runes(ws), completePath(word, quoted)
-			}
-			return 0, nil
+			return path(" \t\"'")
 		}
 		return slashCompleter(consoleCommands)(line, pos)
 	}
 	if i := strings.LastIndex(before, "{{"); i >= 0 && !strings.Contains(before[i:], "}}") {
 		typed := before[i+2:]
+		// The name may go on past the cursor, and be closed already: all of
+		// it is replaced, and }} is not written twice.
+		end := pos
+		for end < len(line) && (line[end] == '_' || unicode.IsLetter(line[end]) || unicode.IsDigit(line[end])) {
+			end++
+		}
+		if end+1 < len(line) && line[end] == '}' && line[end+1] == '}' {
+			end += 2
+		}
 		var names []string
 		for name := range s.values {
 			if strings.HasPrefix(name, typed) {
@@ -196,12 +212,12 @@ func (s *nbSession) complete(line []rune, pos int) (int, []string) {
 			}
 		}
 		sort.Strings(names)
-		return runes(i + 2), names
+		return runes(i + 2), end, names
 	}
 
 	ws := strings.LastIndexAny(before, " \t\"'|=") + 1
 	word := before[ws:]
-	if stageStart(before[:ws]) {
+	if openQuote(before) < 0 && stageStart(before[:ws]) {
 		var ids []string
 		for _, t := range cellTasks(s.tasks) {
 			if strings.HasPrefix(t.ID, word) {
@@ -212,13 +228,28 @@ func (s *nbSession) complete(line []rune, pos int) (int, []string) {
 			ids = append(ids, "sh: ")
 		}
 		sort.Strings(ids)
-		return runes(ws), ids
+		return runes(ws), pos, ids
 	}
-	if word == "" {
-		return runes(ws), nil
+	return path(" \t\"'|=")
+}
+
+// openQuote is where the quote that is still open at the end of s is, or -1
+// if every quote in s is closed. A backslash escapes the character after it,
+// as the cell's parser reads it.
+func openQuote(s string) int {
+	at, quote := -1, byte(0)
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == '\\' && i+1 < len(s):
+			i++
+		case quote != 0 && c == quote:
+			quote, at = 0, -1
+		case quote == 0 && (c == '"' || c == '\''):
+			quote, at = c, i
+		}
 	}
-	quoted := ws > 0 && (before[ws-1] == '"' || before[ws-1] == '\'')
-	return runes(ws), completePath(word, quoted)
+	return at
 }
 
 // completePath lists the files and directories that word could be the start
