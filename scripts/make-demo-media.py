@@ -5,7 +5,7 @@
     python3 scripts/make-demo-media.py
 
 The picture and the animation (a sailboat at sunset, no text) are drawn here, so they are ours. The speech is
-made by gTTS, which sends the sentence below to Google Translate's speech
+made by gTTS, which sends the two sentences below to Google Translate's speech
 service, so it needs a network and its output is not ours to relicense; the
 file names match the commands in the README (transcribe meeting.m4a,
 frames clip.mp4 3, describe photo.jpg). Needs ffmpeg on the PATH.
@@ -19,9 +19,16 @@ import tempfile
 
 from PIL import Image, ImageDraw, ImageFont
 
-SPEECH = (
+# What meeting.m4a says: something with decisions and owners to pull out.
+MEETING = (
     "In today's stand-up we decided to ship the notebook console on Friday. "
     "Ana will write the release notes, and Ben will record the demo."
+)
+
+# What clip.mp4 says, over the picture it describes.
+NARRATION = (
+    "A small sailboat drifts across a calm sea as the sun sets behind it. "
+    "A few gulls circle overhead, and the water turns from gold to deep blue."
 )
 
 FONTS = [
@@ -84,12 +91,12 @@ def photo(path):
     img.save(path, quality=88, optimize=True)
 
 
-def speech(path, tmp):
-    """The sentence as a small mono AAC file."""
+def speech(text, path, tmp):
+    """A sentence as a small mono AAC file."""
     from gtts import gTTS
 
     mp3 = os.path.join(tmp, "speech.mp3")
-    gTTS(SPEECH, lang="en").save(mp3)
+    gTTS(text, lang="en").save(mp3)
     run(["ffmpeg", "-y", "-loglevel", "error", "-i", mp3, "-ac", "1", "-ar", "24000", "-c:a", "aac", "-b:a", "40k", path])
 
 
@@ -144,7 +151,7 @@ def frame(t, w, h):
 
 
 def video(path, audio, fps=15, size=(640, 360)):
-    """The animation, with the speech as its soundtrack and its length."""
+    """The animation, with the narration as its soundtrack and its length."""
     w, h = size
     frames = math.ceil(duration(audio) * fps)
     enc = subprocess.Popen(
@@ -174,9 +181,10 @@ def main():
     out = os.path.abspath(ap.parse_args().out)
     photo(os.path.join(out, "photo.jpg"))
     with tempfile.TemporaryDirectory() as tmp:
-        audio = os.path.join(out, "meeting.m4a")
-        speech(audio, tmp)
-        video(os.path.join(out, "clip.mp4"), audio)
+        speech(MEETING, os.path.join(out, "meeting.m4a"), tmp)
+        narration = os.path.join(tmp, "narration.m4a")
+        speech(NARRATION, narration, tmp)
+        video(os.path.join(out, "clip.mp4"), narration)
     for name in ("photo.jpg", "meeting.m4a", "clip.mp4"):
         p = os.path.join(out, name)
         print(f"{name}: {os.path.getsize(p) / 1024:.0f} KB")
