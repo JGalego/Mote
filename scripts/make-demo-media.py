@@ -4,7 +4,7 @@
     python3 -m pip install Pillow gTTS
     python3 scripts/make-demo-media.py
 
-The picture and the animation are drawn here, so they are ours. The speech is
+The picture and the animation (a sailboat at sunset, no text) are drawn here, so they are ours. The speech is
 made by gTTS, which sends the sentence below to Google Translate's speech
 service, so it needs a network and its output is not ours to relicense; the
 file names match the commands in the README (transcribe meeting.m4a,
@@ -102,22 +102,45 @@ def duration(path):
 
 
 def frame(t, w, h):
-    """One moment of the animation: a sun crossing the sky, a ball bouncing."""
-    img = gradient(w, h, (110, 170, 230), (205, 230, 248))
+    """One moment of the animation: a sailboat crossing a sea as the sun sets."""
+    horizon = 232
+    img = Image.new("RGBA", (w, h))
+    img.paste(gradient(w, horizon, (58, 52, 120), (255, 158, 84)), (0, 0))
+    sx, sy = w * 0.68, 120 + t * 108  # the sun sinks towards the horizon
+    glow = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    g = ImageDraw.Draw(glow)
+    for r in range(150, 30, -5):
+        g.ellipse((sx - r, sy - r, sx + r, sy + r), fill=(255, 196, 96, 6))
+    img = Image.alpha_composite(img, glow)
     d = ImageDraw.Draw(img)
-    sx, sy = 70 + t * (w - 140), 200 - 130 * math.sin(math.pi * t)
-    d.ellipse((sx - 34, sy - 34, sx + 34, sy + 34), fill=(255, 214, 64))
-    cx = (w * 0.9 - t * w * 0.5) % (w + 160) - 80  # a cloud drifting left
-    for dx, dy, r in ((0, 0, 26), (30, -10, 32), (62, 0, 26)):
-        d.ellipse((cx + dx - r, 70 + dy - r, cx + dx + r, 70 + dy + r), fill=(255, 255, 255))
-    d.ellipse((-120, 250, 360, 520), fill=(88, 156, 82))  # hills
-    d.ellipse((240, 270, 760, 540), fill=(74, 140, 72))
-    bx = 120 + t * (w - 240)
-    by = 268 - abs(math.sin(t * 9 * math.pi)) * 90
-    d.ellipse((bx - 22, by - 22, bx + 22, by + 22), fill=(220, 60, 52))
-    d.rectangle((0, h - 62, w, h), fill=(30, 34, 46))
-    centred(d, (0, h - 62, w, h), "mote: small models, local machines", font(26), (240, 244, 250))
-    return img
+    d.ellipse((sx - 32, sy - 32, sx + 32, sy + 32), fill=(255, 226, 150, 255))
+
+    sea = gradient(w, h - horizon, (196, 108, 88), (16, 34, 74))
+    img.paste(sea, (0, horizon))
+    d = ImageDraw.Draw(img)
+    d.rectangle((0, horizon, w, horizon), fill=(255, 190, 120))
+    for row in range(9):  # the sun's path on the water, breaking up as it nears us
+        y = horizon + 6 + row * 13
+        half = 34 - row * 2 + 4 * math.sin(t * 12 + row)
+        d.rectangle((sx - half, y, sx + half, y + 3), fill=(255, 212, 140))
+    for row in range(7):  # waves
+        y = horizon + 18 + row * 18
+        pts = [(x, y + 3 * math.sin(x / 26 + t * 14 + row)) for x in range(0, w + 8, 8)]
+        d.line(pts, fill=(28 + row * 4, 58 + row * 5, 104 + row * 6, 255), width=2)
+
+    bx = 90 + t * (w - 220)
+    by = horizon + 30 + 4 * math.sin(t * 14)  # the boat rides the swell
+    d.polygon([(bx - 44, by), (bx + 44, by), (bx + 30, by + 16), (bx - 30, by + 16)], fill=(64, 36, 30, 255))
+    d.line((bx, by, bx, by - 82), fill=(40, 24, 20, 255), width=3)
+    d.polygon([(bx + 3, by - 80), (bx + 3, by - 8), (bx + 46, by - 8)], fill=(250, 236, 214, 255))
+    d.polygon([(bx - 3, by - 66), (bx - 3, by - 8), (bx - 34, by - 8)], fill=(232, 202, 176, 255))
+
+    for i in range(3):  # gulls
+        gx = (60 + i * 130 + t * 240) % (w + 60) - 30
+        gy = 70 + i * 26 + 10 * math.sin(t * 8 + i)
+        flap = 9 * math.sin(t * 60 + i * 2)
+        d.line([(gx - 14, gy - flap), (gx, gy), (gx + 14, gy - flap)], fill=(30, 24, 40, 255), width=2)
+    return img.convert("RGB")
 
 
 def video(path, audio, fps=15, size=(640, 360)):
@@ -131,7 +154,11 @@ def video(path, audio, fps=15, size=(640, 360)):
         stdin=subprocess.PIPE,
     )
     for i in range(frames):
-        enc.stdin.write(frame(i / max(frames - 1, 1), w, h).tobytes())
+        img = frame(i / max(frames - 1, 1), w, h)
+        if img.size != (w, h):  # ffmpeg would only warn, and write a broken video
+            enc.kill()
+            sys.exit(f"frame {i} is {img.size[0]}x{img.size[1]}, not {w}x{h}")
+        enc.stdin.write(img.tobytes())
     enc.stdin.close()
     if enc.wait() != 0:
         sys.exit("ffmpeg failed to encode the video")
