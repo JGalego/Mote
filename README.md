@@ -284,6 +284,8 @@ Each stage gets the previous value as `{}`, `-` or its first missing argument; s
 
 `mote nb run FILE` — Run a Markdown file whose cells are tasks, and keep each output right under its cell. `mote nb console` — Type cells and see each output as you go.
 
+![mote nb run](docs/demo/nb-run.gif)
+
 ````markdown
 # Meeting
 
@@ -306,21 +308,9 @@ mote nb run meeting.mote.md -o -       # print the result instead of rewriting t
 
 Each output goes into an `output` fence below its cell, the way Jupyter shows it. The fence's `key` fingerprints the cell and the values it read, so running the notebook again computes only the cells that changed or read something that did; `--force` computes them all. A cell that fails leaves the outputs before it in the file.
 
-`mote nb console` is the same thing typed live, one cell at a time, like `jupyter console` (the replies here only illustrate the shape):
+`mote nb console` is the same thing typed live, one cell at a time, like `jupyter console`:
 
-```console
-$ mote nb console
-In [1]: chat "what's the capital of France"
-Paris.
-In [2]: city = chat "name a famous landmark in the capital of France"
-The Eiffel Tower.
-In [3]: chat "how tall is it? {{city}}"
-About 330 metres.
-In [4]: /exit
-save the 3 cells you ran to a file? [y/N] y
-file name [session.mote.md], or n to discard: capital.mote.md
-✓ saved 3 cells in capital.mote.md
-```
+![mote nb console](docs/demo/nb-console.gif)
 
 At a terminal the line is yours to edit: the arrow keys, Home, End and Delete move and change it, Up and Down recall earlier cells, and **Tab** completes what the cursor is on: a `/command`, a task at the start of a cell or after a `|`, the name of a value inside `{{ }}`, or a file name. A notebook is not only cells. `/note TEXT` adds a paragraph of Markdown between them, and `/embed FILE` adds an image, or audio or video with a player's controls, written relative to the notebook so the two can move together; both are undone by `/undo` and kept like a cell. A Markdown viewer such as VS Code's preview shows them.
 
@@ -358,6 +348,8 @@ An image a task writes, such as `draw`'s, is shown as an image. Cells run withou
 ```sh
 mote nb serve notes.mote.md --open
 ```
+
+![mote nb serve](docs/demo/nb-serve.gif)
 
 opens the notebook as a page: the text rendered, an audio or video player where the notebook embeds one, and the cells as editors coloured as you type (tasks, strings, `{{names}}`, `|`, `sh:`). **Run** runs a cell and shows what the tasks say they are doing while it goes, **Run all** runs those that are not up to date, and **Stop** stops one, including anything it started. Whatever a cell prints that is an image, audio or video is shown, not its path. You can edit and add text and cells, move and delete them, and press <kbd>Shift</kbd>+<kbd>Enter</kbd> to run a cell and go on. The file is saved after every change, and a change made to it in an editor appears in the page.
 
