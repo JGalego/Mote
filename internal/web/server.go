@@ -104,6 +104,12 @@ func New(o Options) (*Server, error) {
 	return s, nil
 }
 
+// Wait returns once no cell is running.
+func (s *Server) Wait() {
+	s.running.Lock()
+	s.running.Unlock()
+}
+
 // Close releases what the server holds.
 func (s *Server) Close() error { return s.root.Close() }
 
@@ -155,10 +161,9 @@ func (s *Server) syncLocked() error {
 
 // saveLocked writes the notebook and makes it the current one.
 func (s *Server) saveLocked(book *motebook.Book) error {
-	if err := atomicfile.Write(s.opts.Path, []byte(book.String()), 0o644); err != nil {
-		return err
-	}
-	fi, err := os.Stat(s.opts.Path)
+	// What was written is known from the write itself: a stat after it could
+	// see an editor's save that followed at once, and take it for this one.
+	fi, err := atomicfile.WriteStat(s.opts.Path, []byte(book.String()), 0o644)
 	if err != nil {
 		return err
 	}
@@ -213,7 +218,19 @@ func (s *Server) Handler() http.Handler {
 	return s.headers(mux)
 }
 
-const cookieName = "mote_session"
+// cookieName is the session cookie's name. A cookie is sent to every port of
+// a host, so the name carries the port: another notebook served on this
+// machine does not replace it, and no other server here is sent it.
+// The port is the one the request came in on, not the one it names.
+func cookieName(r *http.Request) string {
+	port := "0"
+	if addr, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr); ok {
+		if _, p, err := net.SplitHostPort(addr.String()); err == nil {
+			port = p
+		}
+	}
+	return "mote_session_" + port
+}
 
 // headers is on every response: nothing here needs to be framed, sniffed or
 // to run script that did not come from this server.
@@ -224,7 +241,7 @@ func (s *Server) headers(next http.Handler) http.Handler {
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("Cache-Control", "no-store")
-		h.Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' https: data:; media-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+		h.Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 		next.ServeHTTP(w, r)
 	})
 }
@@ -245,7 +262,7 @@ func allowedHost(hostport string) bool {
 
 // authorised reports whether a request carries the session cookie.
 func (s *Server) authorised(r *http.Request) bool {
-	c, err := r.Cookie(cookieName)
+	c, err := r.Cookie(cookieName(r))
 	return err == nil && subtle.ConstantTimeCompare([]byte(c.Value), []byte(s.token)) == 1
 }
 
@@ -289,7 +306,7 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "wrong token", http.StatusForbidden)
 			return
 		}
-		http.SetCookie(w, &http.Cookie{Name: cookieName, Value: s.token, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode})
+		http.SetCookie(w, &http.Cookie{Name: cookieName(r), Value: s.token, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode})
 		// Off the address bar, so the token is not left in history or shared
 		// by copying the URL.
 		http.Redirect(w, r, "/", http.StatusSeeOther)

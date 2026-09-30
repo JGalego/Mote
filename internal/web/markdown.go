@@ -57,18 +57,28 @@ func (r *Renderer) Render(src string) (string, error) {
 		return "", err
 	}
 	token := "moteembed" + hex.EncodeToString(nonce[:])
-	var players []string
+	var players, originals []string
 	lines := strings.Split(src, "\n")
-	fenced := false
+	blank := func(i int) bool { return i < 0 || i >= len(lines) || strings.TrimSpace(lines[i]) == "" }
+	var fenceChar byte
+	var fenceLen int
 	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
-			fenced = !fenced
-		}
-		if fenced {
+		if fenceChar != 0 {
+			if motebook.Closes(line, fenceChar, fenceLen) {
+				fenceChar = 0
+			}
 			continue // code shows what it says
 		}
-		m := embedRe.FindStringSubmatch(trimmed)
+		if c, n, _, ok := motebook.Fence(line); ok {
+			fenceChar, fenceLen = c, n
+			continue
+		}
+		// What /embed writes is a paragraph of its own; indented, it is code,
+		// and run into other lines, it is text.
+		if !blank(i-1) || !blank(i+1) || len(line)-len(strings.TrimLeft(line, " ")) > 3 {
+			continue
+		}
+		m := embedRe.FindStringSubmatch(strings.TrimSpace(line))
 		if m == nil || m[1] != m[3] {
 			continue
 		}
@@ -77,6 +87,7 @@ func (r *Renderer) Render(src string) (string, error) {
 			continue
 		}
 		players = append(players, fmt.Sprintf(`<%s controls preload="metadata" src="%s"></%s>`, m[1], html.EscapeString(fileURL(link)), m[1]))
+		originals = append(originals, strings.TrimSpace(line))
 		lines[i] = fmt.Sprintf("%s%dx", token, len(players)-1)
 	}
 	var out bytes.Buffer
@@ -86,13 +97,11 @@ func (r *Renderer) Render(src string) (string, error) {
 	result := out.String()
 	for i, player := range players {
 		mark := fmt.Sprintf("%s%dx", token, i)
-		// Alone, the token is a paragraph the player replaces; run into other
-		// lines it is a player inside the paragraph, which HTML allows.
-		if strings.Contains(result, "<p>"+mark+"</p>") {
-			result = strings.Replace(result, "<p>"+mark+"</p>", player, 1)
-		} else {
-			result = strings.Replace(result, mark, player, 1)
-		}
+		// Only a paragraph that is the token alone becomes the player. Where
+		// Markdown put it anywhere else, in a link's address say, it goes back
+		// to being the text it was.
+		result = strings.Replace(result, "<p>"+mark+"</p>", player, 1)
+		result = strings.ReplaceAll(result, mark, html.EscapeString(originals[i]))
 	}
 	return result, nil
 }

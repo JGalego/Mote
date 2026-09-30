@@ -5,8 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -404,5 +407,47 @@ func TestTheServedFolderCanBeWidened(t *testing.T) {
 	}
 	if _, err := New(Options{Path: path, Root: filepath.Join(dir, "missing"), Runner: &fakeRunner{}}); err == nil {
 		t.Error("a folder that is not there was accepted")
+	}
+}
+
+func TestSessionsOnTwoPortsDoNotShareACookie(t *testing.T) {
+	a, b := newSite(t, ""), newSite(t, "")
+	// One browser, both notebooks open: one cookie jar.
+	jar, _ := cookiejar.New(nil)
+	c := &http.Client{Jar: jar}
+	for _, st := range []*site{a, b} {
+		resp, err := c.Get(st.ts.URL + "/?token=" + st.s.Token())
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+	}
+	for name, st := range map[string]*site{"first": a, "second": b} {
+		resp, err := c.Get(st.ts.URL + "/api/notebook")
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("the %s notebook: %d; opening the other logged it out", name, resp.StatusCode)
+		}
+	}
+	// And the cookie is named for the port it was given on.
+	_, port, _ := net.SplitHostPort(strings.TrimPrefix(a.ts.URL, "http://"))
+	u, _ := url.Parse(a.ts.URL)
+	found := false
+	for _, ck := range jar.Cookies(u) {
+		found = found || ck.Name == "mote_session_"+port
+	}
+	if !found {
+		t.Errorf("no cookie named for port %s: %v", port, jar.Cookies(u))
+	}
+}
+
+func TestThePageLoadsNoRemoteImages(t *testing.T) {
+	st := newSite(t, "")
+	resp, _ := st.get("/")
+	if csp := resp.Header.Get("Content-Security-Policy"); strings.Contains(csp, "https:") {
+		t.Errorf("a notebook could have the page fetch from anywhere, which tells a server it was opened: %s", csp)
 	}
 }

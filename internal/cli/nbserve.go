@@ -106,8 +106,16 @@ func (a *app) nbServe(ctx context.Context, path string, vals map[string]string) 
 	}
 
 	go srv.Watch(ctx, time.Second) // a change made in an editor shows in the page
-	hs := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
+	// Every request runs under the command's context, so Ctrl-C stops a cell
+	// that is running, and what it started, rather than leave it behind.
+	hs := &http.Server{
+		Handler:           srv.Handler(),
+		ReadHeaderTimeout: 10 * time.Second,
+		BaseContext:       func(net.Listener) context.Context { return ctx },
+	}
+	stopped := make(chan struct{})
 	go func() {
+		defer close(stopped)
 		<-ctx.Done()
 		// Pages listening for events never let go, so ask politely, then don't.
 		grace, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -116,9 +124,14 @@ func (a *app) nbServe(ctx context.Context, path string, vals map[string]string) 
 			hs.Close()
 		}
 	}()
-	if err := hs.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	err = hs.Serve(ln)
+	if !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
+	// Serve returns as soon as shutting down begins; the cell that is running
+	// is stopped and waited for before the models it uses are closed.
+	<-stopped
+	srv.Wait()
 	return nil
 }
 

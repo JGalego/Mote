@@ -67,10 +67,10 @@ type Book struct {
 	openAt int
 }
 
-// fence reads a line as the fence of a fenced code block: up to three spaces
+// Fence reads a line as the fence of a fenced code block: up to three spaces
 // of indent, then three or more backticks or tildes, then the info string.
 // More indent than that makes the line code, not a fence.
-func fence(raw string) (char byte, n int, info string, ok bool) {
+func Fence(raw string) (char byte, n int, info string, ok bool) {
 	indent := len(raw) - len(strings.TrimLeft(raw, " "))
 	if indent > 3 {
 		return 0, 0, "", false
@@ -91,9 +91,9 @@ func fence(raw string) (char byte, n int, info string, ok bool) {
 	return char, n, info, true
 }
 
-// closes reports whether a line ends a block opened by a fence of n chars.
-func closes(raw string, char byte, n int) bool {
-	c, m, info, ok := fence(raw)
+// Closes reports whether a line ends a block opened by a fence of n chars.
+func Closes(raw string, char byte, n int) bool {
+	c, m, info, ok := Fence(raw)
 	return ok && c == char && m >= n && info == ""
 }
 
@@ -152,10 +152,10 @@ func Parse(src string) (*Book, error) {
 	last := func() *Cell { return &b.Cells[len(b.Cells)-1] }
 	for i, raw := range b.lines {
 		ln := i + 1
-		char, n, info, isFence := fence(raw)
+		char, n, info, isFence := Fence(raw)
 		switch {
 		case inCell:
-			if closes(raw, '`', 3) {
+			if Closes(raw, '`', 3) {
 				inCell = false
 				cur.Expr = strings.TrimSpace(strings.Join(body, "\n"))
 				if cur.Expr == "" {
@@ -178,7 +178,7 @@ func Parse(src string) (*Book, error) {
 			}
 			body = append(body, raw)
 		case outOpen >= 0:
-			if closes(raw, '`', outOpen) {
+			if Closes(raw, '`', outOpen) {
 				last().Output.Text = strings.Join(outBody, "\n")
 				last().spanEnd = i + 1
 				outOpen = -1
@@ -188,7 +188,7 @@ func Parse(src string) (*Book, error) {
 		case otherChar != 0:
 			// Inside some other fenced block (a ```sh example, say): a mote
 			// fence there is text, not a cell.
-			if closes(raw, otherChar, otherLen) {
+			if Closes(raw, otherChar, otherLen) {
 				otherChar = 0
 			}
 		case fresh && strings.TrimSpace(raw) == "":
@@ -293,7 +293,7 @@ func (b *Book) Append(name, expr string) (int, error) {
 	}
 	body := strings.Split(expr, "\n")
 	for _, l := range body {
-		if closes(l, '`', 3) {
+		if Closes(l, '`', 3) {
 			return 0, fmt.Errorf("a line of ``` would end the cell")
 		}
 	}
@@ -340,7 +340,7 @@ func (b *Book) AppendProse(text string) error {
 	}
 	body := strings.Split(text, "\n")
 	for _, l := range body {
-		if _, _, _, ok := fence(l); ok {
+		if _, _, _, ok := Fence(l); ok {
 			return fmt.Errorf("text cannot hold a fenced block")
 		}
 	}

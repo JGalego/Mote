@@ -81,10 +81,22 @@ func TestRenderBuildsPlayersFromEmbeds(t *testing.T) {
 	if strings.Contains(out, "moteembed") {
 		t.Errorf("a placeholder was left behind:\n%s", out)
 	}
-	// Run into other lines it is still a player, not a token on show.
+	// Run into other lines it is text, and no token is left on show.
 	out = render(t, "Listen:\n<audio controls src=\"a.mp3\"></audio>\nthen read.\n")
-	if !strings.Contains(out, `<audio controls preload="metadata" src="/file?p=a.mp3"></audio>`) || strings.Contains(out, "moteembed") {
+	if strings.Contains(out, "<audio") || strings.Contains(out, "moteembed") {
 		t.Errorf("an embed in a paragraph:\n%s", out)
+	}
+	// Nor is it a player where Markdown makes it something else: a link's
+	// address, or indented code.
+	for _, src := range []string{
+		"[a]\n\n[a]:\n<video controls src=\"x.mp4\"></video>\n",
+		"Text.\n\n    <video controls src=\"x.mp4\"></video>\n",
+		"~~~\n```\n\n<video controls src=\"x.mp4\"></video>\n\n~~~\n",
+	} {
+		out := render(t, src)
+		if strings.Contains(out, "<video") || strings.Contains(out, "moteembed") || strings.Contains(out, `href="/file?p=<`) {
+			t.Errorf("%q:\n%s", src, out)
+		}
 	}
 	// In code it is shown, not played.
 	out = render(t, "```\n<audio controls src=\"a.mp3\"></audio>\n```\n")

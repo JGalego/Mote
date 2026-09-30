@@ -8,11 +8,14 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -260,5 +263,41 @@ func TestOpenBrowserReportsWhatItCannotStart(t *testing.T) {
 	t.Setenv("PATH", "")
 	if err := openBrowser("http://127.0.0.1:1/"); err == nil && runtime.GOOS != "windows" {
 		t.Error("a browser was started with no PATH")
+	}
+}
+
+func TestNbServeStopsARunningCellOnCtrlC(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the sh syntax here does not apply to cmd")
+	}
+	e, path := nbSessionEnv(t)
+	pidfile := filepath.Join(t.TempDir(), "pid")
+	os.WriteFile(path, []byte("```mote\nchat hi | sh: echo $$ > "+pidfile+"; exec /bin/sleep 60\n```\n"), 0o644)
+	s := startServing(t, e, path, "--yes")
+	_, nb := s.api("GET", "/api/notebook", nil)
+	go s.api("POST", "/api/run", map[string]any{"rev": rev(nb), "index": 0})
+	var pid int
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline) && pid == 0; time.Sleep(20 * time.Millisecond) {
+		if b, err := os.ReadFile(pidfile); err == nil {
+			pid, _ = strconv.Atoi(strings.TrimSpace(string(b)))
+		}
+	}
+	if pid == 0 {
+		t.Fatal("the cell did not start")
+	}
+	s.stop()
+	select {
+	case code := <-s.code:
+		s.code <- code
+	case <-time.After(10 * time.Second):
+		t.Fatal("did not stop")
+	}
+	// By the time the command returns, the cell's process is gone.
+	if p, err := os.FindProcess(pid); err == nil && p.Signal(syscall.Signal(0)) == nil {
+		out, _ := exec.Command("/bin/ps", "-o", "stat=", "-p", strconv.Itoa(pid)).Output()
+		if st := strings.TrimSpace(string(out)); st != "" && !strings.HasPrefix(st, "Z") {
+			p.Kill()
+			t.Errorf("the cell's process %d outlived the server (%s)", pid, st)
+		}
 	}
 }
