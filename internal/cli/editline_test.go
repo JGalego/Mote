@@ -82,7 +82,8 @@ func TestEditLineMovesTheCursor(t *testing.T) {
 		{"word left", "one two" + ctrlLeft + "X\r", "one Xtwo"},
 		{"word right", "one two" + home + ctrlRight + "X\r", "oneX two"},
 		{"application-mode arrows", "ab\x1bOD" + "X\r", "aXb"},
-		{"other escapes are dropped", "a\x1b[15~\x1b[1;2Fb\x1bxc\r", "abc"},
+		{"other escapes are dropped", "a\x1b[15~\x1b[1;2Fbc\r", "abc"},
+		{"a lone Esc does not eat the next key", "a\x1bbc\r", "abc"},
 		{"utf-8", "café" + left + "X\r", "cafXé"},
 		{"utf-8 backspace", "café\b\r", "caf"},
 		{"control keys are not typed", "a\x00\x03b\r", "ab"},
@@ -263,8 +264,8 @@ func TestEditTurnJoinsBackslashContinuations(t *testing.T) {
 func TestEditTurnEOFMidContinuation(t *testing.T) {
 	a, _ := testApp()
 	line, ok := a.editTurn(bufio.NewReader(strings.NewReader("first \\\r")))
-	if !ok || line != "first " {
-		t.Errorf("got %q %v, want %q true", line, ok, "first ")
+	if !ok || line != "first" {
+		t.Errorf("got %q %v, want %q true", line, ok, "first")
 	}
 }
 
@@ -273,5 +274,75 @@ func TestVisibleLenIgnoresColour(t *testing.T) {
 		if got := visibleLen(in); got != want {
 			t.Errorf("visibleLen(%q) = %d, want %d", in, got, want)
 		}
+	}
+}
+
+func TestRuneWidth(t *testing.T) {
+	for r, want := range map[rune]int{'a': 1, 'é': 1, '中': 2, '한': 2, '😀': 2, '\u0301': 0, 'Ａ': 2, '\u200b': 0} {
+		if got := runeWidth(r); got != want {
+			t.Errorf("runeWidth(%q) = %d, want %d", r, got, want)
+		}
+	}
+	if got := visibleLen("\x1b[1m中\x1b[0ma"); got != 3 {
+		t.Errorf("visibleLen = %d", got)
+	}
+}
+
+func TestEditorPlacesWideCharacters(t *testing.T) {
+	a, out := testApp()
+	ed := func(buf string) *editor {
+		return &editor{a: a, r: bufio.NewReader(strings.NewReader("")), prompt: "> ", width: 10, plen: 2, buf: []rune(buf)}
+	}
+	for _, c := range []struct {
+		buf      string
+		i        int
+		row, col int
+		full     bool
+	}{
+		{"中文", 1, 0, 4, false}, // after one wide character
+		{"中文", 2, 0, 6, false},
+		{"中中中中", 4, 1, 0, true}, // 2 + 8 columns: the row is full
+		{"中中中中中", 5, 1, 2, false},
+		{"a中中中中", 4, 1, 0, false}, // the last one does not fit in the column left: it wraps
+		{"a中中中中", 5, 1, 2, false},
+		{"e\u0301x", 2, 0, 3, false}, // a combining accent takes no column
+	} {
+		row, col, full := ed(c.buf).at(c.i)
+		if row != c.row || col != c.col || full != c.full {
+			t.Errorf("%q at %d: row %d col %d full %v, want %d %d %v", c.buf, c.i, row, col, full, c.row, c.col, c.full)
+		}
+	}
+	// Left after two wide characters puts the cursor between them, at column 4.
+	line, ok := a.readLine(bufio.NewReader(strings.NewReader("中文"+left+"\r")), "> ", lineOpts{})
+	if !ok || line != "中文" || !strings.Contains(out.String(), "\r\x1b[4C") {
+		t.Errorf("got %q, drew %q", line, out.String())
+	}
+}
+
+func TestEditorLeavesNoBlankLineAfterAFullRow(t *testing.T) {
+	a, out := testApp()
+	e := &editor{a: a, r: bufio.NewReader(strings.NewReader("")), prompt: "> ", width: 10, plen: 2}
+	for _, c := range "abcdefgh" { // 2 + 8: exactly the width
+		e.insert(c)
+	}
+	out.Reset()
+	e.finish()
+	if got := out.String(); got != "\r" {
+		t.Errorf("finish after a full row wrote %q: the next row is already the line after it", got)
+	}
+	// Not full, it ends with a new line as always.
+	e2 := &editor{a: a, r: bufio.NewReader(strings.NewReader("")), prompt: "> ", width: 10, plen: 2, buf: []rune("abc"), pos: 3}
+	out.Reset()
+	e2.finish()
+	if got := out.String(); got != "\n" {
+		t.Errorf("finish: %q", got)
+	}
+}
+
+func TestEditTurnEndsAContinuationOnCtrlD(t *testing.T) {
+	a, out := testApp()
+	line, ok := a.editTurnWith(bufio.NewReader(strings.NewReader("first \\\r\x04")), "> ", lineOpts{})
+	if !ok || line != "first" || !strings.HasSuffix(out.String(), "\n") {
+		t.Errorf("got %q %v, drew %q", line, ok, out.String())
 	}
 }

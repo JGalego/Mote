@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -61,7 +62,9 @@ func (a *app) editTurnWith(r *bufio.Reader, first string, o lineOpts) (string, b
 		line, ok := a.readLine(r, prompt, o)
 		if !ok {
 			if len(parts) > 0 {
-				return strings.Join(parts, "\n"), true
+				// Ctrl-D on a continuation line ends the turn there.
+				fmt.Fprintln(a.err)
+				return strings.TrimSpace(strings.Join(parts, "\n")), true
 			}
 			return "", false
 		}
@@ -89,7 +92,35 @@ var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
 
 // visibleLen is how many columns s takes on a terminal, colour codes
 // excluded.
-func visibleLen(s string) int { return utf8.RuneCountInString(ansiRe.ReplaceAllString(s, "")) }
+func visibleLen(s string) int {
+	n := 0
+	for _, r := range ansiRe.ReplaceAllString(s, "") {
+		n += runeWidth(r)
+	}
+	return n
+}
+
+// runeWidth is how many columns a terminal gives a character: two for the
+// wide ones of East Asian scripts and for emoji, none for a mark that
+// combines with the one before it, one for the rest.
+func runeWidth(r rune) int {
+	switch {
+	case r == 0 || unicode.Is(unicode.Mn, r) || unicode.Is(unicode.Me, r) || unicode.Is(unicode.Cf, r):
+		return 0
+	case r >= 0x1100 && (r <= 0x115f || r == 0x2329 || r == 0x232a ||
+		(r >= 0x2e80 && r <= 0xa4cf && r != 0x303f) ||
+		(r >= 0xac00 && r <= 0xd7a3) ||
+		(r >= 0xf900 && r <= 0xfaff) ||
+		(r >= 0xfe30 && r <= 0xfe6f) ||
+		(r >= 0xff00 && r <= 0xff60) ||
+		(r >= 0xffe0 && r <= 0xffe6) ||
+		(r >= 0x1f300 && r <= 0x1f64f) ||
+		(r >= 0x1f900 && r <= 0x1f9ff) ||
+		(r >= 0x20000 && r <= 0x3fffd)):
+		return 2
+	}
+	return 1
+}
 
 // editor is a line being edited on a terminal in cbreak mode, which echoes
 // nothing and buffers nothing, so drawing it is up to us.
@@ -190,17 +221,44 @@ func (e *editor) insert(c rune) {
 		e.draw()
 		return
 	}
-	if e.o.highlight != nil { // what was typed may change how the rest is coloured
+	// What was typed may change how the rest is coloured, and a character
+	// that is not one column wide may wrap where the terminal says.
+	if e.o.highlight != nil || runeWidth(c) != 1 {
 		e.draw()
 		return
 	}
 	// Typing at the end needs no redraw; the terminal wraps by itself, and
 	// only the exact end of a row needs the line moved down for us.
 	fmt.Fprint(e.a.err, string(c))
-	if end := e.plen + len(e.buf); end%e.width == 0 {
+	row, _, full := e.at(len(e.buf))
+	if full {
 		fmt.Fprint(e.a.err, "\r\n")
 	}
-	e.row = (e.plen + e.pos) / e.width
+	e.row = row
+}
+
+// at is where the character at index i of the line starts on the screen, as
+// a row counted from the prompt's and a column; for i past the end, it is
+// where the cursor is after the line. full reports a line that ends exactly
+// at the edge, where a terminal holds the cursor on the last column until
+// something else is written, so the move to the next row is ours to make.
+func (e *editor) at(i int) (row, col int, full bool) {
+	row, col = e.plen/e.width, e.plen%e.width
+	for j, r := range e.buf {
+		w := runeWidth(r)
+		if col+w > e.width { // it does not fit: it goes on the next row
+			row, col = row+1, 0
+		}
+		if j == i {
+			return row, col, false
+		}
+		col += w
+		full = col == e.width
+		if full {
+			row, col = row+1, 0
+		}
+	}
+	return row, col, full
 }
 
 func (e *editor) deleteAt(i int) {
@@ -270,7 +328,12 @@ func (e *editor) recall(dir int) {
 // this understands. Anything else is read to its end and dropped.
 func (e *editor) escape() {
 	b, err := e.r.ReadByte()
-	if err != nil || (b != '[' && b != 'O') {
+	if err != nil {
+		return
+	}
+	if b != '[' && b != 'O' {
+		// Esc on its own, or with Alt: what follows is a key of its own.
+		e.r.UnreadByte()
 		return
 	}
 	var params []byte
@@ -336,12 +399,12 @@ func (e *editor) draw() {
 		shown = e.o.highlight(e.buf)
 	}
 	fmt.Fprintf(w, "\r\x1b[J%s%s", e.prompt, shown)
-	end := e.plen + len(e.buf)
-	if end > 0 && end%e.width == 0 {
+	endRow, _, full := e.at(len(e.buf))
+	if full {
 		fmt.Fprint(w, "\r\n") // the cursor waits at the edge; move it to the next row for real
 	}
-	row, col := (e.plen+e.pos)/e.width, (e.plen+e.pos)%e.width
-	if up := end/e.width - row; up > 0 {
+	row, col, _ := e.at(e.pos)
+	if up := endRow - row; up > 0 {
 		fmt.Fprintf(w, "\x1b[%dA", up)
 	}
 	fmt.Fprint(w, "\r")
@@ -353,8 +416,13 @@ func (e *editor) draw() {
 
 // finish ends the line: the cursor goes below it, wherever it was in it.
 func (e *editor) finish() {
-	if down := (e.plen+len(e.buf))/e.width - e.row; down > 0 {
+	endRow, _, full := e.at(len(e.buf))
+	if down := endRow - e.row; down > 0 {
 		fmt.Fprintf(e.a.err, "\x1b[%dB", down)
+	}
+	if full {
+		fmt.Fprint(e.a.err, "\r") // the line filled its last row: the next one is already free
+		return
 	}
 	fmt.Fprintln(e.a.err)
 }
