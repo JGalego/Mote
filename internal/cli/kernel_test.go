@@ -149,3 +149,17 @@ func TestKernelPythonTests(t *testing.T) {
 		t.Errorf("kernel tests failed: %v\n%s", err, out)
 	}
 }
+
+func TestKernelInstallWritesAbsolutePaths(t *testing.T) {
+	e := newEnv(t)
+	dir := t.TempDir()
+	chdir(t, dir)
+	if code, _, errs := e.mote("", "kernel", "install", "--dir", "rel/jup", "--python", "/usr/bin/python3"); code != 0 {
+		t.Fatalf("install: %d %s", code, errs)
+	}
+	var spec kernelSpec
+	json.Unmarshal([]byte(readFile(t, filepath.Join(dir, "rel", "jup", "kernels", "mote", "kernel.json"))), &spec)
+	if !filepath.IsAbs(spec.Argv[1]) {
+		t.Errorf("the kernel's script is %q: Jupyter starts kernels elsewhere", spec.Argv[1])
+	}
+}

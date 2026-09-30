@@ -90,7 +90,7 @@ Usage:
   mote tune [--apply]
   mote doctor
   mote config [show | path | set KEY VALUE | history | rollback [N] | edit]
-  mote kernel install [--python PATH] [--dir DIR] | uninstall | path
+  mote kernel install [--python PATH] [--dir DIR] | uninstall [--dir DIR] | path [--dir DIR]
   mote completion bash|zsh|fish
   mote update [--check]
   mote version

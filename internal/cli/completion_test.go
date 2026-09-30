@@ -84,3 +84,53 @@ func TestCompleteFlags(t *testing.T) {
 		t.Errorf("expected no candidates for a non-flag run argument, got: %s", out)
 	}
 }
+
+func TestCompletionOffersNbAndKernelSubcommandsAndTheirOwnFlags(t *testing.T) {
+	e := newEnv(t)
+	complete := func(args ...string) []string {
+		_, out, _ := e.mote("", append([]string{"__complete"}, args...)...)
+		return strings.Fields(out)
+	}
+	if got := strings.Join(complete("nb", ""), " "); got != "run console serve exec export import" {
+		t.Errorf("nb: %q", got)
+	}
+	if got := strings.Join(complete("kernel", ""), " "); got != "install uninstall path" {
+		t.Errorf("kernel: %q", got)
+	}
+	run := strings.Join(complete("nb", "run", "--"), " ")
+	for _, want := range []string{"--force", "--dry-run", "--model", "--yes"} {
+		if !strings.Contains(run, want) {
+			t.Errorf("nb run lacks %s: %q", want, run)
+		}
+	}
+	for _, not := range []string{"--state", "--port", "--open", "--any-kernel"} {
+		if strings.Contains(run, not) {
+			t.Errorf("nb run offers %s, which it refuses: %q", not, run)
+		}
+	}
+	if serve := strings.Join(complete("nb", "serve", "--"), " "); !strings.Contains(serve, "--port") || strings.Contains(serve, "--force") {
+		t.Errorf("nb serve: %q", serve)
+	}
+	if got := strings.Join(complete("kernel", "install", "--"), " "); !strings.Contains(got, "--python") || !strings.Contains(got, "--dir") {
+		t.Errorf("kernel install: %q", got)
+	}
+	if got := strings.Join(complete("kernel", "path", "--"), " "); strings.Contains(got, "--python") {
+		t.Errorf("kernel path: %q", got)
+	}
+}
+
+// Every flag nb accepts for a subcommand is one it documents.
+func TestNbFlagsAreDocumented(t *testing.T) {
+	help := helpTopics["nb"]
+	var documented strings.Builder
+	for _, f := range help.flags {
+		documented.WriteString(f.name + " ")
+	}
+	for sub, flags := range nbFlags {
+		for _, f := range flags {
+			if !strings.Contains(documented.String(), f) {
+				t.Errorf("mote nb %s takes %s, which mote help nb does not describe", sub, f)
+			}
+		}
+	}
+}

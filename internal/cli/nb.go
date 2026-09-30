@@ -49,19 +49,11 @@ func (a *app) nbCmd(ctx context.Context, args []string) error {
 		return usagef("%s", nbUsage)
 	}
 	// Each subcommand takes the flags that mean something to it.
-	allowed := map[string][]string{
-		"run":     {"-o", "--output", "--force", "--dry-run"},
-		"console": {"-o", "--output"},
-		"exec":    {"--state"},
-		"serve":   {"--port", "--root", "--open"},
-		"export":  {"-o", "--output", "--force"},
-		"import":  {"-o", "--output", "--force", "--any-kernel"},
-	}
-	own, ok := allowed[pos[0]]
+	own, ok := nbFlags[pos[0]]
 	if !ok {
 		return usagef("%s", nbUsage)
 	}
-	for _, f := range []string{"-o", "--output", "--force", "--dry-run", "--state", "--any-kernel", "--port", "--root", "--open"} {
+	for _, f := range nbOwnFlags() {
 		if vals[f] == "" || contains(own, f) {
 			continue
 		}
@@ -89,6 +81,34 @@ func (a *app) nbCmd(ctx context.Context, args []string) error {
 		return a.nbConsole(ctx, path, vals)
 	}
 	return usagef("%s", nbUsage)
+}
+
+// nbFlags are the flags that belong to one subcommand of mote nb; the rest
+// of its flags (--model, --profile, --yes) mean the same to all of them. It
+// is what mote nb enforces and what completion offers.
+var nbFlags = map[string][]string{
+	"run":     {"-o", "--output", "--force", "--dry-run"},
+	"console": {"-o", "--output"},
+	"exec":    {"--state"},
+	"serve":   {"--port", "--root", "--open"},
+	"export":  {"-o", "--output", "--force"},
+	"import":  {"-o", "--output", "--force", "--any-kernel"},
+}
+
+// nbSubcommands are the subcommands of mote nb, in the order help gives them.
+var nbSubcommands = []string{"run", "console", "serve", "exec", "export", "import"}
+
+// nbOwnFlags lists every flag that belongs to some subcommand, once.
+func nbOwnFlags() []string {
+	var all []string
+	for _, sub := range nbSubcommands {
+		for _, f := range nbFlags[sub] {
+			if !contains(all, f) {
+				all = append(all, f)
+			}
+		}
+	}
+	return all
 }
 
 func contains(list []string, s string) bool {

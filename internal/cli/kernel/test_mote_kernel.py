@@ -85,5 +85,23 @@ class Images(unittest.TestCase):
         self.assertEqual(bundle["text/plain"], a)
 
 
+class State(unittest.TestCase):
+    def test_sweep_removes_only_the_folders_of_kernels_that_are_gone(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            gone = os.path.join(tmp, "mote-kernel-999999999-abc")
+            mine = os.path.join(tmp, "mote-kernel-%d-abc" % os.getpid())
+            other = os.path.join(tmp, "unrelated-999999999")
+            odd = os.path.join(tmp, "mote-kernel-abc")  # an older name, with no pid
+            for d in (gone, mine, other, odd):
+                os.mkdir(d)
+            mote_kernel.sweep_state(tmp)
+            self.assertFalse(os.path.exists(gone))
+            for d in (mine, other, odd):
+                self.assertTrue(os.path.exists(d), d)
+
+    def test_sweep_of_a_folder_that_is_not_there(self):
+        mote_kernel.sweep_state("/nonexistent/for/sure")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -66,6 +66,39 @@ def image_bundle(path):
     return {IMAGE_TYPES[os.path.splitext(path)[1].lower()]: data, "text/plain": path}
 
 
+STATE_PREFIX = "mote-kernel-"
+
+
+def alive(pid):
+    """Whether a process is running, as far as can be told."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except (PermissionError, OSError):
+        return True  # someone's; not ours to judge
+    return True
+
+
+def sweep_state(tmp=None):
+    """Remove the state folders of kernels that were killed before they could.
+
+    A folder is named for the kernel's process, so one whose process is gone
+    belongs to nobody.
+    """
+    tmp = tmp or tempfile.gettempdir()
+    try:
+        names = os.listdir(tmp)
+    except OSError:
+        return
+    for name in names:
+        if not name.startswith(STATE_PREFIX):
+            continue
+        pid = name[len(STATE_PREFIX):].split("-", 1)[0]
+        if pid.isdigit() and not alive(int(pid)):
+            shutil.rmtree(os.path.join(tmp, name), ignore_errors=True)
+
+
 def main():
     from ipykernel.kernelapp import IPKernelApp
     from ipykernel.kernelbase import Kernel
@@ -85,7 +118,8 @@ def main():
 
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
-            self._dir = tempfile.mkdtemp(prefix="mote-kernel-")
+            sweep_state()
+            self._dir = tempfile.mkdtemp(prefix="%s%d-" % (STATE_PREFIX, os.getpid()))
             self._state = os.path.join(self._dir, "state.json")
 
         def do_execute(self, code, silent, store_history=True, user_expressions=None, allow_stdin=False):
@@ -101,6 +135,8 @@ def main():
             message = err.strip() or "mote failed"
             error = {"ename": "MoteError", "evalue": message, "traceback": [message]}
             if not silent:
+                if out:  # what it printed before it failed is part of what happened
+                    self.send_response(self.iopub_socket, "stream", {"name": "stdout", "text": out})
                 self.send_response(self.iopub_socket, "error", error)
             return dict(reply, status="error", **error)
 

@@ -34,7 +34,12 @@ for code in json.loads(sys.argv[1]):
             out["error"] = content["evalue"]
         elif kind == "status" and content["execution_state"] == "idle":
             break
-    out["status"] = kc.get_shell_msg(timeout=60)["content"]["status"]
+    # The reply to this request, not one to another the client made.
+    while True:
+        reply = kc.get_shell_msg(timeout=60)
+        if reply["parent_header"].get("msg_id") == msg_id:
+            break
+    out["status"] = reply["content"]["status"]
     results.append(out)
 kc.stop_channels()
 km.shutdown_kernel(now=True)

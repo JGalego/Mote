@@ -85,6 +85,11 @@ func (a *app) kernelCmd(args []string) error {
 		home, _ := os.UserHomeDir()
 		dir = jupyterDataDirOn(runtime.GOOS, home, os.Getenv)
 	}
+	// Jupyter starts a kernel from the notebook's folder, so the paths in its
+	// spec must not depend on where this ran.
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
+	}
 	kdir := filepath.Join(dir, "kernels", kernelName)
 	switch pos[0] {
 	case "path":

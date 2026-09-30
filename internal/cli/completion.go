@@ -118,6 +118,21 @@ func (a *app) complete(args []string) []string {
 		cands = append([]string{"status", "stop"}, commandFlags["serve"]...)
 	case prior[0] == "models":
 		cands = a.completeModels(prior[1:])
+	case prior[0] == "nb" && len(prior) == 1 && !strings.HasPrefix(cur, "-"):
+		cands = nbSubcommands
+	case prior[0] == "nb" && strings.HasPrefix(cur, "-"):
+		// The flags every subcommand takes, and those of the one typed.
+		cands = []string{"--model", "--profile", "--yes", "-y", "--help", "-h"}
+		if len(prior) > 1 {
+			cands = append(cands, nbFlags[prior[1]]...)
+		}
+	case prior[0] == "kernel" && len(prior) == 1 && !strings.HasPrefix(cur, "-"):
+		cands = []string{"install", "uninstall", "path"}
+	case prior[0] == "kernel" && strings.HasPrefix(cur, "-"):
+		cands = []string{"--dir", "--help", "-h"}
+		if len(prior) > 1 && prior[1] == "install" {
+			cands = append(cands, "--python")
+		}
 	default:
 		if strings.HasPrefix(cur, "-") {
 			cands = commandFlags[prior[0]]
