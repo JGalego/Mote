@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/jgalego/mote/internal/motebook"
 	mrt "github.com/jgalego/mote/internal/runtime"
 	"github.com/jgalego/mote/internal/task"
 )
@@ -194,6 +195,25 @@ func usesPipe(arg string) bool { return arg == "-" || strings.Contains(arg, pipe
 // instead, and show in the command printed before anything runs. request
 // stands in for {} in the first stage, withOutput says whether -o was given.
 func checkPlan(p plan, tasks []task.Task, request string, withOutput bool) ([]stage, []task.Task, error) {
+	return checkStages(p, tasks, planContext{request: request, withOutput: withOutput})
+}
+
+// planContext is what a plan is checked against besides the tasks.
+type planContext struct {
+	request    string
+	withOutput bool
+
+	// A plan for a notebook cell has no request to stand in for {} in its
+	// first stage and no -o to give a task that writes to one. It may use the
+	// output of the cells before it as {{name}}: earlier maps each such name
+	// to the last task of the cell that produces it.
+	notebook bool
+	earlier  map[string]task.Task
+}
+
+// checkStages is checkPlan for either kind of plan.
+func checkStages(p plan, tasks []task.Task, ctx planContext) ([]stage, []task.Task, error) {
+	request, withOutput := ctx.request, ctx.withOutput
 	all := p.stages()
 	if len(all) > maxPlanStages {
 		return nil, nil, fmt.Errorf("the plan has %d stages; at most %d are allowed", len(all), maxPlanStages)
@@ -214,8 +234,20 @@ func checkPlan(p plan, tasks []task.Task, request string, withOutput bool) ([]st
 		piped := false
 		for j, arg := range args {
 			kind := t.Params[j].Kind
+			named := false
+			// Outside a notebook {{name}} is just text.
+			for _, name := range refsIn(arg, ctx.notebook) {
+				from, ok := ctx.earlier[name]
+				if !ok {
+					return nil, nil, fmt.Errorf("stage %d: %s uses {{%s}}, which no earlier cell produces", i+1, t.ID, name)
+				}
+				if (kind == "file" || kind == "dir") && producesText(from) {
+					return nil, nil, fmt.Errorf("stage %d: %s needs a %s, but {{%s}} is %s", i+1, t.ID, kind, name, from.Out)
+				}
+				named = true
+			}
 			if !usesPipe(arg) {
-				if kind == "file" || kind == "dir" {
+				if (kind == "file" || kind == "dir") && !named {
 					if _, err := os.Stat(arg); err != nil {
 						return nil, nil, fmt.Errorf("stage %d: the plan gives %s the %s %q, which does not exist", i+1, t.ID, kind, arg)
 					}
@@ -223,6 +255,9 @@ func checkPlan(p plan, tasks []task.Task, request string, withOutput bool) ([]st
 				continue
 			}
 			if i == 0 {
+				if ctx.notebook {
+					return nil, nil, fmt.Errorf("stage 1: %s refers to a previous output, but it runs first; a cell reads an earlier one as {{name}}", t.ID)
+				}
 				// Nothing comes before the first stage but the request, so
 				// that is what a {} there can only mean.
 				if !t.Params[j].TakesText() {
@@ -265,13 +300,27 @@ func checkPlan(p plan, tasks []task.Task, request string, withOutput bool) ([]st
 				args[j] = strings.TrimRight(args[j], " \n") + "\n\n" + pipeMarker
 			}
 		}
-		if t.Output == "required" && (i != last || !withOutput) {
-			return nil, nil, fmt.Errorf("stage %d: %s writes a file, so it must come last and needs -o", i+1, t.ID)
+		if t.Output == "required" {
+			if ctx.notebook {
+				return nil, nil, fmt.Errorf("stage %d: %s needs an output path, which a cell cannot give", i+1, t.ID)
+			}
+			if i != last || !withOutput {
+				return nil, nil, fmt.Errorf("stage %d: %s writes a file, so it must come last and needs -o", i+1, t.ID)
+			}
 		}
 		stages[i] = stage{text: pipeStage(t.ID, args), id: t.ID, args: args}
 		found[i] = t
 	}
 	return stages, found, nil
+}
+
+// refsIn lists the {{name}} references in an argument, none when they do
+// not mean anything.
+func refsIn(arg string, meaningful bool) []string {
+	if !meaningful {
+		return nil
+	}
+	return motebook.Refs(arg)
 }
 
 // pipeQuote writes one argument so splitArgs reads it back unchanged.

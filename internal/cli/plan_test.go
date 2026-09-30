@@ -380,3 +380,50 @@ func TestDoPlanDryRunAndRefusals(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckStagesForANotebookCell(t *testing.T) {
+	tasks := builtins(t)
+	dir := t.TempDir()
+	video := filepath.Join(dir, "clip.mp4")
+	os.WriteFile(video, nil, 0o644)
+	st := func(id string, args ...string) planStage { return planStage{Task: id, Args: args} }
+	chat, _ := task.Find(tasks, "chat")
+	frames, _ := task.Find(tasks, "frames")
+	ctx := planContext{notebook: true, earlier: map[string]task.Task{"step1": chat, "step2": frames}}
+
+	// A text argument may read an earlier cell, alone or inside a sentence.
+	stages, _, err := checkStages(plan{First: st("chat", "Shorten: {{step1}}")}, tasks, ctx)
+	if err != nil || len(stages) != 1 || stages[0].args[0] != "Shorten: {{step1}}" {
+		t.Fatalf("text reference: %v %+v", err, stages)
+	}
+	// A file argument may read one that produces files, without being checked
+	// against the disk, since the file does not exist yet.
+	if _, _, err := checkStages(plan{First: st("describe", "{{step2}}")}, tasks, ctx); err != nil {
+		t.Errorf("file reference: %v", err)
+	}
+
+	cases := []struct {
+		name string
+		p    plan
+		want string
+	}{
+		{"unknown name", plan{First: st("chat", "{{step9}}")}, "no earlier cell produces"},
+		{"text for a file", plan{First: st("describe", "{{step1}}")}, "needs a file, but {{step1}} is text"},
+		{"{} in the first stage", plan{First: st("chat", "{}")}, "runs first"},
+		{"needs an output path", plan{First: st("convert", video)}, "needs an output path"},
+		{"missing file", plan{First: st("describe", filepath.Join(dir, "gone.png"))}, "does not exist"},
+	}
+	for _, c := range cases {
+		if _, _, err := checkStages(c.p, tasks, ctx); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: %v, want %q", c.name, err, c.want)
+		}
+	}
+	// The same slips are not slips outside a notebook: {} in a first stage is
+	// the request, and a name with nothing before it is just text.
+	if _, _, err := checkPlan(plan{First: st("chat", "{}")}, tasks, "req", false); err != nil {
+		t.Errorf("checkPlan changed: %v", err)
+	}
+	if _, _, err := checkPlan(plan{First: st("chat", "explain {{step9}} in Jinja")}, tasks, "req", false); err != nil {
+		t.Errorf("checkPlan took {{name}} in a request for a reference: %v", err)
+	}
+}
