@@ -65,14 +65,15 @@ func (p *plainInput) resume() {
 
 // editorInput reads at a terminal in cbreak mode, through the line editor.
 type editorInput struct {
-	a        *app
-	r        *bufio.Reader
-	complete completer
-	history  []string
+	a         *app
+	r         *bufio.Reader
+	complete  completer
+	highlight highlighter
+	history   []string
 }
 
 func (e *editorInput) turn(prompt string) (string, bool) {
-	line, ok := e.a.editTurnWith(e.r, prompt, lineOpts{complete: e.complete, history: &e.history})
+	line, ok := e.a.editTurnWith(e.r, prompt, lineOpts{complete: e.complete, history: &e.history, highlight: e.highlight})
 	if !ok {
 		fmt.Fprintln(e.a.err) // Ctrl-D leaves the cursor on the prompt's line
 	}
@@ -117,6 +118,44 @@ func cellTasks(tasks []task.Task) []task.Task {
 	}
 	return out
 }
+
+// highlight colours a /command as it is typed: cyan while it can still be
+// one, red once it cannot, so a mistyped command shows before Enter. Only
+// /save takes an argument, so any other command with words after it is red.
+func (s *nbSession) highlight(line []rune) string {
+	text := string(line)
+	if !strings.HasPrefix(text, "/") {
+		return text
+	}
+	end := strings.IndexAny(text, " \t")
+	if end < 0 {
+		end = len(text)
+	}
+	cmd, rest := text[:end], text[end:]
+	prefix, exact, takesArgs := false, false, false
+	for _, known := range consoleCommands {
+		if strings.HasPrefix(known, cmd) {
+			prefix = true
+		}
+		if strings.TrimSpace(known) == cmd {
+			exact, takesArgs = true, strings.HasSuffix(known, " ")
+		}
+	}
+	if (rest == "" && prefix) || (exact && takesArgs) {
+		return s.a.ue.Cyan(cmd) + rest
+	}
+	return s.a.ue.Red(cmd) + rest
+}
+
+// colourCommands colours the /commands in a piece of help text.
+func (a *app) colourCommands(text string) string {
+	return slashWordRe.ReplaceAllStringFunc(text, func(m string) string {
+		i := strings.Index(m, "/")
+		return m[:i] + a.ue.Cyan(m[i:])
+	})
+}
+
+var slashWordRe = regexp.MustCompile(`(^|\s)/[a-z?]+`)
 
 var bindingPrefixRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*\s*=$`)
 

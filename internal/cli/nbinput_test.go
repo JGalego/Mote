@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/jgalego/mote/internal/ui"
 )
 
 // completion runs Tab at the end of line, or at the cursor marked by ^.
@@ -265,5 +267,130 @@ func TestCellTasksLeaveOutWhatNeedsAnOutputPath(t *testing.T) {
 	}
 	if !ids["chat"] || !ids["draw"] || ids["convert"] {
 		t.Errorf("cell tasks: %v", ids)
+	}
+}
+
+// colourApp is an app whose output takes colour, as a terminal's does.
+func colourApp(t *testing.T) (*app, *os.File) {
+	t.Helper()
+	t.Setenv("CLICOLOR_FORCE", "1")
+	t.Setenv("TERM", "xterm")
+	t.Setenv("NO_COLOR", "")
+	f, err := os.Create(filepath.Join(t.TempDir(), "out"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { f.Close() })
+	a := &app{out: f, err: f}
+	a.uo, a.ue = ui.New(f), ui.New(f)
+	if !a.ue.Color() {
+		t.Skip("this platform gives no colour to a file")
+	}
+	return a, f
+}
+
+const cyan, red = "\x1b[36m", "\x1b[31m"
+
+func TestConsoleColoursMetaCommandsAsTheyAreTyped(t *testing.T) {
+	a, _ := colourApp(t)
+	s := &nbSession{a: a}
+	for _, c := range []struct {
+		line, colour string // the colour of the command, or "" for none
+	}{
+		{"/tasks", cyan},
+		{"/ta", cyan}, // still on its way to being one
+		{"/", cyan},
+		{"/save notes.md", cyan}, // the one command that takes an argument
+		{"/save", cyan},
+		{"/tsks", red},
+		{"/tasks extra", red}, // takes none
+		{"/exit now", red},
+		{"/zzz", red},
+		{"chat hi", ""},
+		{"", ""},
+		{"city = chat /tasks", ""}, // only at the start of a line
+	} {
+		got := s.highlight([]rune(c.line))
+		if plain := ansiRe.ReplaceAllString(got, ""); plain != c.line {
+			t.Errorf("%q: colouring changed the text to %q", c.line, plain)
+		}
+		if c.colour == "" {
+			if got != c.line {
+				t.Errorf("%q was coloured: %q", c.line, got)
+			}
+			continue
+		}
+		if !strings.HasPrefix(got, c.colour) {
+			t.Errorf("%q: %q, want it to start with %q", c.line, got, c.colour)
+		}
+		// Only the command is coloured, not what follows it.
+		if i := strings.IndexAny(c.line, " "); i > 0 && !strings.HasSuffix(got, "\x1b[0m"+c.line[i:]) {
+			t.Errorf("%q: the arguments are coloured too: %q", c.line, got)
+		}
+	}
+}
+
+func TestConsoleColoursNothingWithoutColour(t *testing.T) {
+	a, _ := testApp() // no colour
+	s := &nbSession{a: a}
+	for _, line := range []string{"/tasks", "/tsks", "chat hi", "/save x"} {
+		if got := s.highlight([]rune(line)); got != line {
+			t.Errorf("%q: %q", line, got)
+		}
+	}
+	if got := a.colourCommands(nbConsoleHelp); got != nbConsoleHelp {
+		t.Errorf("help changed without colour:\n%s", got)
+	}
+}
+
+func TestEditorDrawsTheHighlightedLine(t *testing.T) {
+	a, out := testApp()
+	mark := func(line []rune) string { return "[" + string(line) + "]" }
+	line, ok := a.readLine(bufio.NewReader(strings.NewReader("ab\x1b[DX\r")), "> ", lineOpts{highlight: mark})
+	if !ok || line != "aXb" {
+		t.Fatalf("got %q %v", line, ok)
+	}
+	// Every keystroke redraws through the highlighter, including one typed at
+	// the end of the line, whose colour can depend on what came before it.
+	if !strings.Contains(out.String(), "[a]") || !strings.Contains(out.String(), "[ab]") || !strings.Contains(out.String(), "[aXb]") {
+		t.Errorf("drawn: %q", out.String())
+	}
+}
+
+func TestConsoleColoursHelpAndTasks(t *testing.T) {
+	a, f := colourApp(t)
+	help := a.colourCommands(nbConsoleHelp)
+	if plain := ansiRe.ReplaceAllString(help, ""); plain != nbConsoleHelp {
+		t.Errorf("colouring changed the help text:\n%s", plain)
+	}
+	for _, cmd := range []string{"/tasks", "/examples", "/vars", "/cells", "/undo", "/save", "/help", "/exit"} {
+		if !strings.Contains(help, cyan+cmd+"\x1b[0m") {
+			t.Errorf("%s is not coloured in the help", cmd)
+		}
+	}
+	if strings.Contains(help, cyan+"/") && strings.Contains(ansiRe.ReplaceAllString(help, ""), "a/b") {
+		t.Error("a slash inside a word was taken for a command")
+	}
+
+	s := &nbSession{a: a, tasks: builtins(t)}
+	s.listTasks()
+	got := readFile(t, f.Name())
+	if !strings.Contains(got, "\x1b[1mchat\x1b[0m \x1b[2mPROMPT\x1b[0m") {
+		t.Errorf("a task is not coloured:\n%q", got)
+	}
+	// The columns line up whatever the colour: every summary starts together.
+	plain := strings.Split(strings.TrimRight(ansiRe.ReplaceAllString(got, ""), "\n"), "\n")
+	col := -1
+	for i, tk := range cellTasks(builtins(t)) {
+		at := strings.Index(plain[i], "  "+tk.Summary)
+		if at < 0 {
+			t.Fatalf("line %d does not end in its summary: %q", i, plain[i])
+		}
+		if col < 0 {
+			col = at
+		}
+		if at != col {
+			t.Errorf("misaligned: %q", plain[i])
+		}
 	}
 }

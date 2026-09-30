@@ -19,9 +19,15 @@ type completer func(line []rune, pos int) (start int, cands []string)
 
 // lineOpts says what a line editor offers besides typing.
 type lineOpts struct {
-	complete completer // Tab; nil for none
-	history  *[]string // Up and Down; nil for none
+	complete  completer // Tab; nil for none
+	history   *[]string // Up and Down; nil for none
+	highlight highlighter
 }
+
+// highlighter colours the line as it is drawn. It may add colour codes and
+// nothing else: what is left when they are removed must be the line, since
+// the cursor is placed by counting its characters.
+type highlighter func(line []rune) string
 
 // slashCompleter completes a command at the start of a line.
 func slashCompleter(cmds []string) completer {
@@ -184,6 +190,10 @@ func (e *editor) insert(c rune) {
 		e.draw()
 		return
 	}
+	if e.o.highlight != nil { // what was typed may change how the rest is coloured
+		e.draw()
+		return
+	}
 	// Typing at the end needs no redraw; the terminal wraps by itself, and
 	// only the exact end of a row needs the line moved down for us.
 	fmt.Fprint(e.a.err, string(c))
@@ -321,7 +331,11 @@ func (e *editor) draw() {
 	if e.row > 0 {
 		fmt.Fprintf(w, "\x1b[%dA", e.row)
 	}
-	fmt.Fprintf(w, "\r\x1b[J%s%s", e.prompt, string(e.buf))
+	shown := string(e.buf)
+	if e.o.highlight != nil {
+		shown = e.o.highlight(e.buf)
+	}
+	fmt.Fprintf(w, "\r\x1b[J%s%s", e.prompt, shown)
 	end := e.plen + len(e.buf)
 	if end > 0 && end%e.width == 0 {
 		fmt.Fprint(w, "\r\n") // the cursor waits at the edge; move it to the next row for real

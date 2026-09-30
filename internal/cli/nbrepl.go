@@ -119,7 +119,7 @@ func (a *app) nbConsole(ctx context.Context, path string, vals map[string]string
 		if f, ok := a.in.(*os.File); ok {
 			if restore, ok := ui.EnterCbreak(f); ok {
 				defer restore()
-				s.in = &editorInput{a: a, r: bufio.NewReader(f), complete: s.complete}
+				s.in = &editorInput{a: a, r: bufio.NewReader(f), complete: s.complete, highlight: s.highlight}
 			}
 		}
 		fmt.Fprint(a.err, a.ue.Banner(consoleTagline(path, len(book.Cells))))
@@ -144,7 +144,7 @@ func (a *app) nbConsole(ctx context.Context, path string, vals map[string]string
 		case line == "/save" || strings.HasPrefix(line, "/save "):
 			err = s.save(strings.TrimSpace(strings.TrimPrefix(line, "/save")))
 		case line == "/help" || line == "/?":
-			fmt.Fprintln(a.err, nbConsoleHelp)
+			fmt.Fprintln(a.err, a.colourCommands(nbConsoleHelp))
 			continue
 		case line == "/tasks":
 			s.listTasks()
@@ -182,7 +182,14 @@ func (s *nbSession) listTasks() {
 		width = max(width, len(strings.TrimSpace(t.ID+" "+t.Usage())))
 	}
 	for _, t := range tasks {
-		fmt.Fprintf(s.a.out, "%s  %s\n", pad(strings.TrimSpace(t.ID+" "+t.Usage()), width), t.Summary)
+		usage := t.Usage()
+		head := strings.TrimSpace(t.ID + " " + usage)
+		// Pad by the plain text; the colour codes take no columns.
+		name := s.a.uo.Bold(t.ID)
+		if usage != "" {
+			name += " " + s.a.uo.Dim(usage)
+		}
+		fmt.Fprintf(s.a.out, "%s%s  %s\n", name, strings.Repeat(" ", width-len(head)), t.Summary)
 	}
 }
 
