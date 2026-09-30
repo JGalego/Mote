@@ -71,6 +71,7 @@ Usage:
   mote index [DIR...] | status | rm DIR|--all
   mote ask "QUESTION" [--in DIR] [--top N] [--sources]
   mote pipe "TASK ARGS | TASK ARGS | sh: COMMAND" [-o OUTPUT] [--trace] [--model ID]
+  mote nb run FILE [-o FILE|-] [--force] [--dry-run] [--yes] [--model ID] [--profile P]
   mote do "REQUEST" [-o OUTPUT] [--apply] [--dry-run] [--plan [--trace]] [--yes] [--model ID] [--profile P]
   mote agent "GOAL" [-o OUTPUT] [--tools a,b] [--mcp SERVER,...] [--steps N] [--allow-sh [--sandbox auto|on|off] [--sandbox-net]] [--yes] [--model ID]
   mote mcp [tools [NAME...]]
@@ -229,7 +230,7 @@ func (a *app) dispatch(ctx context.Context, args []string) error {
 		return a.completeCmd(rest)
 	}
 	switch cmd {
-	case "run", "pipe", "listen", "do", "agent", "memory", "remember", "forget", "models", "bench", "tune", "serve", "chat", "index", "ask", "guide":
+	case "run", "pipe", "listen", "do", "agent", "memory", "remember", "forget", "models", "bench", "tune", "serve", "chat", "index", "ask", "guide", "nb":
 	default:
 		return usagef("unknown command %q; see `mote help`", cmd)
 	}
@@ -270,6 +271,8 @@ func (a *app) dispatch(ctx context.Context, args []string) error {
 		return a.askCmd(ctx, rest)
 	case "guide":
 		return a.guideCmd(ctx, rest)
+	case "nb":
+		return a.nbCmd(ctx, rest)
 	}
 	return usagef("unknown command %q; see `mote help`", cmd)
 }

@@ -96,7 +96,7 @@ func Parse(src string) (*Book, error) {
 				if cur.Expr == "" {
 					return nil, fmt.Errorf("line %d: empty cell", cur.Line)
 				}
-				cur.Refs = refs(cur.Expr)
+				cur.Refs = Refs(cur.Expr)
 				for _, r := range cur.Refs {
 					if _, ok := bound[r]; !ok {
 						return nil, fmt.Errorf("line %d: {{%s}} is not bound by an earlier cell", cur.Line, r)
@@ -237,8 +237,8 @@ func (o Output) render() []string {
 	return []string{open, o.Text, fence}
 }
 
-// refs lists the distinct names a cell uses, in order of first use.
-func refs(expr string) []string {
+// Refs lists the distinct names {{name}} refers to in s, in order of first use.
+func Refs(expr string) []string {
 	var out []string
 	seen := map[string]bool{}
 	for _, m := range refRe.FindAllStringSubmatch(expr, -1) {

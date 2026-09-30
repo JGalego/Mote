@@ -152,6 +152,30 @@ var helpTopics = map[string]helpTopic{
 			`mote pipe --trace "code 'print the squares of 1 to 5 in Python' | sh: python3 -"`,
 		},
 	},
+	"nb": {
+		summary: "Run a motebook: a Markdown file whose ```mote cells are tasks or pipelines, with each output written under its cell.",
+		usage:   []string{"mote nb run FILE [-o FILE|-] [--force] [--dry-run] [--yes|-y] [--model ID] [--profile P]"},
+		subs: []helpFlag{
+			{"run FILE", "run the cells in order, saving FILE after each one"},
+		},
+		flags: []helpFlag{
+			{"-o, --output FILE", "write the notebook to FILE instead of FILE itself; - prints it"},
+			{"--force", "run every cell, even those whose text and inputs are unchanged"},
+			{"--dry-run", "show which cells would run, without running them"},
+			{"--yes, -y", "run cells that can change things (shell stages, tasks that ask) without asking"},
+			{"--model ID", "use this model for every capability it provides"},
+			{"--profile P", "use this profile for this run"},
+		},
+		notes: []string{
+			"A cell is a ```mote fence holding a task or a pipeline, as `mote pipe` takes it; ```mote as=NAME keeps its output for later cells as {{NAME}}. Values are filled into arguments, never into `sh:` stages.",
+			"The output goes in an output fence right below the cell. Its key fingerprints the cell and what it read, so a rerun skips cells that have nothing new to compute.",
+		},
+		examples: []string{
+			"mote nb run notes.mote.md",
+			"mote nb run notes.mote.md --dry-run",
+			"mote nb run notes.mote.md -o - --force",
+		},
+	},
 	"do": {
 		summary: "Pick the task that fits a request written in plain words, and run it.",
 		usage:   []string{`mote do "REQUEST" [-o FILE] [--model ID] [--profile P] [--router text|embed] [--plan [--trace]] [--dry-run] [--apply] [--continue] [--recall] [--yes|-y]`},

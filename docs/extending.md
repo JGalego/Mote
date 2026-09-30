@@ -10,6 +10,7 @@ internal/runtime      downloads, archive extraction, llama.cpp backend
 internal/task         tasks.json pipelines and the ops they use
 internal/bench        local benchmark cases, results, tuning proposals
 internal/memory       facts, history and search over past exchanges
+internal/motebook     reads and re-renders notebooks: cells, outputs, cache keys
 internal/mcp          a client for local MCP servers (stdio JSON-RPC)
 internal/sandbox      runs the agent's shell commands under bwrap or sandbox-exec
 internal/serve        the resident server: keeps models loaded, OpenAI API

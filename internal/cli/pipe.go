@@ -32,6 +32,13 @@ type stage struct {
 	shell string   // command line after '!', empty for a task stage
 	id    string   // task id
 	args  []string // arguments as written, before substitution
+
+	// expand, when set, rewrites every argument once the piped value has been
+	// placed in it. A notebook uses it to fill in {{name}}: doing that here
+	// rather than in the text keeps a value containing | or a quote from
+	// changing the pipeline, and a {} inside it from being taken for the
+	// piped value.
+	expand func(string) string
 }
 
 const pipeMarker = "{}"
@@ -388,6 +395,13 @@ func (a *app) chain(ctx context.Context, stages []stage, found []task.Task, vals
 		}
 		var texts, files []string
 		for _, stageArgs := range runs {
+			if s.expand != nil {
+				expanded := make([]string, len(stageArgs))
+				for j, arg := range stageArgs {
+					expanded[j] = s.expand(arg)
+				}
+				stageArgs = expanded
+			}
 			r, err := t.Run(ctx, env, stageArgs, opt)
 			if err != nil {
 				return chained{}, fmt.Errorf("stage %d (%s): %w", i+1, t.ID, err)

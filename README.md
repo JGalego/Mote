@@ -42,6 +42,7 @@ mote runs X-to-Y AI tasks (text, code, images, audio, video, files) on your CPU 
   - [convert](#convert---)
   - [patch](#patch---)
   - [chained](#chained-)
+  - [motebooks](#motebooks-)
   - [chosen](#chosen-)
   - [agent](#agent-)
   - [spoken](#spoken-)
@@ -94,6 +95,7 @@ In a clone, `go install ./cmd/mote` does the same into `$(go env GOPATH)/bin`. `
 | `mote run TASK [ARGS...]` | Run a task, e.g. `mote run chat "Explain what a mutex is"`; `-o FILE` writes the output, `--model ID` overrides the model, `--apply` writes `patch` changes |
 | `mote chat [--system "..."]` | Talk with the text model; it sees the earlier turns. `/new` starts over, `/exit` or Ctrl-D ends, a line ending in `\` continues, Tab completes a `/command`. `--tools a,b\|all` lets it run mote tasks to answer, on the same think/act/observe loop as `mote agent`; off by default, and a task marked `"asks"` is confirmed before each call unless `--yes` |
 | `mote guide` | Ask the text model about mote itself: which command or task fits a goal, or whether one task's output can feed another's input |
+| `mote nb run FILE [-o FILE\|-] [--force] [--dry-run] [--yes]` | Run a motebook: a Markdown file whose `mote` cells are tasks or pipelines, with each output written into the file under its cell |
 | `mote pipe "A \| B \| sh: cmd"` | Chain tasks in one process, each stage receiving the last one's value: `{}` or `-` places it, `sh:` runs a shell command, `--trace` shows each step |
 | `mote do "REQUEST"` | Pick the task that fits a request written in plain words and run it; `--router embed` chooses with the encoder, `--plan` writes a pipeline of several tasks, `--dry-run` shows the choice |
 | `mote agent "GOAL"` | Work towards a goal in steps, calling tasks and local tools and reading what they return; `--tools` picks them, `--allow-sh` offers the shell |
@@ -270,6 +272,34 @@ mote pipe --trace "frames clip.mp4 3 | describe | sh: tee notes.txt"
 ```
 
 Each stage gets the previous value as `{}`, `-` or its first missing argument; several files run the stage once per file. `sh:` pipes the value into a shell command. `!` also works, but bash and zsh expand it inside double quotes. Only the last stage prints; `--trace` shows the others.
+
+### motebooks 📓
+
+`mote nb run FILE` — Run a Markdown file whose cells are tasks, and keep each output right under its cell.
+
+````markdown
+# Meeting
+
+```mote as=transcript
+transcribe meeting.m4a
+```
+
+```mote
+chat "Summarise in 3 bullets: {{transcript}}"
+```
+````
+
+A cell is a `mote` fence holding a task or a pipeline, written the way `mote pipe` takes it, so there is no `mote run` in front and `chat "what's the capital of France"` is a whole cell. Prose around the cells is left alone. `as=NAME` keeps a cell's output for the cells after it as `{{NAME}}`.
+
+```sh
+mote nb run meeting.mote.md            # runs the cells in order, saving after each one
+mote nb run meeting.mote.md --dry-run  # which cells would run
+mote nb run meeting.mote.md -o -       # print the result instead of rewriting the file
+```
+
+Each output goes into an `output` fence below its cell, the way Jupyter shows it. The fence's `key` fingerprints the cell and the values it read, so running the notebook again computes only the cells that changed or read something that did; `--force` computes them all. A cell that fails leaves the outputs before it in the file.
+
+A value is filled into a cell's arguments, so one that contains a `|`, a quote or a `{}` stays text. It cannot be filled into an `sh:` stage: pipe it in and use `{}`. Cells with an `sh:` stage, or a task that asks, run every time, and mote asks once before starting unless you pass `--yes`.
 
 ### chosen 🎯
 
