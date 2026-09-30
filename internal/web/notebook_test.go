@@ -324,23 +324,25 @@ func TestWatchTellsPagesAboutChangesMadeElsewhere(t *testing.T) {
 
 	before := notebook(t, st).Rev
 	future := time.Now().Add(time.Hour)
-	os.WriteFile(st.path, []byte("# Rewritten\n"), 0o644)
-	os.Chtimes(st.path, future, future)
+	// Each change is renamed into place with its time already set, so the
+	// watcher never sees a half-written file or the old time on new content.
+	replace := func(text string, mtime time.Time) {
+		t.Helper()
+		tmp := st.path + ".tmp"
+		if err := os.WriteFile(tmp, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		os.Chtimes(tmp, mtime, mtime)
+		if err := os.Rename(tmp, st.path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	replace("# Rewritten\n", future)
 	if e := next("a rewritten file"); e.Type != "changed" || e.Rev <= before {
 		t.Errorf("rewritten: %+v (was rev %d)", e, before)
 	}
-	// The watcher can see the write and then the new time separately, so let
-	// any second "changed" settle before the next step looks for a warning.
-	for settled := false; !settled; {
-		select {
-		case <-events:
-		case <-time.After(100 * time.Millisecond):
-			settled = true
-		}
-	}
 	// A file that cannot be read is said so once, and again when it can.
-	os.WriteFile(st.path, []byte("```mote\nchat {{nope}}\n```\n"), 0o644)
-	os.Chtimes(st.path, future.Add(time.Hour), future.Add(time.Hour))
+	replace("```mote\nchat {{nope}}\n```\n", future.Add(time.Hour))
 	if e := next("an unreadable file"); e.Type != "warning" || !strings.Contains(e.Message, "cannot be read") {
 		t.Errorf("unreadable: %+v", e)
 	}
@@ -349,8 +351,7 @@ func TestWatchTellsPagesAboutChangesMadeElsewhere(t *testing.T) {
 		t.Errorf("the same warning was said again: %+v", e)
 	case <-time.After(150 * time.Millisecond):
 	}
-	os.WriteFile(st.path, []byte("# Fixed\n"), 0o644)
-	os.Chtimes(st.path, future.Add(2*time.Hour), future.Add(2*time.Hour))
+	replace("# Fixed\n", future.Add(2*time.Hour))
 	got := map[string]event{}
 	for len(got) < 2 {
 		e := next("a file that is readable again")
