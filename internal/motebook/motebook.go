@@ -198,6 +198,63 @@ func outputKey(t string) (string, error) {
 	return key, nil
 }
 
+// Append adds a cell at the end and returns its index. It refuses what Parse
+// would: an empty cell, a name that is malformed or already bound, a
+// reference to a name nothing binds, and, since it could not be told from
+// the end of the cell, a line of only ```.
+func (b *Book) Append(name, expr string) (int, error) {
+	expr = strings.TrimSpace(expr)
+	if expr == "" {
+		return 0, fmt.Errorf("empty cell")
+	}
+	if name != "" && !nameRe.MatchString(name) {
+		return 0, fmt.Errorf("%q is not a name; use letters, digits and _", name)
+	}
+	bound := map[string]int{}
+	for _, c := range b.Cells {
+		if c.Name != "" {
+			bound[c.Name] = c.Line
+		}
+	}
+	if line, dup := bound[name]; name != "" && dup {
+		return 0, fmt.Errorf("%q is already bound at line %d", name, line)
+	}
+	body := strings.Split(expr, "\n")
+	for _, l := range body {
+		if strings.TrimSpace(l) == "```" {
+			return 0, fmt.Errorf("a line of ``` would end the cell")
+		}
+	}
+	for _, r := range Refs(expr) {
+		if _, ok := bound[r]; !ok {
+			return 0, fmt.Errorf("{{%s}} is not bound by an earlier cell", r)
+		}
+	}
+
+	// The lines end with an empty one when the text ended with a newline;
+	// the new cell goes before it, set apart from what precedes by a blank.
+	lines := b.lines
+	if n := len(lines); n > 0 && lines[n-1] == "" {
+		lines = lines[:n-1]
+	}
+	if len(lines) > 0 {
+		lines = append(lines, "")
+	}
+	open := len(lines)
+	fence := "```mote"
+	if name != "" {
+		fence += " as=" + name
+	}
+	lines = append(append(append(lines, fence), body...), "```", "")
+	closeLine := len(lines) - 2
+	b.lines = lines
+	b.Cells = append(b.Cells, Cell{
+		Index: len(b.Cells), Line: open + 1, Name: name, Expr: expr, Refs: Refs(expr),
+		closeLine: closeLine, spanEnd: closeLine + 1,
+	})
+	return len(b.Cells) - 1, nil
+}
+
 // Set keeps o under the cell at index i, replacing what was there.
 func (b *Book) Set(i int, o Output) { b.Cells[i].Output = &o }
 

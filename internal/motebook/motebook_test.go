@@ -207,3 +207,70 @@ func TestOutputErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestAppendAddsCellsThatReadBackTheSame(t *testing.T) {
+	for name, start := range map[string]string{
+		"empty":                "",
+		"prose":                "# Notes\n",
+		"no trailing newline":  "# Notes",
+		"a cell with output":   "```mote as=a\nchat hi\n```\n\n```output key=k\nhello\n```\n",
+		"a cell without":       "```mote as=a\nchat hi\n```\n",
+		"prose after the cell": "```mote as=a\nchat hi\n```\n\ntrailing prose\n",
+	} {
+		b, err := Parse(start)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		before := len(b.Cells)
+		i, err := b.Append("z", "chat \"multi\nline\"")
+		if err != nil || i != before {
+			t.Fatalf("%s: Append = %d, %v", name, i, err)
+		}
+		b.Set(i, Output{Key: "kk", Text: "out"})
+		text := b.String()
+		if !strings.HasSuffix(text, "```\n\n```output key=kk\nout\n```\n") {
+			t.Errorf("%s: cell not last:\n%q", name, text)
+		}
+		if strings.Contains(text, "\n\n\n") {
+			t.Errorf("%s: doubled blank line:\n%q", name, text)
+		}
+		again, err := Parse(text)
+		if err != nil || len(again.Cells) != before+1 || again.String() != text {
+			t.Fatalf("%s: does not read back the same: %v\n%s", name, err, text)
+		}
+		got := again.Cells[i]
+		if got.Name != "z" || got.Expr != "chat \"multi\nline\"" || got.Output == nil || got.Output.Text != "out" || got.Line != b.Cells[i].Line {
+			t.Errorf("%s: cell %+v (line %d in the original)", name, got, b.Cells[i].Line)
+		}
+		// Old cells and their outputs are undisturbed.
+		for k := 0; k < before; k++ {
+			if again.Cells[k].Expr != b.Cells[k].Expr {
+				t.Errorf("%s: cell %d changed", name, k)
+			}
+		}
+	}
+}
+
+func TestAppendRefuses(t *testing.T) {
+	b, _ := Parse("```mote as=a\nchat hi\n```\n")
+	cases := []struct{ name, expr, want string }{
+		{"", "  \n", "empty cell"},
+		{"a-b", "chat x", "not a name"},
+		{"a", "chat x", `"a" is already bound at line 1`},
+		{"", "chat {{nope}}", "{{nope}} is not bound"},
+		{"", "chat \"x\n```\ny\"", "would end the cell"},
+	}
+	for _, c := range cases {
+		before := b.String()
+		if _, err := b.Append(c.name, c.expr); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("Append(%q, %q) = %v, want %q", c.name, c.expr, err, c.want)
+		}
+		if b.String() != before || len(b.Cells) != 1 {
+			t.Errorf("a refused Append changed the book")
+		}
+	}
+	// A name earlier cells bind may be read.
+	if _, err := b.Append("", "chat {{a}}"); err != nil {
+		t.Errorf("reading a bound name: %v", err)
+	}
+}
