@@ -94,7 +94,7 @@ func (e *editorInput) resume() {}
 func (e *editorInput) err() error { return nil }
 
 // consoleCommands are the /commands of a console session, as Tab offers them.
-var consoleCommands = []string{"/help", "/?", "/tasks", "/examples", "/cells", "/vars", "/undo", "/save ", "/exit", "/quit", "/bye"}
+var consoleCommands = []string{"/help", "/?", "/tasks", "/examples", "/cells", "/vars", "/note ", "/embed ", "/undo", "/save ", "/exit", "/quit", "/bye"}
 
 // consoleExamples are cells to try, shown by /examples.
 var consoleExamples = []string{
@@ -173,6 +173,18 @@ func (s *nbSession) complete(line []rune, pos int) (int, []string) {
 	runes := func(byteIdx int) int { return utf8.RuneCountInString(before[:byteIdx]) }
 
 	if strings.HasPrefix(before, "/") {
+		// After a command that takes a file, complete the file.
+		if i := strings.IndexAny(before, " \t"); i > 0 {
+			if cmd := before[:i]; cmd != "/embed" && cmd != "/save" {
+				return 0, nil
+			}
+			ws := strings.LastIndexAny(before, " \t\"'") + 1
+			if word := before[ws:]; word != "" {
+				quoted := before[ws-1] == '"' || before[ws-1] == '\''
+				return runes(ws), completePath(word, quoted)
+			}
+			return 0, nil
+		}
 		return slashCompleter(consoleCommands)(line, pos)
 	}
 	if i := strings.LastIndex(before, "{{"); i >= 0 && !strings.Contains(before[i:], "}}") {

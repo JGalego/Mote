@@ -36,7 +36,7 @@ func TestConsoleCompletesCommands(t *testing.T) {
 	for line, want := range map[string]string{
 		"/ta":    "/tasks",
 		"/s":     "/save ",
-		"/e":     "/examples|/exit",
+		"/e":     "/examples|/embed |/exit",
 		"/zzz":   "",
 		"/save ": "",
 	} {

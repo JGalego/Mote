@@ -31,7 +31,8 @@ const nbConsoleHelp = `Type a cell and press Enter to run it; a line ending in \
   city = chat "capital of France"                keep the output as {{city}} for later cells
 Tab completes commands, tasks, {{names}} and file names; the arrow keys move and recall earlier cells.
   /tasks  what a cell can run   /examples  cells to try   /vars  what you have bound   /cells  what you have run
-  /undo  drop the last cell   /save FILE  keep them in a file   /help  this   /exit  or Ctrl-D
+  /note TEXT  add a paragraph of text   /embed FILE  add an image, audio or video to the notebook
+  /undo  drop the last thing added   /save FILE  keep them in a file   /help  this   /exit  or Ctrl-D
 With no file the cells live in memory; on exit you are asked whether to save them.`
 
 // valuesOf reads back what a notebook's cells have bound.
@@ -78,7 +79,13 @@ type nbSession struct {
 	vals   map[string]string
 	yes    bool
 	in     nbInput
-	undo   []string // the notebook as it was before each cell added here
+	undo   []undoStep // what was added here, latest last
+}
+
+// undoStep is what it takes to take back one thing added to the notebook.
+type undoStep struct {
+	before string // the notebook as it was
+	label  string // what was added, in words: "cell 3", "a note"
 }
 
 func (a *app) nbConsole(ctx context.Context, path string, vals map[string]string) error {
@@ -146,6 +153,10 @@ func (a *app) nbConsole(ctx context.Context, path string, vals map[string]string
 		case line == "/help" || line == "/?":
 			fmt.Fprintln(a.err, a.colourCommands(nbConsoleHelp))
 			continue
+		case line == "/note" || strings.HasPrefix(line, "/note "):
+			err = s.note(strings.TrimPrefix(line, "/note"))
+		case line == "/embed" || strings.HasPrefix(line, "/embed "):
+			err = s.embed(strings.TrimPrefix(line, "/embed"))
 		case line == "/tasks":
 			s.listTasks()
 			continue
@@ -260,7 +271,7 @@ func (s *nbSession) save(path string) error {
 		return err
 	}
 	s.path = path
-	fmt.Fprintf(s.a.err, "%s saved %s in %s\n", s.a.ue.OK(), cellCount(len(s.book.Cells)), path)
+	fmt.Fprintf(s.a.err, "%s saved %s in %s\n", s.a.ue.OK(), contents(len(s.book.Cells)), path)
 	return nil
 }
 
@@ -268,18 +279,23 @@ func (s *nbSession) save(path string) error {
 // if saveTo says where, or if you say where when asked; without a terminal
 // to ask at, it says what is being dropped rather than dropping it quietly.
 func (s *nbSession) finish(saveTo string) error {
-	n := len(s.book.Cells)
-	if s.path != "" || n == 0 {
+	// A session that lives in memory holds exactly what was added to it.
+	if s.path != "" || strings.TrimSpace(s.book.String()) == "" {
 		return nil
 	}
+	n := len(s.book.Cells)
 	if saveTo != "" {
 		return s.save(saveTo)
 	}
 	if !s.a.tty {
-		fmt.Fprintf(s.a.err, "%s %s not saved; pass -o FILE to keep them\n", s.a.ue.Warn(), cellCount(n))
+		fmt.Fprintf(s.a.err, "%s %s not saved; pass -o FILE to keep them\n", s.a.ue.Warn(), contents(n))
 		return nil
 	}
-	if !s.ask(fmt.Sprintf("save the %s you ran to a file? [y/N] ", cellCount(n))) {
+	question := fmt.Sprintf("save the %s you ran to a file? [y/N] ", cellCount(n))
+	if n == 0 {
+		question = "save your notes to a file? [y/N] "
+	}
+	if !s.ask(question) {
 		return nil
 	}
 	for {
@@ -297,6 +313,14 @@ func (s *nbSession) finish(saveTo string) error {
 		// Say why and ask again: the work is only in memory.
 		fmt.Fprintf(s.a.err, "%s %v\n", s.a.ue.Fail(), err)
 	}
+}
+
+// contents says what a notebook holds, for a message about saving it.
+func contents(cells int) string {
+	if cells == 0 {
+		return "your notes"
+	}
+	return cellCount(cells)
 }
 
 // answer asks a question and returns the reply, "n" if there is none: an
@@ -317,18 +341,67 @@ func (s *nbSession) ask(prompt string) bool {
 
 func (s *nbSession) undoLast() error {
 	if len(s.undo) == 0 {
-		return errors.New("nothing to undo; only cells added in this session can be dropped")
+		return errors.New("nothing to undo; only what was added in this session can be dropped")
 	}
-	n := len(s.book.Cells)
-	if err := s.restore(s.undo[len(s.undo)-1]); err != nil {
+	step := s.undo[len(s.undo)-1]
+	if err := s.restore(step.before); err != nil {
 		return err
 	}
 	s.undo = s.undo[:len(s.undo)-1]
 	if err := s.flush(); err != nil {
 		return err
 	}
-	fmt.Fprintf(s.a.err, "%s dropped cell %d\n", s.a.ue.OK(), n)
+	fmt.Fprintf(s.a.err, "%s dropped %s\n", s.a.ue.OK(), step.label)
 	return nil
+}
+
+// addProse puts a paragraph of Markdown in the notebook. label says what it
+// is, for the messages about it.
+func (s *nbSession) addProse(text, label string) error {
+	before := s.book.String()
+	if err := s.book.AppendProse(text); err != nil {
+		return err
+	}
+	if err := s.flush(); err != nil {
+		if rerr := s.restore(before); rerr != nil {
+			return rerr
+		}
+		return err
+	}
+	s.undo = append(s.undo, undoStep{before, label})
+	fmt.Fprintf(s.a.err, "%s added %s\n", s.a.ue.OK(), label)
+	return nil
+}
+
+// note adds text.
+func (s *nbSession) note(text string) error {
+	if strings.TrimSpace(text) == "" {
+		return errors.New("usage: /note TEXT")
+	}
+	return s.addProse(text, "a note")
+}
+
+// embed adds the files it is given, each shown the way its kind is: an image
+// as an image, audio and video with the controls of a player.
+func (s *nbSession) embed(args string) error {
+	files, err := splitArgs(args)
+	if err != nil {
+		return err
+	}
+	if len(files) == 0 {
+		return errors.New("usage: /embed FILE...")
+	}
+	marks := make([]string, len(files))
+	for i, f := range files {
+		if marks[i], err = embedMarkup(s.embedPath(f), f); err != nil {
+			return err
+		}
+		if err := checkEmbeddable(f); err != nil {
+			return err
+		}
+	}
+	label := "an embed of " + strings.Join(files, ", ")
+	return s.addProse(strings.Join(marks, "\n\n"), label)
 }
 
 // run adds a cell, runs it and prints what it produced. A cell that cannot
@@ -380,7 +453,7 @@ func (s *nbSession) run(ctx context.Context, line string) error {
 	if err := s.flush(); err != nil {
 		return fail(err)
 	}
-	s.undo = append(s.undo, before)
+	s.undo = append(s.undo, undoStep{before, fmt.Sprintf("cell %d", idx+1)})
 	if name != "" {
 		s.values[name] = out.Text
 	}
