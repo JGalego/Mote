@@ -84,5 +84,40 @@ func TestTreeDoesNotHangOnAPipeAnEscapedProcessHolds(t *testing.T) {
 	if took := time.Since(start); took > 8*time.Second {
 		t.Errorf("waited %v", took)
 	}
-	exec.Command("pkill", "-x", "-f", "sleep 30").Run()
+}
+
+func TestTreeLeavesTheCommandInThisProcessGroup(t *testing.T) {
+	// A command in a group of its own is a background job to the terminal: it
+	// stops when it reads /dev/tty, and is not hung up with it.
+	cmd := exec.CommandContext(context.Background(), "/bin/sh", "-c", "sleep 30")
+	Tree(cmd)
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { cmd.Process.Kill(); cmd.Wait() }()
+	child, err := syscall.Getpgid(cmd.Process.Pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if child != syscall.Getpgrp() {
+		t.Errorf("the command is in process group %d, not this one (%d)", child, syscall.Getpgrp())
+	}
+}
+
+func TestDescendantsFindsGrandchildren(t *testing.T) {
+	cmd := exec.Command("/bin/sh", "-c", "sh -c 'sleep 30 & wait' & wait")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { killTree(cmd.Process.Pid); cmd.Wait() }()
+	var tree []int
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline) && len(tree) < 2; time.Sleep(20 * time.Millisecond) {
+		tree = descendants(cmd.Process.Pid)
+	}
+	if len(tree) < 2 {
+		t.Fatalf("descendants %v, want the inner shell and its sleep", tree)
+	}
+	if p := parents(); p[tree[1]] != tree[0] {
+		t.Errorf("not listed parents first: %v (parent of %d is %d)", tree, tree[1], p[tree[1]])
+	}
 }
