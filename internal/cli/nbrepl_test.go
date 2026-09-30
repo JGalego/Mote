@@ -460,3 +460,26 @@ func TestNbRunCellsAreNotSpinnersOverTheirTasks(t *testing.T) {
 		t.Errorf("cells are not reported:\n%q", got)
 	}
 }
+
+func TestConsoleCellsDoNotReadTheConsolesInput(t *testing.T) {
+	e, path := nbSessionEnv(t)
+	// A cell whose argument is "-" gets the text "-", not what is typed after it.
+	code, out, errs := e.mote("chat -\n/note hi\n/cells\n", "nb", "console", path)
+	if code != 0 {
+		t.Fatalf("console: %d %s", code, errs)
+	}
+	if !strings.Contains(out, "echo: -\n") || !strings.Contains(errs, "added a note") || !strings.Contains(out, "1  chat -") {
+		t.Errorf("the cell read the session's input:\nout: %s\nerr: %s", out, errs)
+	}
+}
+
+func TestNbRunCellsDoNotReadStandardInput(t *testing.T) {
+	e, path := nbSessionEnv(t)
+	os.WriteFile(path, []byte("```mote\nchat -\n```\n"), 0o644)
+	if code, _, errs := e.mote("secret from stdin\n", "nb", "run", path); code != 0 {
+		t.Fatalf("nb run: %d %s", code, errs)
+	}
+	if got := readFile(t, path); strings.Contains(got, "secret") || !strings.Contains(got, "echo: -") {
+		t.Errorf("the cell read standard input:\n%s", got)
+	}
+}

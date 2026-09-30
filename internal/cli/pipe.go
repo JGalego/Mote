@@ -324,9 +324,12 @@ type chained struct {
 }
 
 // chain runs resolved stages in order, each receiving the value of the one
-// before. With stream the last stage shows its output as it is produced;
-// without, the result is only returned, for callers that keep it. out is a
-// file the last stage writes its result to.
+// before. With stream the last stage shows its output as it is produced,
+// and a task given "-" reads standard input, as a command typed in a shell
+// would; without, the result is only returned, for callers that keep it, and
+// "-" is text: a notebook cell must not read the input its session is typed
+// on, or the terminal a server was started from. out is a file the last stage
+// writes its result to.
 func (a *app) chain(ctx context.Context, stages []stage, found []task.Task, vals map[string]string,
 	profile string, sessions map[string]mrt.Session, remembered, out string, stream bool) (chained, error) {
 	last := len(stages) - 1
@@ -376,6 +379,9 @@ func (a *app) chain(ctx context.Context, stages []stage, found []task.Task, vals
 		}
 		env := a.env(profile, sessions)
 		env.Memory = remembered
+		if !stream {
+			env.Stdin = nil
+		}
 		var code *ui.CodeStream
 		if i == last && stream {
 			if out == "" && (t.Out == "code" || t.Out == "data") {
