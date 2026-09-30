@@ -71,6 +71,22 @@ STATE_PREFIX = "mote-kernel-"
 
 def alive(pid):
     """Whether a process is running, as far as can be told."""
+    if os.name == "nt":
+        # Not os.kill(pid, 0): on Windows signal 0 is CTRL_C_EVENT, which
+        # interrupts every process on the console, this one included.
+        import ctypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            return ctypes.get_last_error() == 5  # access denied: it exists, and is someone else's
+        try:
+            code = ctypes.c_ulong()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return True
+            return code.value == 259  # STILL_ACTIVE
+        finally:
+            kernel32.CloseHandle(handle)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:

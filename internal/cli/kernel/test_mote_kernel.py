@@ -99,6 +99,10 @@ class State(unittest.TestCase):
             for d in (mine, other, odd):
                 self.assertTrue(os.path.exists(d), d)
 
+    def test_alive(self):
+        self.assertTrue(mote_kernel.alive(os.getpid()))
+        self.assertFalse(mote_kernel.alive(999999999))
+
     def test_sweep_of_a_folder_that_is_not_there(self):
         mote_kernel.sweep_state("/nonexistent/for/sure")
 
