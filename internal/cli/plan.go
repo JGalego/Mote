@@ -244,6 +244,12 @@ func checkStages(p plan, tasks []task.Task, ctx planContext) ([]stage, []task.Ta
 				if (kind == "file" || kind == "dir") && producesText(from) {
 					return nil, nil, fmt.Errorf("stage %d: %s needs a %s, but {{%s}} is %s", i+1, t.ID, kind, name, from.Out)
 				}
+				// Several files are one value, one path per line: fine for a
+				// task that reads text, not for one that opens a file. A
+				// pipeline runs the next stage once for each of them.
+				if (kind == "file" || kind == "dir") && from.Out == "images" {
+					return nil, nil, fmt.Errorf("stage %d: %s needs one %s, but {{%s}} is several; pipe them into it with | %s {} in the cell that makes them", i+1, t.ID, kind, name, t.ID)
+				}
 				named = true
 			}
 			if !usesPipe(arg) {

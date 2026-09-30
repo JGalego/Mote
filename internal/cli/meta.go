@@ -126,7 +126,11 @@ func metaRevisePrompt(goal string, tasks []task.Task, files []string, current me
 // plainLine reduces text a model wrote to one line that cannot open a code
 // fence or otherwise change the shape of the Markdown around it.
 func plainLine(s string) string {
-	return strings.Join(strings.Fields(strings.ReplaceAll(s, "`", "'")), " ")
+	line := strings.Join(strings.Fields(strings.ReplaceAll(s, "`", "'")), " ")
+	if strings.HasPrefix(line, "~~~") {
+		line = `\` + line // a line that starts so is a fence; escaped, it is tildes
+	}
+	return line
 }
 
 func sameArgs(a, b []string) bool {

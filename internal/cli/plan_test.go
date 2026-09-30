@@ -388,8 +388,8 @@ func TestCheckStagesForANotebookCell(t *testing.T) {
 	os.WriteFile(video, nil, 0o644)
 	st := func(id string, args ...string) planStage { return planStage{Task: id, Args: args} }
 	chat, _ := task.Find(tasks, "chat")
-	frames, _ := task.Find(tasks, "frames")
-	ctx := planContext{notebook: true, earlier: map[string]task.Task{"step1": chat, "step2": frames}}
+	draw, _ := task.Find(tasks, "draw") // one image
+	ctx := planContext{notebook: true, earlier: map[string]task.Task{"step1": chat, "step2": draw}}
 
 	// A text argument may read an earlier cell, alone or inside a sentence.
 	stages, _, err := checkStages(plan{First: st("chat", "Shorten: {{step1}}")}, tasks, ctx)

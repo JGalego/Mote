@@ -429,3 +429,38 @@ func TestMetaChatNeedsATerminal(t *testing.T) {
 		t.Errorf("--chat without a terminal: %d %s", code, errs)
 	}
 }
+
+func TestBuildNotebookRefusesSeveralFilesWhereOneIsNeeded(t *testing.T) {
+	tasks := metaTasks(builtins(t))
+	dir := t.TempDir()
+	video := filepath.Join(dir, "clip.mp4")
+	os.WriteFile(video, nil, 0o644)
+	np := metaPlan{Cells: []metaCell{
+		cell("", stg("frames", video, "4")),
+		cell("", stg("describe", "{{step1}}")),
+	}}
+	if _, err := buildNotebook("goal", np, tasks); err == nil || !strings.Contains(err.Error(), "is several") {
+		t.Errorf("%v", err)
+	}
+	// Read as text, several paths are fine.
+	np.Cells[1] = cell("", stg("chat", "list these: {{step1}}"))
+	if _, err := buildNotebook("goal", np, tasks); err != nil {
+		t.Errorf("as text: %v", err)
+	}
+}
+
+func TestPlainLineCannotOpenAFence(t *testing.T) {
+	for in, want := range map[string]string{
+		"~~~ tilde note": `\~~~ tilde note`,
+		"```code":        "'''code",
+		"a ~~~ b":        "a ~~~ b",
+	} {
+		if got := plainLine(in); got != want {
+			t.Errorf("plainLine(%q) = %q, want %q", in, got, want)
+		}
+	}
+	np := metaPlan{Cells: []metaCell{cell("~~~ tilde note", stg("chat", "hi"))}}
+	if _, err := buildNotebook("goal", np, metaTasks(builtins(t))); err != nil {
+		t.Errorf("a note starting with tildes: %v", err)
+	}
+}
