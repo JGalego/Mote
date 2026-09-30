@@ -3,10 +3,13 @@
 // The notebook belongs to the server. This page holds only what has not been
 // saved yet (drafts), what is running, and what went wrong.
 let nb = null;                // the notebook as the server last sent it
-const drafts = new Map();     // cell index -> {name, expr}: typed, not yet saved
-const errors = new Map();     // cell index -> what its last run said
-let editing = null;           // index of the text being edited
-let pending = null;           // {index, type}: being added, not yet in the notebook
+// What is typed but not saved, and what went wrong, is kept for a segment by
+// its index, with the segment as it was (base) so that it can follow the
+// segment when the notebook changes under it.
+const drafts = new Map();     // cell index -> {name, expr, base: {name, expr}}
+const errors = new Map();     // cell index -> {msg, base: {name, expr}}
+let editing = null;           // {index, base, text}: the text being edited
+let pending = null;           // {index, type, name, expr}: being added, not yet in the notebook
 let busy = null;              // {index, controller, message} while a cell runs
 let connected = false;
 let warned = false;           // the notice on show is about the file on disk
@@ -53,13 +56,54 @@ function say(message) {
   n.hidden = !message;
 }
 
+// find is where a segment that was at i is now: still at i, or the one place
+// that matches it, or -1 if it cannot be told.
+function find(i, same) {
+  if (nb.segments[i] && same(nb.segments[i])) return i;
+  const at = [];
+  nb.segments.forEach((s, j) => { if (same(s)) at.push(j); });
+  return at.length === 1 ? at[0] : -1;
+}
+
+const sameCell = (base) => (s) => s.type === 'cell' && s.name === base.name && s.expr === base.expr;
+
+// setNotebook shows a new version of the notebook, keeping what was typed into
+// it where the segment it was typed into has gone. What cannot follow its
+// segment, because that changed elsewhere, is dropped, and said so.
+function setNotebook(next) {
+  nb = next;
+  const lost = [];
+  for (const map of [drafts, errors]) {
+    const kept = new Map();
+    for (const [i, v] of map) {
+      const j = find(i, sameCell(v.base));
+      if (j >= 0) kept.set(j, v);
+      else if (map === drafts) lost.push('cell ' + (i + 1));
+    }
+    map.clear();
+    kept.forEach((v, j) => map.set(j, v));
+  }
+  if (editing) {
+    const j = find(editing.index, (s) => s.type === 'prose' && s.markdown === editing.base);
+    if (j >= 0) editing.index = j;
+    else { lost.push('the text you were editing'); editing = null; }
+  }
+  if (pending) pending.index = Math.min(pending.index, nb.segments.length);
+  if (lost.length) say('The notebook changed elsewhere, and what you typed into ' + lost.join(', ') + ' was not kept, since that changed too.');
+}
+
+function setError(i, msg) {
+  const seg = nb.segments[i] || {};
+  errors.set(i, { msg, base: { name: seg.name, expr: seg.expr } });
+}
+
 async function load() {
   const r = await api('GET', '/api/notebook');
   if (r.status !== 200) {
     say(r.data.error || 'The notebook could not be loaded (status ' + r.status + ').');
     return;
   }
-  nb = r.data;
+  setNotebook(r.data);
   if (nb.warning) { say(nb.warning); warned = true; }
   else if (warned) { say(''); warned = false; }
   render();
@@ -146,7 +190,7 @@ function slot(i, last) {
 }
 
 function startAdding(i, type) {
-  pending = { index: i, type };
+  pending = { index: i, type, name: '', expr: '' };
   focusRequest = { seg: 'new', field: 'expr' };
   render();
 }
@@ -157,10 +201,19 @@ function pendingEditor() {
     if (e.key === 'Escape') { pending = null; render(); }
     else if (isCell && e.key === 'Enter' && (e.shiftKey || e.ctrlKey || e.metaKey)) { e.preventDefault(); add(true); }
   };
-  const expr = isCell
-    ? codeEditor({ 'data-field': 'expr', placeholder: 'chat "what is the capital of France"', 'aria-label': 'The new cell', onkeydown }, '').el
-    : h('textarea', { class: 'text', rows: 4, 'data-field': 'expr', placeholder: 'Some text, in Markdown', 'aria-label': 'The new text', onkeydown });
-  const name = isCell ? h('input', { class: 'name', placeholder: 'name', 'data-field': 'name', 'aria-label': 'Name for its output' }) : null;
+  // What is typed is kept in pending, so a page drawn again meanwhile, when a
+  // cell finishes say, shows it still.
+  let expr;
+  if (isCell) {
+    const ed = codeEditor({ 'data-field': 'expr', placeholder: 'chat "what is the capital of France"', 'aria-label': 'The new cell', onkeydown },
+      pending.expr, () => { pending.expr = ed.ta.value; });
+    expr = ed.el;
+  } else {
+    expr = h('textarea', { class: 'text', rows: 4, 'data-field': 'expr', value: pending.expr, placeholder: 'Some text, in Markdown',
+      'aria-label': 'The new text', onkeydown, oninput: (e) => { pending.expr = e.target.value; } });
+  }
+  const name = isCell ? h('input', { class: 'name', placeholder: 'name', 'data-field': 'name', value: pending.name,
+    'aria-label': 'Name for its output', oninput: (e) => { pending.name = e.target.value; } }) : null;
   return h('div', { class: 'seg pending', 'data-seg': 'new' },
     isCell ? h('div', { class: 'cell-bar' }, h('span', { class: 'prompt', text: 'new cell' }), name) : null,
     expr,
@@ -171,10 +224,11 @@ function pendingEditor() {
 }
 
 function proseView(seg, i) {
-  if (editing === i) {
+  if (editing && editing.index === i) {
     const ta = h('textarea', {
-      class: 'text', 'data-field': 'expr', value: seg.markdown, rows: Math.max(4, seg.markdown.split('\n').length + 1),
+      class: 'text', 'data-field': 'expr', value: editing.text, rows: Math.max(4, editing.text.split('\n').length + 1),
       'aria-label': 'The text, in Markdown',
+      oninput: () => { editing.text = ta.value; },
       onkeydown: (e) => {
         if (e.key === 'Escape') { editing = null; render(); }
         else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); saveProse(i, ta.value); }
@@ -188,7 +242,7 @@ function proseView(seg, i) {
   const body = h('div', { class: 'prose' });
   body.innerHTML = seg.html; // rendered by the server, which drops anything that could run
   return h('section', { class: 'seg', 'data-seg': i }, body, tools(i, [
-    h('button', { type: 'button', class: 'icon', text: 'Edit', onclick: () => { editing = i; focusRequest = { seg: String(i), field: 'expr' }; render(); } }),
+    h('button', { type: 'button', class: 'icon', text: 'Edit', onclick: () => { editing = { index: i, base: seg.markdown, text: seg.markdown }; focusRequest = { seg: String(i), field: 'expr' }; render(); } }),
   ], 'text'));
 }
 
@@ -237,14 +291,14 @@ function draftChanged(i, seg) {
   const name = el.querySelector('[data-field="name"]').value;
   const expr = el.querySelector('[data-field="expr"]').value;
   if (name === seg.name && expr === seg.expr) drafts.delete(i);
-  else drafts.set(i, { name, expr });
+  else drafts.set(i, { name, expr, base: { name: seg.name, expr: seg.expr } });
   const badge = el.querySelector('.badge');
   badge.textContent = drafts.has(i) ? 'edited' : stateText[seg.state] || seg.state;
 }
 
 function outputView(seg, i) {
   const err = errors.get(i);
-  if (err) return h('div', { class: 'output error', role: 'alert' }, h('pre', { text: err }));
+  if (err) return h('div', { class: 'output error', role: 'alert' }, h('pre', { text: err.msg }));
   const out = seg.output;
   if (!out) return null;
   const media = (out.media || []).map((m) => {
@@ -264,14 +318,12 @@ function outputView(seg, i) {
 async function change(req) {
   const r = await api('POST', '/api/edit', { rev: nb.rev, ...req });
   if (r.status === 200) {
-    nb = r.data;
+    setNotebook(r.data);
     return true;
   }
   if (r.status === 409 && r.data.notebook) {
-    nb = r.data.notebook;
     say('The notebook changed elsewhere, so this page now shows the current version. Try again.');
-    drafts.clear();
-    errors.clear();
+    setNotebook(r.data.notebook);
     render();
     return false;
   }
@@ -283,8 +335,15 @@ async function change(req) {
 // deleted is what is on the screen.
 async function commit() {
   for (const [i, d] of [...drafts.entries()]) {
-    if (!(await change({ op: 'set_cell', index: i, name: d.name, expr: d.expr }))) return false;
+    // Out of the drafts while it is saved: once saved, the cell no longer
+    // matches what the draft was typed into, and is not a draft lost.
     drafts.delete(i);
+    if (!(await change({ op: 'set_cell', index: i, name: d.name, expr: d.expr }))) {
+      const j = find(i, sameCell(d.base));
+      if (j >= 0) drafts.set(j, d);
+      render();
+      return false;
+    }
     errors.delete(i);
   }
   return true;
@@ -292,22 +351,21 @@ async function commit() {
 
 async function add(andRun) {
   const p = pending;
-  const el = root.querySelector('[data-seg="new"]');
-  const expr = el.querySelector('[data-field="expr"]').value;
-  const nameEl = el.querySelector('[data-field="name"]');
+  const expr = p.expr;
   if (!expr.trim()) { say('There is nothing to add yet.'); return; }
   if (!(await commit())) return;
   errors.clear();
   const ok = await change(p.type === 'cell'
-    ? { op: 'insert', index: p.index, type: 'cell', name: nameEl ? nameEl.value.trim() : '', expr }
+    ? { op: 'insert', index: p.index, type: 'cell', name: p.name.trim(), expr }
     : { op: 'insert', index: p.index, type: 'prose', markdown: expr });
   if (!ok) return;
   pending = null;
   render();
-  if (andRun && p.type === 'cell') run(p.index, {});
+  if (andRun && p.type === 'cell') run(Math.min(p.index, nb.segments.length - 1), {});
 }
 
 async function saveProse(i, markdown) {
+  if (editing) i = editing.index; // where it is now, if the notebook moved it
   if (await change({ op: 'set_prose', index: i, markdown })) {
     editing = null;
     render();
@@ -339,22 +397,22 @@ async function run(i, opts) {
     let r = await api('POST', '/api/run', body, controller.signal);
     if (r.status === 409 && r.data.approval) {
       if (!confirm('This cell can change things on your machine. Run it?')) {
-        errors.set(i, 'Not run.');
+        setError(i, 'Not run.');
         return false;
       }
       r = await api('POST', '/api/run', { ...body, approve: true }, controller.signal);
     }
     if (r.status === 200) {
-      nb = r.data.notebook;
+      setNotebook(r.data.notebook);
       if (opts.next) focusRequest = nextCell(i);
     } else if (r.data.notebook) {
-      nb = r.data.notebook;
-      errors.set(i, r.data.error || 'The cell failed.');
+      setNotebook(r.data.notebook);
+      setError(i, r.data.error || 'The cell failed.');
     } else {
-      errors.set(i, r.data.error || 'The cell could not be run (status ' + r.status + ').');
+      setError(i, r.data.error || 'The cell could not be run (status ' + r.status + ').');
     }
   } catch (e) {
-    errors.set(i, e.name === 'AbortError' ? 'Stopped.' : 'Lost touch with the server: ' + e.message);
+    setError(i, e.name === 'AbortError' ? 'Stopped.' : 'Lost touch with the server: ' + e.message);
   } finally {
     busy = null;
     render();
@@ -403,7 +461,7 @@ function listen() {
 $('run-all').addEventListener('click', runAll);
 $('stop').addEventListener('click', () => { if (busy) busy.controller.abort(); });
 window.addEventListener('beforeunload', (e) => {
-  if (drafts.size || editing !== null || pending) e.preventDefault();
+  if (drafts.size || editing || (pending && pending.expr.trim())) e.preventDefault();
 });
 
 load().then(listen);
