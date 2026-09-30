@@ -21,7 +21,7 @@ import (
 // are unchanged since its output was written is not run again, and one that
 // binds a name with as=NAME hands its output to later cells as {{NAME}}.
 
-const nbUsage = "usage: mote nb run FILE [-o FILE|-] [--force] [--dry-run] [--yes] [--model ID] [--profile P]"
+const nbUsage = "usage: mote nb run FILE [-o FILE|-] [--force] [--dry-run] [--yes] [--model ID] [--profile P]\n       mote nb edit FILE [--yes] [--model ID] [--profile P]"
 
 // nbCell is a cell ready to run: parsed, with its tasks found.
 type nbCell struct {
@@ -39,10 +39,21 @@ func (a *app) nbCmd(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	if len(pos) != 2 || pos[0] != "run" {
+	if len(pos) != 2 {
 		return usagef("%s", nbUsage)
 	}
-	return a.nbRun(ctx, pos[1], vals)
+	switch pos[0] {
+	case "run":
+		return a.nbRun(ctx, pos[1], vals)
+	case "edit":
+		for _, f := range []string{"-o", "--output", "--force", "--dry-run"} {
+			if vals[f] != "" {
+				return usagef("%s does not apply to `mote nb edit`; %s", f, "a session writes the notebook it was given")
+			}
+		}
+		return a.nbEdit(ctx, pos[1], vals)
+	}
+	return usagef("%s", nbUsage)
 }
 
 // prepareCells parses every cell and finds its tasks before anything runs,

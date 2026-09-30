@@ -246,10 +246,15 @@ func (a *app) chatCmd(ctx context.Context, args []string) error {
 
 // readTurn reads one turn, joining lines that end in a backslash.
 func (a *app) readTurn(sc *bufio.Scanner, live bool) (string, bool) {
+	return a.readTurnPrompt(sc, live, a.ue.Accent("› "))
+}
+
+// readTurnPrompt is readTurn with its own prompt for the first line.
+func (a *app) readTurnPrompt(sc *bufio.Scanner, live bool, first string) (string, bool) {
 	var parts []string
 	for {
 		if live {
-			prompt := a.ue.Accent("› ")
+			prompt := first
 			if len(parts) > 0 {
 				prompt = a.ue.Dim("… ")
 			}

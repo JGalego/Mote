@@ -153,15 +153,19 @@ var helpTopics = map[string]helpTopic{
 		},
 	},
 	"nb": {
-		summary: "Run a motebook: a Markdown file whose ```mote cells are tasks or pipelines, with each output written under its cell.",
-		usage:   []string{"mote nb run FILE [-o FILE|-] [--force] [--dry-run] [--yes|-y] [--model ID] [--profile P]"},
+		summary: "Run a motebook, or type into one: a Markdown file whose `mote` cells are tasks or pipelines, with each output kept under its cell.",
+		usage: []string{
+			"mote nb run FILE [-o FILE|-] [--force] [--dry-run] [--yes|-y] [--model ID] [--profile P]",
+			"mote nb edit FILE [--yes|-y] [--model ID] [--profile P]",
+		},
 		subs: []helpFlag{
 			{"run FILE", "run the cells in order, saving FILE after each one"},
+			{"edit FILE", "type cells one at a time: each runs as you enter it, its output printed below and kept in FILE"},
 		},
 		flags: []helpFlag{
-			{"-o, --output FILE", "write the notebook to FILE instead of FILE itself; - prints it"},
-			{"--force", "run every cell, even those whose text and inputs are unchanged"},
-			{"--dry-run", "show which cells would run, without running them"},
+			{"-o, --output FILE", "with run, write the notebook to FILE instead of FILE itself; - prints it"},
+			{"--force", "with run, run every cell, even those whose text and inputs are unchanged"},
+			{"--dry-run", "with run, show which cells would run, without running them"},
 			{"--yes, -y", "run cells that can change things (shell stages, tasks that ask) without asking"},
 			{"--model ID", "use this model for every capability it provides"},
 			{"--profile P", "use this profile for this run"},
@@ -169,11 +173,13 @@ var helpTopics = map[string]helpTopic{
 		notes: []string{
 			"A cell is a ```mote fence holding a task or a pipeline, as `mote pipe` takes it; ```mote as=NAME keeps its output for later cells as {{NAME}}. Values are filled into arguments, never into `sh:` stages.",
 			"The output goes in an output fence right below the cell. Its key fingerprints the cell and what it read, so a rerun skips cells that have nothing new to compute.",
+			"In `nb edit`, a line is a cell, `NAME = pipeline` binds its output, and a line ending in \\ continues. /cells lists them, /undo drops the last one added, /help and /exit do what they say. A cell that fails is not kept.",
 		},
 		examples: []string{
 			"mote nb run notes.mote.md",
 			"mote nb run notes.mote.md --dry-run",
 			"mote nb run notes.mote.md -o - --force",
+			"mote nb edit scratch.mote.md",
 		},
 	},
 	"meta": {

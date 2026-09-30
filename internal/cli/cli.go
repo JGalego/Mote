@@ -72,6 +72,7 @@ Usage:
   mote ask "QUESTION" [--in DIR] [--top N] [--sources]
   mote pipe "TASK ARGS | TASK ARGS | sh: COMMAND" [-o OUTPUT] [--trace] [--model ID]
   mote nb run FILE [-o FILE|-] [--force] [--dry-run] [--yes] [--model ID] [--profile P]
+  mote nb edit FILE [--yes] [--model ID] [--profile P]
   mote meta "GOAL" [-o FILE] [--run] [--force] [--yes] [--model ID] [--profile P]
   mote do "REQUEST" [-o OUTPUT] [--apply] [--dry-run] [--plan [--trace]] [--yes] [--model ID] [--profile P]
   mote agent "GOAL" [-o OUTPUT] [--tools a,b] [--mcp SERVER,...] [--steps N] [--allow-sh [--sandbox auto|on|off] [--sandbox-net]] [--yes] [--model ID]
