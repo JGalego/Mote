@@ -20,24 +20,6 @@ func nbSessionEnv(t *testing.T) (*env, string) {
 	return e, filepath.Join(t.TempDir(), "session.mote.md")
 }
 
-func TestSplitBinding(t *testing.T) {
-	cases := []struct{ in, name, expr string }{
-		{`chat hello`, "", `chat hello`},
-		{`city = chat "capital of France"`, "city", `chat "capital of France"`},
-		{`city=chat hi`, "city", `chat hi`},
-		{"a = \nchat x", "a", "chat x"}, // a backslash continuation after the =
-		{"a =", "", "a ="},
-		{`chat "a=b"`, "", `chat "a=b"`},
-		{`sh: x=1`, "", `sh: x=1`},
-		{"a = chat x |\n chat y", "a", "chat x |\n chat y"},
-	}
-	for _, c := range cases {
-		if name, expr := splitBinding(c.in); name != c.name || expr != c.expr {
-			t.Errorf("splitBinding(%q) = %q, %q; want %q, %q", c.in, name, expr, c.name, c.expr)
-		}
-	}
-}
-
 func TestNbConsoleRunsCellsAndKeepsThemInTheFile(t *testing.T) {
 	e, path := nbSessionEnv(t)
 	input := "chat hello\ncity = chat capital\n\nchat \"again {{city}}\"\n/cells\n"

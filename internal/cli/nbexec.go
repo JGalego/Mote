@@ -28,7 +28,7 @@ func (a *app) nbExec(ctx context.Context, vals map[string]string) error {
 	if err != nil {
 		return err
 	}
-	name, expr := splitBinding(strings.TrimSpace(string(src)))
+	name, expr := motebook.SplitBinding(strings.TrimSpace(string(src)))
 	if expr == "" {
 		return usagef("no cell: give it on standard input")
 	}

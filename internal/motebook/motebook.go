@@ -63,6 +63,20 @@ type Book struct {
 	lines []string
 }
 
+// bindingRe reads "name = pipeline". A task id or a shell stage never has an
+// = after its first word, so a cell cannot be taken for a binding.
+var bindingRe = regexp.MustCompile(`(?s)^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(\S.*)$`)
+
+// SplitBinding separates "name = pipeline", the way a cell is typed where
+// there is no as= to write, into its name and its pipeline. Anything else is
+// a pipeline with no name.
+func SplitBinding(line string) (name, expr string) {
+	if m := bindingRe.FindStringSubmatch(line); m != nil {
+		return m[1], m[2]
+	}
+	return "", line
+}
+
 var (
 	refRe  = regexp.MustCompile(`\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}`)
 	nameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)

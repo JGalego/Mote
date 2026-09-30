@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"regexp"
 	"strings"
 
 	"github.com/jgalego/mote/internal/motebook"
@@ -29,17 +28,6 @@ const nbConsoleHelp = `Type a cell and press Enter to run it; a line ending in \
   city = chat "capital of France"                keep the output as {{city}} for later cells
   /cells  list the cells   /undo  drop the last one   /save FILE  keep them in a file   /help  this   /exit  or Ctrl-D
 With no file the cells live in memory; on exit you are asked whether to save them.`
-
-// bindingRe reads "name = pipeline". A task id or a shell stage never has
-// an = after its first word, so this cannot take a cell for a binding.
-var bindingRe = regexp.MustCompile(`(?s)^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(\S.*)$`)
-
-func splitBinding(line string) (name, expr string) {
-	if m := bindingRe.FindStringSubmatch(line); m != nil {
-		return m[1], m[2]
-	}
-	return "", line
-}
 
 // valuesOf reads back what a notebook's cells have bound.
 func valuesOf(book *motebook.Book) map[string]string {
@@ -279,7 +267,7 @@ func (s *nbSession) undoLast() error {
 // be added or that fails is not kept: the notebook is left as it was, so it
 // holds only cells with an output to show.
 func (s *nbSession) run(ctx context.Context, line string) error {
-	name, expr := splitBinding(line)
+	name, expr := motebook.SplitBinding(line)
 	before := s.book.String()
 	idx, err := s.book.Append(name, expr)
 	if err != nil {
