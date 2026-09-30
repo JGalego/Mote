@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/jgalego/mote/internal/motebook"
+	"github.com/jgalego/mote/internal/ui"
 )
 
 // nbSessionEnv is a configured environment and the path of a notebook that
@@ -396,6 +397,19 @@ func liveStderr(t *testing.T, e *env, env map[string]string, stdin string, args 
 
 func TestConsoleOpensWithTheBannerAtATerminal(t *testing.T) {
 	e, path := nbSessionEnv(t)
+	// A file stands in for the terminal, which takes colour everywhere but on
+	// Windows, where only a console does.
+	t.Setenv("CLICOLOR_FORCE", "1")
+	t.Setenv("TERM", "xterm")
+	probe, err := os.Create(filepath.Join(t.TempDir(), "probe"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	coloured := ui.New(probe).Color()
+	probe.Close()
+	if !coloured {
+		t.Skip("this platform gives no colour to a file")
+	}
 
 	// In colour: the logo, and the tagline under it.
 	got := consoleStderr(t, e, nil, "nb", "console", path)

@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/jgalego/mote/internal/atomicfile"
 	"github.com/jgalego/mote/internal/motebook"
 	"github.com/jgalego/mote/internal/task"
 	"github.com/jgalego/mote/internal/ui"
@@ -253,13 +255,32 @@ func (s *nbSession) save(path string) error {
 	if path == "" {
 		return errors.New("usage: /save FILE")
 	}
-	if _, err := os.Stat(path); err == nil {
-		return fmt.Errorf("%s already exists; pick another name", path)
-	}
-	if err := writeFileAtomic(path, []byte(s.book.String()), 0o644); err != nil {
+	// What was embedded refers to its file from the folder mote runs in; from
+	// now on it must do so from the notebook's, and so must what /undo would
+	// go back to.
+	dir := filepath.Dir(path)
+	book, err := relinkEmbeds(s.book, ".", dir)
+	if err != nil {
 		return err
 	}
-	s.path = path
+	undo := make([]undoStep, len(s.undo))
+	for i, step := range s.undo {
+		undo[i] = step
+		if old, err := motebook.Parse(step.before); err == nil {
+			if moved, err := relinkEmbeds(old, ".", dir); err == nil {
+				undo[i].before = moved.String()
+			}
+		}
+	}
+	// Created, never replaced: a file that appeared since it was looked for
+	// is someone's.
+	if err := atomicfile.WriteNew(path, []byte(book.String()), 0o644); err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return fmt.Errorf("%s already exists; pick another name", path)
+		}
+		return err
+	}
+	s.book, s.undo, s.path = book, undo, path
 	fmt.Fprintf(s.a.err, "%s saved %s in %s\n", s.a.ue.OK(), contents(len(s.book.Cells)), path)
 	return nil
 }
@@ -274,18 +295,28 @@ func (s *nbSession) finish(saveTo string) error {
 	}
 	n := len(s.book.Cells)
 	if saveTo != "" {
-		return s.save(saveTo)
-	}
-	if !s.a.tty {
-		fmt.Fprintf(s.a.err, "%s %s not saved; pass -o FILE to keep them\n", s.a.ue.Warn(), contents(n))
-		return nil
-	}
-	question := fmt.Sprintf("save the %s you ran to a file? [y/N] ", cellCount(n))
-	if n == 0 {
-		question = "save your notes to a file? [y/N] "
-	}
-	if !s.ask(question) {
-		return nil
+		err := s.save(saveTo)
+		if err == nil {
+			return nil
+		}
+		// The file named at the start was taken since; the cells are only in
+		// memory, so ask for another name where that can be asked.
+		if !s.a.tty {
+			return fmt.Errorf("%v; %s not saved", err, contents(n))
+		}
+		fmt.Fprintf(s.a.err, "%s %v\n", s.a.ue.Fail(), err)
+	} else {
+		if !s.a.tty {
+			fmt.Fprintf(s.a.err, "%s %s not saved; pass -o FILE to keep them\n", s.a.ue.Warn(), contents(n))
+			return nil
+		}
+		question := fmt.Sprintf("save the %s you ran to a file? [y/N] ", cellCount(n))
+		if n == 0 {
+			question = "save your notes to a file? [y/N] "
+		}
+		if !s.ask(question) {
+			return nil
+		}
 	}
 	for {
 		name := strings.TrimSpace(s.answer(fmt.Sprintf("file name [%s], or n to discard: ", defaultSessionName)))

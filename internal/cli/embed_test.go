@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -228,5 +229,75 @@ func TestConsoleColoursNoteAndEmbedAsCommandsWithArguments(t *testing.T) {
 		if got := s.highlight([]rune(line)); !strings.HasPrefix(got, cyan) {
 			t.Errorf("%q: %q", line, got)
 		}
+	}
+}
+
+func TestEmbedsInASessionFollowItToTheFolderItIsSavedIn(t *testing.T) {
+	e, _ := nbSessionEnv(t)
+	dir := t.TempDir()
+	chdir(t, dir)
+	os.WriteFile(filepath.Join(dir, "pic.png"), nil, 0o644)
+	os.WriteFile(filepath.Join(dir, "my clip.mp4"), nil, 0o644)
+	os.MkdirAll(filepath.Join(dir, "sub"), 0o755)
+
+	// Saved on exit with -o.
+	code, _, errs := e.mote("/embed pic.png\n", "nb", "console", "-o", filepath.Join("sub", "a.mote.md"))
+	if code != 0 {
+		t.Fatalf("console: %d %s", code, errs)
+	}
+	if got := readFile(t, filepath.Join("sub", "a.mote.md")); got != "![pic](../pic.png)\n" {
+		t.Errorf("-o: %q", got)
+	}
+	// Saved with /save, then added to: both refer to their files from sub/,
+	// and so does what /undo goes back to.
+	input := "/embed pic.png\n/save sub/b.mote.md\n/embed \"my clip.mp4\"\n/undo\n"
+	if code, _, errs := e.mote(input, "nb", "console"); code != 0 {
+		t.Fatalf("console: %d %s", code, errs)
+	}
+	if got := readFile(t, filepath.Join("sub", "b.mote.md")); got != "![pic](../pic.png)\n" {
+		t.Errorf("/save then /undo: %q", got)
+	}
+	if code, _, errs := e.mote("/embed \"my clip.mp4\"\n", "nb", "console", filepath.Join("sub", "b.mote.md")); code != 0 {
+		t.Fatalf("console: %d %s", code, errs)
+	}
+	if got := readFile(t, filepath.Join("sub", "b.mote.md")); !strings.Contains(got, `<video controls src="../my%20clip.mp4"></video>`) {
+		t.Errorf("a file session: %q", got)
+	}
+}
+
+func TestEmbedPathSeesThroughALinkedFolder(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("links need privileges on Windows")
+	}
+	real := t.TempDir()
+	os.MkdirAll(filepath.Join(real, "media"), 0o755)
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skip(err)
+	}
+	// The working folder is reached through the link, the notebook by its
+	// real path, as /var and /private/var are on macOS.
+	chdir(t, link)
+	s := &nbSession{path: filepath.Join(real, "book.mote.md")}
+	if got := s.embedPath(filepath.Join("media", "a.png")); got != "media/a.png" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestConsoleSaysWhenTheFileNamedWithOIsTaken(t *testing.T) {
+	e, _ := nbSessionEnv(t)
+	dir := t.TempDir()
+	out := filepath.Join(dir, "later.mote.md")
+	// The file appears while the session runs: the cell makes it.
+	if runtime.GOOS == "windows" {
+		t.Skip("the sh syntax here does not apply to cmd")
+	}
+	input := "chat hi | sh: echo taken > " + out + "\n/note made\n"
+	code, _, errs := e.mote(input, "nb", "console", "-o", out, "--yes")
+	if code == 0 || !strings.Contains(errs, "already exists") || !strings.Contains(errs, "not saved") {
+		t.Errorf("exit %d: %s", code, errs)
+	}
+	if got := readFile(t, out); got != "taken\n" {
+		t.Errorf("the file that appeared was replaced: %q", got)
 	}
 }
