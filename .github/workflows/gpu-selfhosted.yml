@@ -1,0 +1,53 @@
+name: gpu-selfhosted
+
+# Proves mote offloads to a real NVIDIA GPU. Manual only: the runner is an
+# on-demand spot instance in the maintainer's AWS account, so nothing else
+# (pushes, pull requests, forks) may start it.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency: gpu-selfhosted
+
+jobs:
+  gpu:
+    runs-on: [self-hosted, gpu]
+    timeout-minutes: 30
+    env:
+      MOTE_HOME: ${{ github.workspace }}/.mote-home
+      MOTE_CONFIG_DIR: ${{ github.workspace }}/.mote-cfg
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Show the GPU and its Vulkan device
+        run: |
+          nvidia-smi
+          vulkaninfo --summary | grep -E "deviceType|deviceName|driverName"
+          # llvmpipe is a CPU, not what this job is meant to prove.
+          vulkaninfo --summary | grep -E "deviceType" | grep -q "DISCRETE_GPU"
+      - name: Build mote
+        run: go build -o "$RUNNER_TEMP/mote" ./cmd/mote
+      - name: Set up the text model with GPU offload on
+        run: |
+          "$RUNNER_TEMP/mote" setup --yes --profile small --gpu
+          "$RUNNER_TEMP/mote" models pull text --yes
+          "$RUNNER_TEMP/mote" doctor || true
+      - name: Run a real prompt through the GPU build
+        run: |
+          out="$("$RUNNER_TEMP/mote" run chat "What is 5 + 7? Reply with the number only, nothing else.")"
+          echo "$out"
+          echo "$out" | grep -q 12
+      - name: Prove the weights were offloaded to the GPU
+        run: |
+          # A CPU fallback also answers "12", so check what llama-server
+          # logged: weights in a non-CPU backend buffer (Vulkan0, ...) and a
+          # non-CPU device in its device list are the proof.
+          logs="$(find "$MOTE_HOME/logs" -name 'llama-server-*.log')"
+          test -n "$logs" || { echo "no llama-server log found"; exit 1; }
+          grep -hE "device_info|Vulkan[0-9]+ +:|model buffer size" $logs
+          grep -hE "model buffer size" $logs | grep -vE "CPU[A-Za-z_]* model buffer size"
+          "$RUNNER_TEMP/mote" doctor | grep -E "offload .* on Vulkan[0-9]+"
