@@ -1164,7 +1164,10 @@ func TestCommonArgsChooseCPUOrGPU(t *testing.T) {
 	if !has(gpu, "--gpu-layers") {
 		t.Errorf("gpu: no --gpu-layers: %q", gpu)
 	}
-	for _, f := range []string{"--device", "--gpu-layers"} {
+	if !has(gpu, "--verbosity") || has(cpu, "--verbosity") {
+		t.Errorf("only a GPU load logs where the weights went: cpu %q gpu %q", cpu, gpu)
+	}
+	for _, f := range []string{"--device", "--gpu-layers", "--verbosity"} {
 		if !has(RequiredFlags, f) {
 			t.Errorf("doctor does not check %s", f)
 		}

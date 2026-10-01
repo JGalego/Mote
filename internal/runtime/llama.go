@@ -121,7 +121,7 @@ type Llama struct {
 
 // RequiredFlags are llama-server flags mote relies on; `mote doctor` checks
 // them so a runtime bump that renames one is caught early.
-var RequiredFlags = []string{"--mmproj", "--ctx-size", "--device", "--gpu-layers", "--parallel", "--threads", "--host", "--port", "--fit", "--no-repack"}
+var RequiredFlags = []string{"--mmproj", "--ctx-size", "--device", "--gpu-layers", "--parallel", "--threads", "--host", "--port", "--fit", "--no-repack", "--verbosity"}
 
 func (l *Llama) bin(name string) string { return filepath.Join(l.Dir, exe(name)) }
 
@@ -149,6 +149,10 @@ func (l *Llama) commonArgs(files map[string]string) []string {
 		// has, falling back to the CPU when it has none. 999 offloads
 		// every layer the model has; llama.cpp clamps to its actual count.
 		args = append(args, "--gpu-layers", "999")
+		// Where the weights went is only logged at verbosity 4, and
+		// Offloads reads it. It is a per-model log file, and only with
+		// GPU offload on.
+		args = append(args, "--verbosity", "4")
 	} else {
 		args = append(args, "--device", "none")
 	}
