@@ -189,9 +189,11 @@ jobs:
           # logged. Hosted Linux runners have no GPU: the device there is
           # the llvmpipe software Vulkan driver, which proves the GPU build
           # and its offload path, not hardware.
-          logs="$(find "$RUNNER_TEMP/home" -name 'llama-server-*.log')"
+          ls -la "$RUNNER_TEMP/home" "$RUNNER_TEMP/home/logs" || true
+          logs="$(find "$RUNNER_TEMP/home" -name 'llama-server-*.log' || true)"
           test -n "$logs" || { echo "no llama-server log found"; exit 1; }
-          grep -hE "ggml_vulkan|ggml_metal|GPU name|offloaded|model buffer size" $logs
+          for f in $logs; do echo "--- $f"; wc -c "$f"; head -n 60 "$f"; done
+          grep -hE "ggml_vulkan|ggml_metal|GPU name|offloaded|model buffer size" $logs || true
           # Weights in a non-CPU backend buffer (Vulkan0, MTL0, ...) are the
           # proof; the log's prose around it is not matched on purpose.
           grep -hE "model buffer size" $logs | grep -vE "CPU[A-Za-z_]* model buffer size"
