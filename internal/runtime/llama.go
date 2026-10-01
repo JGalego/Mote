@@ -594,7 +594,7 @@ var ErrUnsupported = errors.New("unsupported backend")
 
 var (
 	layersRE = regexp.MustCompile(`offloaded (\d+)/(\d+) layers`)
-	bufferRE = regexp.MustCompile(`(?m)\b([A-Za-z][A-Za-z_]*\d*) model buffer size`)
+	bufferRE = regexp.MustCompile(`\b(\w+) model buffer size`)
 )
 
 // Offload is what a llama-server log says about where a model's weights went.
@@ -630,7 +630,9 @@ func Offloads(dir string) []Offload {
 		o := Offload{Model: strings.TrimSuffix(strings.TrimPrefix(filepath.Base(p), "llama-server-"), ".log")}
 		for _, m := range bufferRE.FindAllSubmatch(b, -1) {
 			o.Known = true
-			if name := string(m[1]); !strings.HasPrefix(strings.ToUpper(name), "CPU") && o.Device == "" {
+			// A backend's buffer type adds a suffix: MTL0_Mapped, CPU_REPACK.
+			name, _, _ := strings.Cut(string(m[1]), "_")
+			if !strings.HasPrefix(strings.ToUpper(name), "CPU") && o.Device == "" {
 				o.Device = name
 			}
 		}

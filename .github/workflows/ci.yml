@@ -160,9 +160,14 @@ jobs:
           go-version-file: go.mod
       - name: Install a software Vulkan driver
         if: runner.os == 'Linux'
-        run: sudo apt-get update -q && sudo apt-get install -y -q mesa-vulkan-drivers
+        run: sudo apt-get update -q && sudo apt-get install -y -q mesa-vulkan-drivers libvulkan1 vulkan-tools
       - name: Build mote
         run: go build -o "$RUNNER_TEMP/mote" ./cmd/mote
+      - name: Show what Vulkan and the GPU build can see
+        if: runner.os == 'Linux'
+        run: |
+          vulkaninfo --summary || true
+        continue-on-error: true
       - name: Set up the text model with GPU offload on
         env:
           MOTE_HOME: ${{ runner.temp }}/home
@@ -193,6 +198,7 @@ jobs:
           logs="$(find "$RUNNER_TEMP/home" -name 'llama-server-*.log' || true)"
           test -n "$logs" || { echo "no llama-server log found"; exit 1; }
           for f in $logs; do echo "--- $f"; wc -c "$f"; head -n 60 "$f"; done
+          for d in "$RUNNER_TEMP"/home/runtime/*-gpu; do ls "$d"; "$d/llama-server" --list-devices || true; ldd "$d"/libggml-vulkan.so || true; done
           grep -hE "ggml_vulkan|ggml_metal|GPU name|offloaded|model buffer size" $logs || true
           # Weights in a non-CPU backend buffer (Vulkan0, MTL0, ...) are the
           # proof; the log's prose around it is not matched on purpose.

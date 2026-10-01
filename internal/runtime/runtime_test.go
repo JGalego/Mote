@@ -1191,7 +1191,7 @@ func TestOffloads(t *testing.T) {
 		t.Errorf("b: %+v", b)
 	}
 	// Reworded prose must not matter: the buffer lines decide.
-	os.WriteFile(filepath.Join(dir, "llama-server-c.log"), []byte("moved things to the GPU\n  MTL0 model buffer size = 1 MiB\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "llama-server-c.log"), []byte("moved things to the GPU\n  MTL0_Mapped model buffer size = 1 MiB\n"), 0o644)
 	os.WriteFile(filepath.Join(dir, "llama-server-d.log"), []byte("nothing recognisable\n"), 0o644)
 	got = map[string]Offload{}
 	for _, o := range Offloads(dir) {
