@@ -163,11 +163,6 @@ jobs:
         run: sudo apt-get update -q && sudo apt-get install -y -q mesa-vulkan-drivers libvulkan1 vulkan-tools
       - name: Build mote
         run: go build -o "$RUNNER_TEMP/mote" ./cmd/mote
-      - name: Show what Vulkan and the GPU build can see
-        if: runner.os == 'Linux'
-        run: |
-          vulkaninfo --summary || true
-        continue-on-error: true
       - name: Set up the text model with GPU offload on
         env:
           MOTE_HOME: ${{ runner.temp }}/home
@@ -185,22 +180,30 @@ jobs:
           echo "$out"
           echo "$out" | grep -q 12
       - name: Prove the weights were offloaded to the GPU
+        if: runner.os == 'macOS'
         env:
           MOTE_HOME: ${{ runner.temp }}/home
           MOTE_CONFIG_DIR: ${{ runner.temp }}/cfg
-        shell: bash
         run: |
           # A CPU fallback also answers "12", so check what llama-server
-          # logged. Hosted Linux runners have no GPU: the device there is
-          # the llvmpipe software Vulkan driver, which proves the GPU build
-          # and its offload path, not hardware.
-          ls -la "$RUNNER_TEMP/home" "$RUNNER_TEMP/home/logs" || true
-          logs="$(find "$RUNNER_TEMP/home" -name 'llama-server-*.log' || true)"
+          # logged: weights in a non-CPU backend buffer (MTL0, ...) are the
+          # proof. The prose around that line is not matched on purpose.
+          logs="$(find "$RUNNER_TEMP/home/logs" -name 'llama-server-*.log')"
           test -n "$logs" || { echo "no llama-server log found"; exit 1; }
-          for f in $logs; do echo "--- $f"; wc -c "$f"; head -n 60 "$f"; done
-          for d in "$RUNNER_TEMP"/home/runtime/*-gpu; do ls "$d"; "$d/llama-server" --list-devices || true; ldd "$d"/libggml-vulkan.so || true; done
-          grep -hE "ggml_vulkan|ggml_metal|GPU name|offloaded|model buffer size" $logs || true
-          # Weights in a non-CPU backend buffer (Vulkan0, MTL0, ...) are the
-          # proof; the log's prose around it is not matched on purpose.
+          grep -hE "device_info|MTL[0-9]+ +:|model buffer size" $logs
           grep -hE "model buffer size" $logs | grep -vE "CPU[A-Za-z_]* model buffer size"
-          "$RUNNER_TEMP/mote" doctor | grep -E "offload .* on (Vulkan|MTL)[0-9]+"
+          "$RUNNER_TEMP/mote" doctor | grep -E "offload .* on MTL[0-9]+"
+      - name: Show what the Vulkan build can use
+        if: runner.os == 'Linux'
+        env:
+          MOTE_HOME: ${{ runner.temp }}/home
+          MOTE_CONFIG_DIR: ${{ runner.temp }}/cfg
+        run: |
+          # Not asserted: a hosted runner has no GPU. Its Vulkan device is
+          # llvmpipe, a CPU, which llama.cpp does not list as a device, so
+          # the weights stay on the CPU here and the job only proves the
+          # Vulkan build installs and runs. Hardware needs a GPU runner.
+          vulkaninfo --summary | grep -E "deviceType|deviceName" || true
+          for d in "$RUNNER_TEMP"/home/runtime/*-gpu; do "$d/llama-server" --list-devices; done
+          grep -h "device_info" -A3 "$RUNNER_TEMP"/home/logs/llama-server-*.log
+          "$RUNNER_TEMP/mote" doctor | grep -E "offload|gpu "
