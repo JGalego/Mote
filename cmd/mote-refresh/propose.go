@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -44,6 +45,14 @@ func runPropose(dir, report string) error {
 	for _, w := range warns {
 		fmt.Fprintln(os.Stderr, "warning:", w)
 	}
+	printProposals(props)
+	var kept []registry.Proposal
+	for _, p := range props {
+		if p.Kept() {
+			kept = append(kept, p)
+		}
+	}
+	props = kept
 	if len(props) == 0 {
 		fmt.Println("no discovered model would change a default")
 		return nil
@@ -90,6 +99,48 @@ func appendCandidates(raw []byte, add []registry.Candidate) ([]byte, error) {
 	return []byte(s + tail + "\n"), nil
 }
 
+// printProposals shows every model that was tried, whether or not it
+// changes a default, so a run that proposes nothing still shows its work.
+func printProposals(props []registry.Proposal) {
+	fmt.Printf("tried %d discovered models:\n", len(props))
+	for _, p := range props {
+		c := p.Candidate
+		clears := strings.Join(p.Clears, ",")
+		if clears == "" {
+			clears = "no profile"
+		}
+		fmt.Printf("  %-32s %.2fB  %s %s  ~%d MiB RAM  clears the text gate for: %s\n",
+			c.Upstream, p.ParamsB, p.Dataset, trimFloat(p.Score), p.RAMMB, clears)
+		if p.Kept() {
+			for _, ch := range p.Changes {
+				fmt.Printf("    -> takes %s/%s from %s\n", ch.Profile, ch.Capability, orNone(ch.From))
+			}
+			continue
+		}
+		var picks []string
+		for _, prof := range sortedKeys(p.Text) {
+			picks = append(picks, prof+"="+p.Text[prof])
+		}
+		fmt.Printf("    no default changes; text stays %s\n", strings.Join(picks, " "))
+	}
+}
+
+func orNone(s string) string {
+	if s == "" {
+		return "none"
+	}
+	return s
+}
+
+func sortedKeys(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func describe(props []registry.Proposal) string {
 	var b strings.Builder
 	b.WriteString("These models are on a gate leaderboard, have a GGUF build, and would change a default under the policy in `registry/policy.json`. ")
@@ -100,11 +151,7 @@ func describe(props []registry.Proposal) string {
 			c.Name, c.Upstream, c.Upstream, p.Dataset, trimFloat(p.Score), c.Repo, c.Repo, c.Files["model"].File)
 		b.WriteString("| Profile | Capability | Replaces | Why |\n|---|---|---|---|\n")
 		for _, ch := range p.Changes {
-			from := ch.From
-			if from == "" {
-				from = "none"
-			}
-			fmt.Fprintf(&b, "| %s | %s | %s | %s |\n", ch.Profile, ch.Capability, from, ch.Reason)
+			fmt.Fprintf(&b, "| %s | %s | %s | %s |\n", ch.Profile, ch.Capability, orNone(ch.From), ch.Reason)
 		}
 		b.WriteString("\n")
 	}

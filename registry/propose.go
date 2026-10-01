@@ -8,15 +8,25 @@ import (
 	"strings"
 )
 
-// Proposal is a discovered model that, added as a candidate, would change
-// what a profile picks by default.
+// Proposal is a discovered model drafted as a candidate and tried against
+// the registry. It is worth proposing only when Changes is not empty.
 type Proposal struct {
 	Candidate Candidate
 	Score     float64
 	Dataset   string
+	ParamsB   float64
+	RAMMB     int
+	// Clears lists the profiles whose text gate its score meets.
+	Clears []string
 	// Changes lists each default it takes over, with the model it replaces.
 	Changes []Change
+	// Text is what each profile picks for text with it added, when it
+	// changes nothing: the models it lost to.
+	Text map[string]string
 }
+
+// Kept reports whether the proposal changes a default.
+func (p Proposal) Kept() bool { return len(p.Changes) > 0 }
 
 // Change is one (profile, capability) default a proposal would take over.
 type Change struct {
@@ -37,9 +47,10 @@ var (
 var textCaps = map[string]bool{"text": true, "code": true}
 
 // Propose drafts a candidate for each discovered model that has a GGUF repo
-// and a score on a text gate, and keeps those that change at least one
-// default of prev. It adds them one at a time, smallest first, so a later
-// proposal is judged against the earlier ones. Nothing it returns is trusted
+// and a score on a text gate and tries it against prev, returning every one
+// it could draft, smallest first. Those that change a default (see Kept) are
+// added to the registry as it goes, so a later one is judged against the
+// earlier ones. Nothing it returns is trusted
 // beyond the upstream score: the candidate's context size and arguments are
 // defaults for a maintainer to review.
 func Propose(ctx context.Context, prev *Registry, pol Policy, found []Discovered, src Source) ([]Proposal, []string) {
@@ -81,12 +92,26 @@ func Propose(ctx context.Context, prev *Registry, pol Policy, found []Discovered
 			warn = append(warn, fmt.Sprintf("%s: %v; not proposed", d.Upstream, err))
 			continue
 		}
-		changes := takeovers(cur.Defaults, trial.Defaults, c.ID)
-		if len(changes) == 0 {
-			continue
+		p := Proposal{Candidate: c, Score: d.Value, Dataset: d.Dataset, ParamsB: m.ParamsB, RAMMB: m.RAMEstimate,
+			Changes: takeovers(cur.Defaults, trial.Defaults, c.ID)}
+		if g, ok := pol.Gates["text"]; ok {
+			if b, ok := m.Measurement(g.Dataset, g.Task); ok {
+				for _, prof := range trial.ProfileNames() {
+					if g.passes(b.Value, g.Min[prof]) {
+						p.Clears = append(p.Clears, prof)
+					}
+				}
+			}
 		}
-		cur = trial
-		out = append(out, Proposal{Candidate: c, Score: d.Value, Dataset: d.Dataset, Changes: changes})
+		if p.Kept() {
+			cur = trial
+		} else {
+			p.Text = map[string]string{}
+			for prof, caps := range trial.Defaults {
+				p.Text[prof] = caps["text"].Model
+			}
+		}
+		out = append(out, p)
 	}
 	return out, warn
 }

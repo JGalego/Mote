@@ -37,12 +37,20 @@ func TestProposeKeepsOnlyModelsThatChangeADefault(t *testing.T) {
 	}
 	props, warns := Propose(context.Background(), cur, pol, found, src)
 
-	var ids []string
+	// Every model that could be drafted is reported, smallest first; only
+	// those that change a default are kept.
+	var ids, kept []string
 	for _, p := range props {
 		ids = append(ids, p.Candidate.ID)
+		if p.Kept() {
+			kept = append(kept, p.Candidate.ID)
+		}
 	}
-	if strings.Join(ids, ",") != "new-1b,bigger-3b" {
-		t.Fatalf("proposed %v, want new-1b then bigger-3b", ids)
+	if strings.Join(ids, ",") != "new-1b,worse-2b,bigger-3b" || strings.Join(kept, ",") != "new-1b,bigger-3b" {
+		t.Fatalf("tried %v, kept %v", ids, kept)
+	}
+	if w := props[1]; w.Text["small"] != "new-1b" || strings.Join(w.Clears, ",") != "small" {
+		t.Errorf("worse-2b: text %v clears %v", w.Text, w.Clears)
 	}
 	p := props[0]
 	if p.Candidate.Files["model"].File != "New-1B-Q4_K_M.gguf" || p.Candidate.Repo != "ggml-org/New-1B-GGUF" {
@@ -58,13 +66,13 @@ func TestProposeKeepsOnlyModelsThatChangeADefault(t *testing.T) {
 		t.Errorf("new-1b should take small text from up: %+v", p.Changes)
 	}
 	var quality *Change
-	for i, ch := range props[1].Changes {
+	for i, ch := range props[2].Changes {
 		if ch.Profile == "quality" && ch.Capability == "text" {
-			quality = &props[1].Changes[i]
+			quality = &props[2].Changes[i]
 		}
 	}
 	if quality == nil || quality.From != "new-1b" {
-		t.Errorf("bigger-3b should take quality text from new-1b, so it was judged after it: %+v", props[1].Changes)
+		t.Errorf("bigger-3b should take quality text from new-1b, so it was judged after it: %+v", props[2].Changes)
 	}
 	if len(warns) != 1 || !strings.Contains(warns[0], "Split-1B") {
 		t.Errorf("warnings %v", warns)
