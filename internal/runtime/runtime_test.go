@@ -1170,3 +1170,34 @@ func TestCommonArgsChooseCPUOrGPU(t *testing.T) {
 		}
 	}
 }
+
+func TestOffloads(t *testing.T) {
+	dir := t.TempDir()
+	gpu := "load_tensors: offloaded 29/29 layers to GPU\nload_tensors:      Vulkan0 model buffer size =  1800.00 MiB\n"
+	cpu := "load_tensors: offloaded 0/29 layers to GPU\nload_tensors:   CPU_Mapped model buffer size =  1800.00 MiB\n"
+	os.WriteFile(filepath.Join(dir, "llama-server-a.log"), []byte(gpu), 0o644)
+	os.WriteFile(filepath.Join(dir, "llama-server-b.log"), []byte(cpu), 0o644)
+	got := map[string]Offload{}
+	for _, o := range Offloads(dir) {
+		got[o.Model] = o
+	}
+	if a := got["a"]; !a.OnGPU() || a.Layers != 29 || a.Device != "Vulkan0" {
+		t.Errorf("a: %+v", a)
+	}
+	if b := got["b"]; b.OnGPU() || !b.Known {
+		t.Errorf("b: %+v", b)
+	}
+	// Reworded prose must not matter: the buffer lines decide.
+	os.WriteFile(filepath.Join(dir, "llama-server-c.log"), []byte("moved things to the GPU\n  MTL0 model buffer size = 1 MiB\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "llama-server-d.log"), []byte("nothing recognisable\n"), 0o644)
+	got = map[string]Offload{}
+	for _, o := range Offloads(dir) {
+		got[o.Model] = o
+	}
+	if c := got["c"]; !c.OnGPU() || c.Device != "MTL0" {
+		t.Errorf("c: %+v", c)
+	}
+	if d := got["d"]; d.Known || d.OnGPU() {
+		t.Errorf("d: %+v", d)
+	}
+}

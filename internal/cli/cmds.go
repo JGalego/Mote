@@ -203,6 +203,21 @@ func (a *app) doctor() error {
 		}
 	}
 
+	if a.cfgErr == nil && a.cfg.GPU == "on" {
+		for _, o := range mrt.Offloads(filepath.Join(a.dataDir(), "logs")) {
+			switch {
+			case o.OnGPU() && o.Total > 0:
+				line("ok", "offload "+o.Model, fmt.Sprintf("%d/%d layers on %s (from the last load)", o.Layers, o.Total, o.Device))
+			case o.OnGPU():
+				line("ok", "offload "+o.Model, "weights on "+o.Device+" (from the last load)")
+			case o.Known:
+				line("warn", "offload "+o.Model, "the last load kept the weights on the CPU; the runtime build may lack GPU support")
+			default:
+				line("warn", "offload "+o.Model, "cannot tell where the weights went; the runtime's log format may have changed")
+			}
+		}
+	}
+
 	if a.cfgErr == nil {
 		for _, c := range capNames() {
 			m, ch, err := a.choose(c, a.cfg.Profile)

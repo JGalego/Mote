@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -586,3 +587,54 @@ func tail(p string, n int) string {
 
 // ErrUnsupported is returned for backends that are not available.
 var ErrUnsupported = errors.New("unsupported backend")
+
+var (
+	layersRE = regexp.MustCompile(`offloaded (\d+)/(\d+) layers`)
+	bufferRE = regexp.MustCompile(`(?m)\b([A-Za-z][A-Za-z_]*\d*) model buffer size`)
+)
+
+// Offload is what a llama-server log says about where a model's weights went.
+type Offload struct {
+	Model string // the model id, from the log's file name
+	// Device is the first non-CPU backend holding weights, like Vulkan0 or
+	// MTL0; empty when everything is on the CPU.
+	Device string
+	// Layers and Total are the offloaded and total layer counts, both zero
+	// when the log does not say. They are detail: Device decides.
+	Layers, Total int
+	// Known is false when the log has no model buffer lines at all, which
+	// means its format changed, not that the weights are on the CPU.
+	Known bool
+}
+
+// OnGPU reports whether the log shows weights placed on a GPU.
+func (o Offload) OnGPU() bool { return o.Device != "" }
+
+// Offloads reads the llama-server logs in dir and reports, per model, where
+// the last load put the weights. A CPU-only build silently ignores
+// --gpu-layers, so this is the proof that offload took effect. It keys on
+// the per-backend "<name> model buffer size" lines, whose names are ggml's
+// backend names, rather than on llama.cpp's prose.
+func Offloads(dir string) []Offload {
+	logs, _ := filepath.Glob(filepath.Join(dir, "llama-server-*.log"))
+	var out []Offload
+	for _, p := range logs {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		o := Offload{Model: strings.TrimSuffix(strings.TrimPrefix(filepath.Base(p), "llama-server-"), ".log")}
+		for _, m := range bufferRE.FindAllSubmatch(b, -1) {
+			o.Known = true
+			if name := string(m[1]); !strings.HasPrefix(strings.ToUpper(name), "CPU") && o.Device == "" {
+				o.Device = name
+			}
+		}
+		if m := layersRE.FindSubmatch(b); m != nil {
+			o.Layers, _ = strconv.Atoi(string(m[1]))
+			o.Total, _ = strconv.Atoi(string(m[2]))
+		}
+		out = append(out, o)
+	}
+	return out
+}

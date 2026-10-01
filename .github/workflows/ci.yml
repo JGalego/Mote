@@ -179,3 +179,20 @@ jobs:
           out="$("$RUNNER_TEMP/mote" run chat "What is 5 + 7? Reply with the number only, nothing else.")"
           echo "$out"
           echo "$out" | grep -q 12
+      - name: Prove the weights were offloaded to the GPU
+        env:
+          MOTE_HOME: ${{ runner.temp }}/home
+          MOTE_CONFIG_DIR: ${{ runner.temp }}/cfg
+        shell: bash
+        run: |
+          # A CPU fallback also answers "12", so check what llama-server
+          # logged. Hosted Linux runners have no GPU: the device there is
+          # the llvmpipe software Vulkan driver, which proves the GPU build
+          # and its offload path, not hardware.
+          logs="$(find "$RUNNER_TEMP/home" -name 'llama-server-*.log')"
+          test -n "$logs" || { echo "no llama-server log found"; exit 1; }
+          grep -hE "ggml_vulkan|ggml_metal|GPU name|offloaded|model buffer size" $logs
+          # Weights in a non-CPU backend buffer (Vulkan0, MTL0, ...) are the
+          # proof; the log's prose around it is not matched on purpose.
+          grep -hE "model buffer size" $logs | grep -vE "CPU[A-Za-z_]* model buffer size"
+          "$RUNNER_TEMP/mote" doctor | grep -E "offload .* on (Vulkan|MTL)[0-9]+"
