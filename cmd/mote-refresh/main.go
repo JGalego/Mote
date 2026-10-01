@@ -23,8 +23,16 @@ func main() {
 	runtime := flag.Bool("runtime", false, "allow bumping the llama.cpp pin")
 	discover := flag.Bool("discover", false, "write discovered.json from gate leaderboards")
 	check := flag.Bool("check", false, "exit 3 if the registry would change, without writing")
+	propose := flag.String("propose", "", "add discovered models that would change a default to candidates.json, and write a PR description to this file")
 	flag.Parse()
 
+	if *propose != "" {
+		if err := runPropose(*dir, *propose); err != nil {
+			fmt.Fprintln(os.Stderr, "mote-refresh:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(*dir, *runtime, *discover, *check); err != nil {
 		fmt.Fprintln(os.Stderr, "mote-refresh:", err)
 		if err == errChanged {
