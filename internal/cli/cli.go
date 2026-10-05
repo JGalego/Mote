@@ -80,6 +80,7 @@ Usage:
   mote meta "GOAL" [-o FILE] [--chat] [--run] [--force] [--yes] [--model ID] [--profile P]
   mote do "REQUEST" [-o OUTPUT] [--apply] [--dry-run] [--plan [--trace]] [--yes] [--model ID] [--profile P]
   mote agent "GOAL" [-o OUTPUT] [--tools a,b] [--mcp SERVER,...] [--steps N] [--allow-sh [--sandbox auto|on|off] [--sandbox-net]] [--yes] [--model ID]
+  mote claude [--model ID|CAP] [--no-bare] [CLAUDE_ARGS...]
   mote mcp [tools [NAME...]]
   mote listen [TASK] [--wake PHRASE] [--device D] [--chunk SECONDS] [--once]
   mote remember "FACT" | mote forget N|--all|--history | mote memory [search "Q"]
@@ -127,6 +128,12 @@ type missingError struct{ msg string }
 func (e missingError) Error() string { return e.msg }
 
 func missingf(format string, a ...any) error { return missingError{fmt.Sprintf(format, a...)} }
+
+// childExit is the exit code of a program mote ran in its place, which has
+// already said why it stopped; mote exits with it and adds nothing.
+type childExit struct{ code int }
+
+func (e childExit) Error() string { return fmt.Sprintf("exit status %d", e.code) }
 
 type app struct {
 	in       io.Reader
@@ -186,6 +193,10 @@ func mainContext(ctx context.Context, args []string, in io.Reader, out, errw io.
 	err := a.dispatch(ctx, args)
 	if err == nil {
 		return ExitOK
+	}
+	var ce childExit
+	if errors.As(err, &ce) {
+		return ce.code
 	}
 	if a.ue.Color() {
 		fmt.Fprintf(errw, "%s %s\n", a.ue.Fail(), err)
@@ -248,7 +259,7 @@ func (a *app) dispatch(ctx context.Context, args []string) error {
 		return a.completeCmd(rest)
 	}
 	switch cmd {
-	case "run", "pipe", "listen", "do", "agent", "memory", "remember", "forget", "models", "bench", "tune", "serve", "chat", "index", "ask", "guide", "nb", "meta":
+	case "run", "pipe", "listen", "do", "agent", "claude", "memory", "remember", "forget", "models", "bench", "tune", "serve", "chat", "index", "ask", "guide", "nb", "meta":
 	default:
 		return usagef("unknown command %q; see `mote help`", cmd)
 	}
@@ -267,6 +278,8 @@ func (a *app) dispatch(ctx context.Context, args []string) error {
 		return a.do(ctx, rest)
 	case "agent":
 		return a.agent(ctx, rest)
+	case "claude":
+		return a.claudeCmd(ctx, rest)
 	case "remember":
 		return a.remember(rest)
 	case "forget":

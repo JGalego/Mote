@@ -175,7 +175,7 @@ func TestCommandsUseARunningServer(t *testing.T) {
 	}
 	select {
 	case out := <-done:
-		if !strings.Contains(out, "OpenAI-compatible API") {
+		if !strings.Contains(out, "OpenAI/Anthropic-compatible APIs") {
 			t.Errorf("serve said: %s", out)
 		}
 	case <-time.After(10 * time.Second):

@@ -248,6 +248,12 @@ func servedCaps() []string {
 
 // newServer builds the resident server over this configuration.
 func (a *app) newServer(keep time.Duration) *serve.Server {
+	return a.newServerWithContext(keep, 0)
+}
+
+// newServerWithContext raises the context only for a caller that owns a
+// dedicated server, such as Claude Code. Registry choices stay unchanged.
+func (a *app) newServerWithContext(keep time.Duration, minContext int) *serve.Server {
 	return &serve.Server{
 		Resolve: func(name string) (*registry.Model, error) {
 			if name == "" || name == "mote" {
@@ -269,6 +275,11 @@ func (a *app) newServer(keep time.Duration) *serve.Server {
 			}
 			if !a.store().Installed(m) {
 				return nil, fmt.Errorf("model %s is not downloaded; run `mote models pull %s`", m.ID, m.ID)
+			}
+			if m.Context < minContext {
+				wider := *m
+				wider.Context = minContext
+				m = &wider
 			}
 			return m, nil
 		},
@@ -378,7 +389,7 @@ func (a *app) serveCmd(ctx context.Context, args []string) error {
 		}
 	}()
 	if !background {
-		fmt.Fprintf(a.out, "%s serving an OpenAI-compatible API at %s\n", a.uo.OK(), a.uo.Bold(url+"/v1"))
+		fmt.Fprintf(a.out, "%s serving OpenAI/Anthropic-compatible APIs at %s\n", a.uo.OK(), a.uo.Bold(url+"/v1"))
 		fmt.Fprintln(a.out, a.uo.Dim(fmt.Sprintf("models load on first use and unload after %s idle; mote commands use them too; Ctrl-C stops", keep)))
 	}
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM)

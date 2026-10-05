@@ -11,7 +11,7 @@ import (
 // exactly the commands mote actually accepts.
 var topLevelCommands = []string{
 	"help", "version", "setup", "config", "doctor", "tasks", "mcp", "update",
-	"run", "pipe", "listen", "do", "agent", "memory", "remember", "forget",
+	"run", "pipe", "listen", "do", "agent", "claude", "memory", "remember", "forget",
 	"models", "bench", "tune", "serve", "chat", "index", "ask", "completion", "guide", "nb", "meta", "kernel",
 }
 
@@ -22,6 +22,7 @@ var commandFlags = map[string][]string{
 	"pipe":    {"-o", "--output", "--model", "--profile", "--apply", "--trace", "--yes", "-y", "--help", "-h"},
 	"do":      {"-o", "--output", "--model", "--profile", "--router", "--apply", "--dry-run", "--continue", "--recall", "--plan", "--trace", "--yes", "-y", "--help", "-h"},
 	"agent":   {"-o", "--output", "--model", "--profile", "--tools", "--steps", "--mcp", "--sandbox", "--allow-sh", "--yes", "-y", "--sandbox-net", "--help", "-h"},
+	"claude":  {"--model", "--bare", "--no-bare", "--print", "-p", "--help", "-h"},
 	"listen":  {"--wake", "--device", "--chunk", "--model", "--profile", "--once", "--help", "-h"},
 	"chat":    {"--model", "--profile", "--system", "--continue", "--recall", "--tools", "--steps", "--yes", "-y", "--help", "-h"},
 	"nb":      {"-o", "--output", "--model", "--profile", "--force", "--dry-run", "--state", "--any-kernel", "--port", "--root", "--open", "--yes", "-y", "--help", "-h"},

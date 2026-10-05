@@ -1,9 +1,9 @@
 // Package serve keeps models loaded between commands. One process owns
 // every llama-server it starts: it loads a model on first use, hands each
 // request to it, and unloads it after it has been idle for a while, or
-// sooner to make room in memory for another. It speaks the OpenAI API on a
-// loopback port, which is how mote's own commands reach it and how editors
-// and other tools can use mote's models.
+// sooner to make room in memory for another. It speaks OpenAI and Anthropic
+// APIs on a loopback port, which is how mote's own commands, editors and
+// other tools use mote's models.
 package serve
 
 import (
@@ -298,6 +298,8 @@ func (s *Server) Handler() http.Handler {
 	for _, p := range []string{"/v1/chat/completions", "/v1/completions", "/v1/embeddings"} {
 		mux.HandleFunc("POST "+p, s.proxy)
 	}
+	mux.HandleFunc("POST /v1/messages", s.anthropicMessages)
+	mux.HandleFunc("POST /v1/messages/count_tokens", s.anthropicCountTokens)
 	mux.HandleFunc("POST /mote/load", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Model string `json:"model"`

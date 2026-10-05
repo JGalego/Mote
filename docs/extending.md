@@ -16,7 +16,7 @@ internal/proc         runs commands so that stopping one stops what it started
 internal/cli/kernel   the Jupyter kernel (Python), embedded and installed by `mote kernel`
 internal/mcp          a client for local MCP servers (stdio JSON-RPC)
 internal/sandbox      runs the agent's shell commands under bwrap or sandbox-exec
-internal/serve        the resident server: keeps models loaded, OpenAI API
+internal/serve        the resident server: keeps models loaded, OpenAI and Anthropic APIs
 internal/index        mote index/ask: embeds files, searches by meaning
 internal/cli          commands and the setup wizard
 install/              install.sh (Linux/macOS), install.ps1 (Windows)

@@ -106,6 +106,21 @@ var helpTopics = map[string]helpTopic{
 			"mote mcp tools files",
 		},
 	},
+	"claude": {
+		summary: "Run Claude Code's agent and tools with Mote's local models.",
+		usage:   []string{"mote claude [--model ID|CAP] [--no-bare] [CLAUDE_ARGS...]"},
+		notes: []string{
+			"Arguments are passed to Claude Code. --model picks the Mote model (default: the one for code); every model Claude asks for, subagents included, is that one.",
+			"Mote adds --bare unless it is already present. Pass --no-bare to keep Claude Code's full startup features, a prompt of about 16K tokens; Mote consumes that flag instead of forwarding it.",
+			"Auto mode is turned off, since its safety check alone would fill the context; pass --permission-mode or --settings to choose otherwise.",
+			"The model server and credentials are local to this process; replies are capped at 8192 tokens unless CLAUDE_CODE_MAX_OUTPUT_TOKENS says otherwise.",
+		},
+		examples: []string{
+			"mote claude",
+			`mote claude --print "explain this repository"`,
+			"mote claude --model qwen3-4b-2507",
+		},
+	},
 	"update": {
 		summary: "Update mote to the latest release, or check whether one exists.",
 		usage:   []string{"mote update [--check]"},
@@ -372,7 +387,7 @@ var helpTopics = map[string]helpTopic{
 		examples: []string{"mote tune", "mote tune --apply"},
 	},
 	"serve": {
-		summary: "Keep models loaded and serve them to editors through an OpenAI-compatible API.",
+		summary: "Keep models loaded and serve them through OpenAI- and Anthropic-compatible APIs.",
 		usage: []string{
 			"mote serve [--port N] [--keep-alive DURATION] [--background]",
 			"mote serve status",

@@ -53,6 +53,7 @@ mote runs X-to-Y AI tasks (text, code, images, audio, video, files) on your CPU 
   - [spoken](#spoken-)
   - [files](#files-)
   - [your own](#your-own-)
+- [Claude Code](#claude-code)
 - [Memory](#memory)
 - [Serving](#serving)
 - [How it works](#how-it-works)
@@ -110,13 +111,14 @@ In a clone, `go install ./cmd/mote` does the same into `$(go env GOPATH)/bin`. `
 | `mote pipe "A \| B \| sh: cmd"` | Chain tasks in one process, each stage receiving the last one's value: `{}` or `-` places it, `sh:` runs a shell command, `--trace` shows each step |
 | `mote do "REQUEST"` | Pick the task that fits a request written in plain words and run it; `--router embed` chooses with the encoder, `--plan` writes a pipeline of several tasks, `--dry-run` shows the choice |
 | `mote agent "GOAL"` | Work towards a goal in steps, calling tasks and local tools and reading what they return; `--tools` picks them, `--allow-sh` offers the shell |
+| `mote claude [CLAUDE_ARGS...]` | Run Claude Code's agent and tools with Mote's local `code` model; arguments pass through to Claude Code |
 | `mote mcp [tools [NAME]]` | List the MCP servers in `mcp.json`, or start them and show which tools the agent can use |
 | `mote remember "FACT"` | Keep a fact in front of every model step; `mote memory` lists them, `mote forget N\|--all` removes them |
 | `mote memory [search "Q"]` | Show what mote remembers, or find a past exchange by meaning |
 | `mote index DIR... [status\|rm]` | Index files under a folder for `mote ask`; re-run to refresh, `status` shows what's indexed, `rm DIR\|--all` forgets it |
 | `mote ask "QUESTION" [--in DIR]` | Answer from the indexed files closest to the question, with the sources it used; `--sources` shows only the passages |
 | `mote listen [TASK]` | Wait for a wake word on the microphone, then run what you say next (never listens unless you start it) |
-| `mote serve [status\|stop]` | Keep models loaded and serve them to editors through an OpenAI-compatible API on `127.0.0.1:11435` |
+| `mote serve [status\|stop]` | Keep models loaded and serve them through OpenAI- and Anthropic-compatible APIs on `127.0.0.1:11435` |
 | `mote tasks` | List the tasks, their arguments and what each one needs |
 | `mote models [pull\|rm\|why\|verify]` | Show models, sizes and which are in use; fetch, remove, explain or re-verify them. `pull --missing` fetches the ones your profile uses, `pull --all` every one |
 | `mote models upgrade [--check] [--prune]` | Fetch the newest registry and the best models it picks for your profile and RAM; `--prune` removes the ones no longer used |
@@ -460,6 +462,24 @@ Tasks are data: drop a file shaped like [`tasks.json`](internal/task/tasks.json)
 
 [`examples/tools.json`](examples/tools.json) wraps `rg`, `jq` and `git log`. See [extending mote](docs/extending.md).
 
+## Claude Code
+
+`mote claude` runs the installed Claude Code agent and tools with Mote's local `code` model. It starts a dedicated loopback server, loads the model with a 32K context, gives only the child process a local API URL and dummy token, and stops the server when Claude exits. No Anthropic account or API key is needed.
+
+```sh
+mote claude
+mote claude --print "explain this repository"
+mote claude --model qwen3-4b-2507
+```
+
+Arguments are passed through unchanged except for Mote's `--no-bare` opt-out. `--model` takes a model id or capability, and every model Claude Code asks for (main loop, subagents, background calls) is that one, so only one is loaded. Mote adds:
+
+- `--bare`, which keeps Claude Code's built-in tools but drops its optional context, so the prompt starts at about 1K tokens. `--no-bare` keeps its full startup features at about 16K tokens, which a CPU reads for minutes before the first reply.
+- settings that turn off auto mode, whose safety check sends a prompt of about 30K tokens before each tool call; Claude Code asks before running tools instead. Pass your own `--permission-mode` or `--settings` to choose otherwise.
+- a reply limit of 8192 tokens (`CLAUDE_CODE_MAX_OUTPUT_TOKENS` overrides it), so Claude Code has room left to compact the conversation within 32K.
+
+The model is local, but the tools belong to Claude Code and keep its normal filesystem and network permissions; Mote's agent sandbox and command confirmations do not apply to them.
+
 ## Memory
 
 Mote forgets everything between runs unless you ask it not to, and what it
@@ -491,7 +511,7 @@ mote config set keep_alive 30m     # keep models longer
 mote config set keep_alive 0       # never start it: each command loads its own models
 ```
 
-Run `mote serve` yourself to keep it in the foreground and give other programs the same models. It speaks the OpenAI API on `http://127.0.0.1:11435/v1` (`--port` or `serve_port` to change it), with `/v1/chat/completions`, `/v1/completions`, `/v1/embeddings` and `/v1/models`. Name a model by its id, or by a capability (`text`, `code`, `vision`, `embed`; `mote` means `text`) to get the one mote picked for your machine. Any API key works.
+Run `mote serve` yourself to keep it in the foreground and give other programs the same models. It speaks the OpenAI API on `http://127.0.0.1:11435/v1` (`--port` or `serve_port` to change it), with `/v1/chat/completions`, `/v1/completions`, `/v1/embeddings` and `/v1/models`, plus Anthropic Messages at `/v1/messages` and `/v1/messages/count_tokens`. Name a model by its id, or by a capability (`text`, `code`, `vision`, `embed`; `mote` means `text`) to get the one mote picked for your machine. Any API key works.
 
 ```sh
 mote serve &
@@ -525,7 +545,7 @@ flowchart TD
   INDEX -- "embed" --> SERVE
   ASK -- "answer" --> PIPE
 
-  PIPE -- "model step<br/><code>text · code · extract</code><br/><code>vision · asr</code><br/><code>tts · embed</code>" --> SERVE["♻️ <code>mote serve</code><br/>keeps models loaded · OpenAI API"]
+  PIPE -- "model step<br/><code>text · code · extract</code><br/><code>vision · asr</code><br/><code>tts · embed</code>" --> SERVE["♻️ <code>mote serve</code><br/>keeps models loaded · OpenAI + Anthropic APIs"]
   EDITOR(["🧑‍💻 editors · other tools"]) -. "<code>/v1</code>" .-> SERVE
   SERVE --> LLAMA["🦙 <code>llama-server</code> · <code>llama-tts</code><br/>127.0.0.1 · CPU only"]
   DO -. "choice under a JSON schema" .-> LLAMA
