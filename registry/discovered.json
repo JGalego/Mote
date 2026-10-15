@@ -250,6 +250,13 @@
       "value": 22.93125
     },
     {
+      "upstream": "hf-audio/MOSS-Transcribe-Diarize-HF",
+      "params_b": 0.91,
+      "dataset": "hf-audio/open-asr-leaderboard",
+      "task": "mean_wer",
+      "value": 5.17
+    },
+    {
       "upstream": "kyutai/stt-2.6b-en",
       "params_b": 2.62,
       "dataset": "hf-audio/open-asr-leaderboard",
