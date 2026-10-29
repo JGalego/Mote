@@ -1,6 +1,14 @@
 {
   "models": [
     {
+      "upstream": "LiquidAI/LFM3-Omni-2B",
+      "params_b": 2.17,
+      "dataset": "MMMU/MMMU_Pro",
+      "task": "mmmu_pro_vision",
+      "value": 27.28,
+      "gguf_repo": "ggml-org/LFM3-Omni-2B-GGUF"
+    },
+    {
       "upstream": "Qwen/Qwen2.5-VL-3B-Instruct",
       "params_b": 3.75,
       "dataset": "MMMU/MMMU_Pro",
@@ -185,6 +193,13 @@
       "dataset": "hf-audio/open-asr-leaderboard",
       "task": "mean_wer",
       "value": 7.03
+    },
+    {
+      "upstream": "LiquidAI/LFM3-Audio-2B",
+      "params_b": 2,
+      "dataset": "hf-audio/open-asr-leaderboard",
+      "task": "mean_wer",
+      "value": 6.23
     },
     {
       "upstream": "OpenMOSS-Team/MOSS-Transcribe-Diarize",
