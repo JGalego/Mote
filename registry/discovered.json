@@ -167,6 +167,20 @@
       "gguf_repo": "unsloth/Phi-4-mini-instruct-GGUF"
     },
     {
+      "upstream": "openbmb/MiniCPM5-1B",
+      "params_b": 1.08,
+      "dataset": "TIGER-Lab/MMLU-Pro",
+      "task": "mmlu_pro",
+      "value": 48.85
+    },
+    {
+      "upstream": "openbmb/MiniCPM5-2B",
+      "params_b": 2.52,
+      "dataset": "TIGER-Lab/MMLU-Pro",
+      "task": "mmlu_pro",
+      "value": 70.8
+    },
+    {
       "upstream": "CohereLabs/cohere-transcribe-03-2026",
       "params_b": 2.07,
       "dataset": "hf-audio/open-asr-leaderboard",
