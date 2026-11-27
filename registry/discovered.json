@@ -17,7 +17,14 @@
       "gguf_repo": "ggml-org/Qwen2.5-VL-3B-Instruct-GGUF"
     },
     {
-      "upstream": "Axonry/wsp81-qwen3.5-0.8b",
+      "upstream": "Axonry/pr171-qwen3.5-0.8b",
+      "params_b": 0.87,
+      "dataset": "TIGER-Lab/MMLU-Pro",
+      "task": "mmlu_pro",
+      "value": 47.97207447
+    },
+    {
+      "upstream": "Axonry/pr81-qwen3.5-0.8b",
       "params_b": 0.87,
       "dataset": "TIGER-Lab/MMLU-Pro",
       "task": "mmlu_pro",
